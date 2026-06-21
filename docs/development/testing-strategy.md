@@ -23,7 +23,7 @@
 | 测试层 | 主要内容 | 归属/位置 | 运行频率 | 阻断级别 |
 | --- | --- | --- | --- | --- |
 | 单元测试 | 规范化、优先级、兼容等级、路径安全、错误映射、差异与部署计划。 | 各 `packages/*/src/**/*.test.ts`，Vitest。 | 每个 PR。 | `merge`。 |
-| 适配器契约 | 发现、解析、生效规则、诊断、转换、部署计划、版本边界。 | 夹具：`packages/adapters/test/fixtures/<toolId>/`；golden：`packages/adapters/test/golden/<toolId>/`；测试代码：`tests/contract/adapters/`。适配器所有者负责。 | 每个 PR；四工具全量可并行。 | `merge`，任一工具/资源缺失也失败。 |
+| 适配器契约 | 发现、解析、生效规则、诊断、转换、`AdapterDeploymentDraft`、版本边界。 | 夹具：`packages/adapters/test/fixtures/<toolId>/`；golden：`packages/adapters/test/golden/<toolId>/`；测试代码：`tests/contract/adapters/`。适配器所有者负责。 | 每个 PR；四工具全量可并行。 | `merge`，任一工具/资源缺失也失败。 |
 | 集成测试 | 临时目录、SQLite/Drizzle、Chokidar、原子写入、备份、Git、迁移。 | 各包 `tests/integration/` 与根 `tests/integration/`。 | 受影响 PR + 每日全量。 | `affected merge`；全量 `release`。 |
 | IPC 契约 | Zod 请求/响应/事件、错误 envelope、进度顺序、取消、renderer 白名单。 | `tests/contract/ipc/`，`packages/api` 与 desktop 共同负责。 | API、preload、desktop PR；发布候选全量。 | `affected merge` 与 `release`。 |
 | Electron E2E | 首次扫描、诊断、生效配置、迁移预览、确认、部署、验证、历史和回滚。 | `tests/e2e/desktop/`，Playwright。 | desktop PR 冒烟；发布候选三平台全量。 | `affected merge` 与 `release`。 |
@@ -45,7 +45,7 @@
 
 ### 3.2 golden review
 
-适配器契约为每个输入保存可读的 normalized、diagnostics、effective、conversion 和 deployment-plan golden。更新流程为：
+适配器契约为每个输入保存可读的 normalized、diagnostics、effective draft、conversion 和 `adapter-deployment-draft`（`AdapterDeploymentDraft`）golden；适配器 golden 不包含完整 `DeploymentPlan`。完整计划的 `deploymentPlanId`、`planHash`、来源/目标哈希、`backupPolicy`、`requiredConfirmations`、待确认警告和不可变性由 core/deployer 集成测试负责，并使用稳定字段断言或独立集成 golden 验证。更新流程为：
 
 1. 先运行契约测试并保留旧/新差异。
 2. 生成器不得自动覆盖已批准 golden；使用独立 `--update` 意图更新。

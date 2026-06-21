@@ -205,13 +205,14 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 
 ## 11. Runbook：验证失败
 
-1. 将 DeploymentRecord 状态标记为 `failed`，记录 `failureStage: "verifying"` 和结构化 `reason: "VERIFICATION_FAILED"`；停止关联 watcher 触发的自动动作，并保存写入后 hash 和验证诊断。
-2. 区分“重新扫描失败”“Schema/语义不一致”“目标工具不可读取”和“外部并发修改”。不得以文本存在替代语义验证。
-3. 检查当前目标 hash 是否仍等于 deployment 输出。若已漂移，停止自动回滚并要求冲突处理。
-4. 验证配置 deployment 备份和操作日志，生成回滚 diff 与预计影响，向用户明确验证失败原因。
-5. 执行受控逆序回滚；恢复后重新扫描并验证原始语义、hash、权限和索引。
-6. 若回滚验证成功，将 DeploymentRecord 状态标记为 `rolled_back` 并记录 `cause: "VERIFICATION_FAILED"`；若失败，将状态标记为 `failed`，记录 `failureStage: "rolling_back"` 和结构化 `reason`，并转部分替换 runbook 的人工分支。
-7. 修复转换/适配器前新增该输入的合成 fixture 与 golden 回归测试；旧失败 deployment 不可改写成成功。
+1. 在 DeploymentRecord 仍为 `verifying` 时持久化验证结果、写入后 hash 和结构化诊断 `reason: "VERIFICATION_FAILED"`，停止关联 watcher 触发的自动动作；随后按状态机把记录从 `verifying` 迁移到 `rolling_back`，不得先写终态 `failed`。
+2. 区分“重新扫描失败”“Schema/语义不一致”“目标工具不可读取”和“外部并发修改”。不得以文本存在替代语义验证；这些分类作为回滚原因，不新增 DeploymentRecord 状态。
+3. 检查当前目标 hash 是否仍等于 deployment 输出。若已漂移导致无法安全开始回滚，将状态从 `rolling_back` 终结为 `failed`，记录 `failureStage: "rolling_back"` 和 `reason: "ROLLBACK_BLOCKED_BY_TARGET_DRIFT"`，再要求冲突处理。
+4. 验证配置 deployment 备份和操作日志，生成回滚 diff 与预计影响。若备份缺失、hash 不符或补偿计划无法安全建立，将状态终结为 `failed`，记录 `failureStage: "rolling_back"` 和结构化 `reason`，转相应恢复 runbook。
+5. 前置校验通过后执行受控逆序回滚；每个补偿操作持久化结果，全部恢复后重新扫描并验证原始语义、hash、权限和索引。
+6. 补偿及回滚验证全部成功时，从 `rolling_back` 迁移到终态 `rolled_back` 并记录 `cause: "VERIFICATION_FAILED"`。
+7. 回滚开始后任一补偿无法完成或回滚验证失败时，从 `rolling_back` 迁移到终态 `failed`，记录 `failureStage: "rolling_back"` 和结构化 `reason`，保留全部证据并转“部分替换失败”runbook 的人工分支。
+8. 修复转换/适配器前新增该输入的合成 fixture 与对应层级 golden/断言回归测试；既有 DeploymentRecord 终态不得改写成成功。
 
 ## 12. Runbook：索引损坏
 
