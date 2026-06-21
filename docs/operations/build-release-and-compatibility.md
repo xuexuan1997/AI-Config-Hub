@@ -38,8 +38,8 @@
   "electronVersion": "<pinned-version>",
   "pnpmVersion": "<pinned-version>",
   "databaseSchemaVersion": 7,
-  "assetSchemaVersion": 3,
-  "adapterApiVersion": 2,
+  "assetSchemaVersion": "3.0.0",
+  "adapterApiVersion": 1,
   "adapters": {
     "claude-code": "1.0.0",
     "cursor": "1.0.0",
@@ -136,8 +136,8 @@ desktop 与 CLI 默认共享产品 SemVer：
 ### 4.2 独立版本轴
 
 - `databaseSchemaVersion`：Drizzle migration 的单调整数；数据库记录应用过的 migration 和创建/最后升级产品版本。
-- `assetSchemaVersion`：统一 Asset/EffectiveConfig 规范化表示版本；读取方必须显式升级旧表示或返回不支持错误。
-- `adapterApiVersion`：编译时适配器接口版本；注册表拒绝不匹配实现。
+- `assetSchemaVersion`：统一 Asset/EffectiveConfig 规范化表示版本，类型是 SemVer 字符串（例如 `"3.0.0"`）；读取方必须显式升级旧表示或返回不支持错误。
+- `adapterApiVersion`：编译时适配器契约的整数主版本，MVP 固定为数值 `1`；注册表拒绝不匹配实现。它不是 SemVer，也不能与 `adapterVersion` 混用。
 - adapter version：每个工具适配器独立 SemVer，写入扫描、诊断和 deployment 历史，用于解释行为差异。
 - 外部工具支持范围：适配器声明经过测试的工具版本区间；未知更高版本产生保守诊断，不能伪装为完全支持。
 

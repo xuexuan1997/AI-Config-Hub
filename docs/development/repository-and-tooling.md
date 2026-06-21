@@ -16,7 +16,7 @@
 | `apps/desktop` | Electron 主进程、受限 preload、React renderer、窗口生命周期和桌面组装。 | 应用自身不作为库被其他 workspace 包引用；主进程仅从包的公开 `exports` 组装能力，renderer 仅使用 preload 暴露的 API。 | `src/**/*.test.ts(x)`；桌面集成测试放 `tests/integration/`；Electron E2E 放仓库根 `tests/e2e/desktop/`。 |
 | `apps/cli` | Commander.js 命令、终端和 `--json` 输出、退出码、无图形运行时组装。 | `package.json#bin` 是可执行入口；不得导入 Electron、renderer 或 IPC handler。 | `src/**/*.test.ts`；CLI 集成与 smoke 测试放 `tests/integration/`。 |
 | `packages/core` | 领域模型、用例编排、兼容判断和不依赖基础设施的业务规则。 | `src/index.ts` 导出稳定类型、端口和用例；不能依赖具体数据库、文件系统、Git 或 Electron。 | `src/**/*.test.ts`。 |
-| `packages/adapters` | Claude Code、Cursor、Codex、OpenCode 适配器和编译时注册表。 | `src/index.ts` 仅导出适配器契约、注册表和已注册适配器；工具内部解析器不公开。 | `src/**/*.test.ts`；契约夹具在 `fixtures/<tool>/<resource>/`；golden 在相邻 `expected/`。 |
+| `packages/adapters` | Claude Code、Cursor、Codex、OpenCode 适配器和编译时注册表。 | `src/index.ts` 仅导出适配器契约、注册表和已注册适配器；工具内部解析器不公开。 | `src/**/*.test.ts`；唯一夹具根为 `packages/adapters/test/fixtures/<toolId>/`，唯一 golden 根为 `packages/adapters/test/golden/<toolId>/`；契约测试代码在 `tests/contract/adapters/`。 |
 | `packages/scanner` | 安全文件发现、解析调度、哈希、增量扫描和 Chokidar 事件归并。 | `src/index.ts` 导出扫描服务及其端口；不直接决定工具语义。 | `src/**/*.test.ts`；临时文件系统集成测试放 `tests/integration/`。 |
 | `packages/deployer` | 差异与变更计划、备份、原子写入、验证、补偿和回滚。 | `src/index.ts` 导出预览、执行、验证和回滚用例；写入必须经过计划，不公开任意写文件函数。 | `src/**/*.test.ts`；故障注入测试放 `tests/integration/`。 |
 | `packages/storage` | SQLite/Drizzle Schema、数据访问、事务边界和迁移。 | `src/index.ts` 导出 repository 接口实现、数据库启动与迁移 API；不导出 Drizzle 内部表路径。 | `src/**/*.test.ts`；迁移测试放 `tests/integration/migrations/`。 |
@@ -117,7 +117,7 @@ apps/cli ──────┴─> 与 desktop 相同的核心用例；不经过
 
 ### 6.3 适配器与夹具变更
 
-- 修改适配器发现、解析、优先级、诊断、转换或部署计划时，必须同时更新对应工具/资源的合成或不可逆匿名夹具、normalized golden、兼容声明和契约测试。
+- 修改适配器发现、解析、优先级、诊断、转换或部署计划时，必须同时更新 `packages/adapters/test/fixtures/<toolId>/` 中对应工具/资源的合成或不可逆匿名夹具、`packages/adapters/test/golden/<toolId>/` 中的 normalized golden、兼容声明和 `tests/contract/adapters/` 中的契约测试。
 - golden 更新不能由脚本生成后直接接受；审查者必须阅读差异，说明字段增加、丢弃或重写原因。
 - 新工具版本先添加 version-boundary 与 unknown-newer-version 用例，不得默认为完全兼容。
 

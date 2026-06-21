@@ -80,7 +80,9 @@
 
 导出流程必须：选择任务 → 生成候选清单 → 运行 allowlist 和 secret scan → 展示每个文件、大小、字段与排除原因 → 用户精确确认 → 写到用户选择的位置 → 再扫描最终 archive。若最终扫描发现疑似秘密，导出失败并展示字段位置，不提供“一键忽略全部”。
 
-## 4. 备份模型
+## 4. 配置 deployment 备份模型
+
+本节只描述配置文件 deployment 的逐操作备份。数据库备份使用独立 `backupId`、目录、manifest、保留策略和恢复 runbook，绝不复用 `deploymentId` 或配置备份文件。
 
 ### 4.1 目录布局
 
@@ -88,19 +90,20 @@
 
 ```text
 <app-data>/backups/
-  <deployment-id>/
-    manifest.json
-    files/
-      <operation-index>-<opaque-name>.bak
-    verification.json
-    operation-log.jsonl
+  deployments/
+    <deployment-id>/
+      manifest.json
+      files/
+        <operation-index>-<opaque-name>.bak
+      verification.json
+      operation-log.jsonl
 ```
 
 `opaque-name` 不含原绝对路径；路径映射只存在受保护的 manifest。临时创建使用 `<deployment-id>.tmp`，所有文件写入、fsync 和 hash 校验完成后原子 rename 为正式目录。未完成 `.tmp` 不可作为有效备份。
 
 ### 4.2 Manifest
 
-`manifest.json` 使用版本化 Zod Schema，至少包含：`manifestVersion`、`deploymentId`、`correlationId`、`createdAt`、`appVersion`、`databaseSchemaVersion`、`assetSchemaVersion`、`adapterId/version`、目标 platform、每个 operation 的规范化目标路径、备份相对文件名、原文件是否存在、原/备份 SHA-256、mode/ACL 摘要、大小、预览时与执行前 hash，以及 manifest 自身完整性信息。它不得保存配置正文、密钥抽取值或 Git 凭据。
+`manifest.json` 使用版本化 Zod Schema，至少包含：`manifestVersion`、`deploymentId`、`correlationId`、`createdAt`、`appVersion`、`databaseSchemaVersion`、`assetSchemaVersion`（SemVer 字符串，例如 `"3.0.0"`）、`adapterApiVersion`（MVP 固定为数值 `1`）、`adapterId/version`、目标 platform、每个 operation 的规范化目标路径、备份相对文件名、原文件是否存在、原/备份 SHA-256、mode/ACL 摘要、大小、预览时与执行前 hash，以及 manifest 自身完整性信息。它不得保存配置正文、密钥抽取值或 Git 凭据。
 
 SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup directory reference、manifest version/hash、验证状态和保留状态。文件夹是恢复事实，数据库是索引；索引损坏时可通过已验证 manifest 重建关联，但不能通过目录名猜测内容。
 
@@ -113,7 +116,7 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 
 ### 4.4 保留与清理
 
-默认每个规范化目标集合保留**最近 20 个有效 deployment 备份**，并保留**最近 90 天**创建的有效备份。只有同时“排名早于最近 20 个”且“年龄超过 90 天”才有资格自动清理。以下备份受保护，不受自动清理：活动 deployment、最近一次成功 deployment、未解决的 rollback/verification failure、用户 pin、数据库升级前备份，以及其 manifest/文件未通过校验的目录。
+默认每个规范化目标集合保留**最近 20 个有效 deployment 备份**，并保留**最近 90 天**创建的有效备份。只有同时“排名早于最近 20 个”且“年龄超过 90 天”才有资格自动清理。以下备份受保护，不受自动清理：活动 deployment、最近一次成功 deployment、未解决的 rollback/verification failure、用户 pin，以及其 manifest/文件未通过校验的目录。
 
 清理按“扫描候选 → 验证 DB 引用/文件锁 → 写 cleanup plan → 删除单个目录 → 记录结果”执行，不能与 deployment/rollback 并发。先删除文件内容，再删除目录和索引；部分删除标记 `cleanup_failed` 并保留可诊断记录。磁盘压力只提示用户并允许精确预览清理候选，不能违反保护规则自动清空。用户修改保留策略时应显示预计占用和将受影响的 deployment。
 
@@ -123,24 +126,51 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 
 回滚只接受 manifest hash 与 deployment record 一致且文件 hash 验证通过的备份。校验失败时不尝试“最接近”文件；进入备份丢失/损坏 runbook。一个备份只关联一个 deployment，但一个批量 deployment 可含多个 target operation。
 
-## 5. 恢复总则
+## 5. 数据库备份模型
 
-所有 runbook 都遵循：停止产生新写入 → 记录版本/错误码/correlation ID → 保全 DB、WAL、operation log、backup manifest 和当前目标 hash → 判断事实状态 → 预览恢复计划 → 执行最小动作 → 验证源文件和索引 → 记录结果。不得从失败日志直接复制未审查 shell 命令，也不得为了“重试”先删除数据库或备份。
+数据库备份用于 migration、数据库损坏和应用版本回退恢复，不是配置文件 deployment 的补偿介质。数据库备份根固定为：
+
+```text
+<app-data>/backups/
+  database/
+    <backup-id>/
+      database.sqlite
+      manifest.json
+      verification.json
+```
+
+`backupId` 是随机、不可复用的数据库备份标识，不等于任何 `deploymentId`。临时目录使用 `<backup-id>.tmp`；完整备份、校验和权限验证完成后才原子 rename 为正式目录。数据库 backup manifest 使用独立版本化 Zod Schema，至少包含：`manifestVersion`、`backupId`、`reason`（例如 `pre_migration`、`manual`、`pre_downgrade`）、`createdAt`、`appVersion`、`databaseSchemaVersion`、待执行/来源 migration 版本、`sqliteVersion`、`sourceDatabaseId`、`databaseFile`、`sizeBytes`、`sha256`、page count、integrity check 结果和权限摘要；不得伪造 `deploymentId` 关联。
+
+### 5.1 一致快照与验证
+
+数据库仍在线时必须通过 SQLite Online Backup API 或经评审的安全等价机制生成一致快照；不得在未协调 WAL 的情况下直接复制 `database.sqlite`、WAL 和 SHM。备份流程为：获取数据库备份/迁移锁并暂停新写事务 → 启动一致快照 → 写入限制性临时目录 → `fsync` 文件与父目录 → 在独立只读连接运行 `PRAGMA integrity_check`、Schema/version 和关键表可读检查 → 计算 SHA-256 → 写 manifest/verification → 原子发布目录。失败的临时目录不能被列为可恢复备份。
+
+恢复前重新校验目录权限、manifest Schema、`database.sqlite` 大小/SHA-256、SQLite integrity、`databaseSchemaVersion` 与目标应用的可读范围。恢复过程先停止所有连接并保全当前 DB/WAL/SHM，再把已验证备份复制到同文件系统临时位置并原子替换；不得直接在备份副本上启动应用或修改它。
+
+### 5.2 独立权限与保留策略
+
+数据库备份目录遵守 POSIX `0700`/文件 `0600` 或 Windows 当前用户专属 ACL，并且不位于 Git、公共临时目录或默认云同步目录。其保留策略独立于配置 deployment：默认保留最近 **5 个已验证数据库备份**，并保留最近 **30 天**内的已验证备份；只有同时早于最近 5 个且超过 30 天才可清理。最近一个已验证备份、当前升级/回退窗口所需备份、失败 migration 关联备份、用户 pin 和校验失败证据不得自动删除。
+
+清理数据库备份必须先确认没有 migration/restore/只读恢复任务引用 `backupId`，生成精确清理计划，再逐目录删除并记录结果。删除数据库备份不影响 `deployments/<deployment-id>/` 配置备份，反之亦然。
+
+## 6. 恢复总则
+
+所有 runbook 都遵循：停止产生新写入 → 记录版本/错误码/correlation ID → 分别保全 DB/WAL、数据库 backup manifest、配置 deployment operation log/manifest 和当前目标 hash → 判断事实状态 → 预览恢复计划 → 执行最小动作 → 验证源文件和索引 → 记录结果。不得从失败日志直接复制未审查 shell 命令，也不得为了“重试”先删除数据库或任一类备份。
 
 若 UI 和 CLI 仍可用，优先使用受控恢复命令；手工文件操作是最后手段，并在副本上进行。任何 runbook 遇到 hash 与记录不符时立即停止自动化，避免覆盖用户在故障后做的新修改。
 
-## 6. Runbook：数据库 migration 失败
+## 7. Runbook：数据库 migration 失败
 
 1. 停止新的 scan、deployment、rollback 和 Git 写操作；应用进入只读恢复模式，不重复自动 migration。
 2. 记录应用版本、DB `user_version`/migration 表、稳定错误码、correlation ID、DB/WAL/SHM 是否存在和文件 hash；日志只保留脱敏摘要。
-3. 验证启动前数据库备份的 manifest、大小和 SHA-256。若不存在或损坏，跳到备份丢失 runbook，不覆盖现库。
+3. 按 migration 记录定位 `<backup-root>/database/<backupId>/`，验证独立 database backup manifest、权限、`database.sqlite` 大小/SHA-256、`databaseSchemaVersion` 和 integrity 结果。若不存在或损坏，转“数据库备份丢失或损坏”runbook，不使用配置 deployment 备份替代。
 4. 在临时副本对当前 DB 执行 SQLite integrity check，并确认 migration 是“未开始、事务已回滚、已完成但版本未记账”中的哪种状态；禁止猜测后手改版本号。
 5. 若事务完整回滚且 integrity 正常，修复环境原因（磁盘、权限、锁）后只重试一次受控 migration；重试仍失败则保持只读。
-6. 若 DB 不一致，预览并由用户确认恢复启动前备份；保留失败 DB 副本供诊断，不在原文件上实验。
-7. 恢复/迁移后执行 integrity check，核对 migration 序列、deployment/backup 关联和只读查询，再重新扫描文件重建可派生索引。
-8. 记录恢复结果和禁止降级状态；只有全部校验通过才重新开放部署。
+6. 若 DB 不一致，精确预览恢复数据库备份会丢失的 settings、deployment history、backup associations 和其他非派生记录；用户确认后保全失败 DB/WAL/SHM，再按数据库恢复流程原子替换，不在备份副本上实验。
+7. 恢复/迁移后执行 integrity check，核对 migration 序列、settings、deployment history、backup associations 和只读查询，再重新扫描事实来源文件以刷新可派生索引。
+8. 记录使用的 `backupId`、恢复结果和禁止降级状态；只有全部校验通过才重新开放部署。
 
-## 7. Runbook：扫描中断
+## 8. Runbook：扫描中断
 
 1. 将对应 ScanRun 状态标记为 `failed`，记录结构化 `reason: "PROCESS_INTERRUPTED"`，并停止其 worker/watch 回调；扫描中断本身不触发配置写入。
 2. 记录 correlation ID、最后 phase、已处理/失败计数、staging transaction 和 Chokidar 队列状态。
@@ -150,7 +180,7 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 6. 启动新 `scanId`，校验部分损坏文件产生诊断但不阻断其他文件；比较最终文件 hash 与索引。
 7. 恢复 Chokidar 监听并记录新旧 scan 的关联；不修改任何源配置。
 
-## 8. Runbook：替换前 deployment 失败
+## 9. Runbook：替换前 deployment 失败
 
 适用于目标 hash 冲突、备份/权限/临时文件/fsync 失败，且 operation log 证明没有执行任何原子替换。
 
@@ -162,50 +192,61 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 6. 修复磁盘、权限或锁后重新生成完整 diff、备份计划和确认；不要复用旧确认。
 7. 记录失败终态与恢复动作，验证没有配置写入后解除锁。
 
-## 9. Runbook：部分替换失败
+## 10. Runbook：部分替换失败
 
 1. 立即停止后续 operation 和该目标集合的 scan/watch-triggered deployment；不要再次执行正向写入。
 2. 从持久化 operation log 逐项列出 `replaced`、`not_started`、`unknown`，读取当前 hash；以文件事实为准，不只信内存状态。
-3. 验证 backup manifest、每个原文件 hash 和权限。任一备份缺失/损坏时停止自动补偿并进入备份丢失 runbook。
+3. 验证配置 deployment backup manifest、每个原文件 hash 和权限。任一备份缺失/损坏时停止自动补偿并进入“配置 deployment 备份丢失或损坏”runbook。
 4. 生成逆序补偿预览：只恢复当前 hash 等于本 deployment 写入 hash 的文件。若用户/外部进程随后修改，标为冲突并等待选择。
 5. 用户确认后按相反顺序恢复已替换文件，每次原子写入并 fsync；每步追加 operation log。
 6. 逐个验证恢复 hash、mode/ACL 和原先“不存在”的目标仍不存在；失败时将 DeploymentRecord 状态标记为 `failed`，并记录 `failureStage: "rolling_back"` 和结构化 `reason`，保留所有证据。
 7. 完成后全量重扫受影响根，核对 EffectiveConfig 和 deployment/backup 状态；只有全部恢复验证通过才标记 `rolled_back`。
 8. 保留此备份和日志直至问题关闭，不参与自动保留清理。
 
-## 10. Runbook：验证失败
+## 11. Runbook：验证失败
 
 1. 将 DeploymentRecord 状态标记为 `failed`，记录 `failureStage: "verifying"` 和结构化 `reason: "VERIFICATION_FAILED"`；停止关联 watcher 触发的自动动作，并保存写入后 hash 和验证诊断。
 2. 区分“重新扫描失败”“Schema/语义不一致”“目标工具不可读取”和“外部并发修改”。不得以文本存在替代语义验证。
 3. 检查当前目标 hash 是否仍等于 deployment 输出。若已漂移，停止自动回滚并要求冲突处理。
-4. 验证备份和操作日志，生成回滚 diff 与预计影响，向用户明确验证失败原因。
+4. 验证配置 deployment 备份和操作日志，生成回滚 diff 与预计影响，向用户明确验证失败原因。
 5. 执行受控逆序回滚；恢复后重新扫描并验证原始语义、hash、权限和索引。
 6. 若回滚验证成功，将 DeploymentRecord 状态标记为 `rolled_back` 并记录 `cause: "VERIFICATION_FAILED"`；若失败，将状态标记为 `failed`，记录 `failureStage: "rolling_back"` 和结构化 `reason`，并转部分替换 runbook 的人工分支。
 7. 修复转换/适配器前新增该输入的合成 fixture 与 golden 回归测试；旧失败 deployment 不可改写成成功。
 
-## 11. Runbook：索引损坏
+## 12. Runbook：索引损坏
 
 1. 禁止 deployment 和 migration，只读访问文件；记录 SQLite 错误、版本和 DB/WAL/SHM hash。
 2. 在副本运行 integrity check，确认是主库损坏、WAL 不完整、Schema 不兼容还是查询/代码错误。
-3. 导出仍可读的非派生元数据清单，尤其 deployment、backup、用户设置和 migration 版本；不把配置正文加入诊断包。
-4. 验证最近数据库备份。若恢复备份，先保留损坏副本并预览将丢失的历史区间。
-5. 对可重建的 tools/projects/scopes/assets/diagnostics 索引创建全新数据库并从事实来源文件全量扫描；不得用损坏 row 覆盖文件。
-6. 从已验证 manifest 重建 backup 关联；无法证明的记录标为 orphaned，不能用于自动回滚。
-7. 执行 integrity check、外键检查、Schema 版本检查和 EffectiveConfig 抽样；通过后原子切换新 DB。
+3. 尽可能从只读副本导出仍可读的非派生元数据清单，尤其 settings、deployment history、backup associations 和 migration 版本；不把配置正文加入诊断包。
+4. 验证最近独立数据库备份的 `backupId`、manifest、SHA-256、Schema 版本和 integrity。若有效，先保留损坏 DB/WAL/SHM，精确预览将丢失的历史区间，再按数据库恢复流程原子替换。
+5. 若没有可验证数据库备份，转“数据库备份丢失或损坏”runbook。不得因为配置文件可重建索引，就假装 settings、deployment history 或 backup associations 已恢复。
+6. 恢复数据库后从事实来源文件全量扫描，仅刷新 tools/projects/scopes/assets/diagnostics 等可派生索引；不得用旧数据库 row 覆盖文件。
+7. 执行 integrity check、外键检查、Schema 版本检查和 EffectiveConfig 抽样；通过后才切换回正常模式。
 8. 恢复监听和写入前运行一次只读 scan；保留损坏 DB 直至用户确认清理。
 
-## 12. Runbook：备份丢失或损坏
+## 13. Runbook：数据库备份丢失或损坏
+
+1. 保持只读恢复，停止 migration、deployment、rollback、设置更新和备份清理；不要用配置 deployment 备份或同名目录替代数据库备份。
+2. 按预期 `backupId` 在 `<backup-root>/database/` 中核对 manifest、`database.sqlite`、权限和清理日志；只接受 manifest Schema、SHA-256、integrity 和 `databaseSchemaVersion` 全部通过的候选。
+3. 若用户有明确管理的 OS/卷级外部数据库副本，先复制到隔离目录并执行与 Online Backup API 产物相同的完整校验；未经验证不得替换当前数据库。
+4. 尽可能从损坏数据库的只读副本导出 settings、deployment history、backup associations、migration audit 等非派生记录；导出失败必须列出无法恢复的表和时间范围。
+5. 向用户精确说明：配置文件只能重建 tools/projects/scopes/assets/diagnostics 等派生索引，不能重建 settings、deployment history、backup associations 或已丢失的审计事实。不得用空记录或配置 manifest 冒充这些数据已恢复。
+6. 用户可选择提供可信人工数据库备份，或在确认上述永久数据损失后初始化新数据库。初始化前保全损坏 DB/WAL/SHM，不静默删除。
+7. 初始化新库后只从事实来源配置执行全量只读扫描；settings 需重新确认，`deployments/<deployment-id>/` 下的配置备份只能列为 orphaned recovery candidates，未经人工核对不能恢复原 deployment 关联或用于自动回滚。
+8. 执行 integrity/外键/Schema 检查，生成显式数据丢失与人工恢复报告；只有用户确认且派生索引验证通过后才退出只读恢复。
+
+## 14. Runbook：配置 deployment 备份丢失或损坏
 
 1. 立即禁止依赖该备份的 rollback；不要创建同 ID 空目录、修改 manifest 或从其他 deployment 猜测替代。
-2. 核对 DB backup record、规范化 backup path、manifest hash、文件权限和清理日志，排除索引路径错误。
-3. 在受控 backup 根查找具有同 `deploymentId` 且 manifest hash 匹配的有效目录；不扫描/上传用户全盘。
+2. 核对 SQLite `backups` 配置备份记录、规范化 backup path、manifest hash、文件权限和清理日志，排除索引路径错误。
+3. 只在 `<backup-root>/deployments/` 查找具有同 `deploymentId` 且 manifest hash 匹配的有效目录；不搜索 `database/`，也不扫描/上传用户全盘。
 4. 若存在用户明确管理的外部副本，先复制到隔离目录并验证完整 manifest、每文件 hash 和版本；不要直接从外部位置回滚。
 5. 生成当前目标与可得历史/源资产的只读 diff。没有可验证备份时，自动回滚不可用，只能由用户基于 Git、工具自身历史或人工重建选择恢复内容。
 6. 在任何人工恢复前再备份当前状态，避免覆盖故障后的有效修改；精确预览每个目标。
 7. 恢复后全量扫描和语义验证，把原 DeploymentRecord 状态标记为 `failed` 并记录结构化 `reason: "BACKUP_UNAVAILABLE"`，不得改写历史。
 8. 调查是权限、磁盘、手工删除还是清理竞态；修复保护规则并新增故障注入测试。
 
-## 13. Runbook：Git 同步冲突
+## 15. Runbook：Git 同步冲突
 
 1. 停止自动 pull/push/merge 和基于冲突 worktree 的 deployment；保留用户当前 branch、HEAD、index 和 working tree。
 2. 记录仓库缩略标识、当前/上游 commit、冲突文件列表和 correlation ID；不记录 remote URL 凭据或文件正文到普通日志。
@@ -216,7 +257,7 @@ SQLite `deployments` 与 `backups` 记录保存 `deploymentId`、backup director
 7. 在生成 deployment 前重新扫描并重新计算 hash；旧预览和确认全部失效。
 8. push 仅在用户明确确认且 remote 未再次前进时执行；失败保留本地恢复点和冲突记录。
 
-## 14. Support bundle
+## 16. Support bundle
 
 support bundle **只在用户主动点击/执行导出命令时生成**，不在崩溃、更新或错误发生时自动创建/上传。默认内容为：
 
@@ -226,9 +267,9 @@ support bundle **只在用户主动点击/执行导出命令时生成**，不在
 - 适配器 capability/版本、扫描/部署状态计数、错误码和缩略路径。
 - 用户选择纳入的兼容性检查结果，例如 glibc symbol/smoke 摘要。
 
-默认明确排除：所有配置/Rule/Agent/Skill/MCP 正文，原始输入与 golden 以外的用户文件，backup 文件，SQLite/WAL/SHM，Git diff/patch/remote URL，用户名、完整 home/项目路径，环境变量，argv 自由文本，剪贴板，Token、Cookie、SSH key、API key 和其他凭据。
+默认明确排除：所有配置/Rule/Agent/Skill/MCP 正文，原始输入与 golden 以外的用户文件，配置 deployment backup、database backup、SQLite/WAL/SHM，Git diff/patch/remote URL，用户名、完整 home/项目路径，环境变量，argv 自由文本，剪贴板，Token、Cookie、SSH key、API key 和其他凭据。
 
-### 14.1 精确预览与导出流程
+### 16.1 精确预览与导出流程
 
 1. 用户选择 correlation/task 和时间范围；系统不默认选择“全部历史”。
 2. 在内存/受控临时目录生成候选，逐文件应用 allowlist、路径缩略和 secret scan。
@@ -240,11 +281,12 @@ support bundle **只在用户主动点击/执行导出命令时生成**，不在
 
 支持人员必须用 bundle 中的 correlation ID、稳定错误码和版本证据进行定位，不要求用户关闭脱敏或直接发送整个应用数据目录。
 
-## 15. 运维验证清单
+## 17. 运维验证清单
 
 - 日志 level、rolling、权限、磁盘不足、路径缩略和敏感字段 allowlist 有自动化测试。
 - desktop、CLI、IPC error、诊断导出与 support bundle 的脱敏结果一致。
-- 每个 deployment 在替换前都有已校验备份，并能通过 `deploymentId` 找到 manifest 与 operation log。
-- 保留策略不会删除活动、最近成功、失败恢复、pin 或 migration 前备份。
-- 八类 runbook 都有至少一个确定性故障注入演练，部分替换/回滚失败必须三平台覆盖。
+- 每个 deployment 在替换前都有已校验的配置备份，并能通过 `deploymentId` 在 `backups/deployments/` 找到 manifest 与 operation log。
+- 数据库备份通过 SQLite Online Backup API 或安全等价机制生成，并能通过 `backupId` 在 `backups/database/` 找到已校验 `database.sqlite` 与 manifest。
+- 配置 deployment 与数据库备份使用独立保留策略；不会删除活动、最近成功、失败恢复、pin 或当前 migration/回退窗口所需备份。
+- 九类 runbook 都有至少一个确定性故障注入演练，部分替换/回滚失败与数据库恢复必须覆盖相应平台。
 - 默认安装无遥测网络请求；support bundle 只由用户触发且导出前显示精确预览。

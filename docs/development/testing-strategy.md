@@ -23,7 +23,7 @@
 | 测试层 | 主要内容 | 归属/位置 | 运行频率 | 阻断级别 |
 | --- | --- | --- | --- | --- |
 | 单元测试 | 规范化、优先级、兼容等级、路径安全、错误映射、差异与部署计划。 | 各 `packages/*/src/**/*.test.ts`，Vitest。 | 每个 PR。 | `merge`。 |
-| 适配器契约 | 发现、解析、生效规则、诊断、转换、部署计划、版本边界。 | `packages/adapters/fixtures/` 与 `tests/contract/adapters/`；适配器所有者负责。 | 每个 PR；四工具全量可并行。 | `merge`，任一工具/资源缺失也失败。 |
+| 适配器契约 | 发现、解析、生效规则、诊断、转换、部署计划、版本边界。 | 夹具：`packages/adapters/test/fixtures/<toolId>/`；golden：`packages/adapters/test/golden/<toolId>/`；测试代码：`tests/contract/adapters/`。适配器所有者负责。 | 每个 PR；四工具全量可并行。 | `merge`，任一工具/资源缺失也失败。 |
 | 集成测试 | 临时目录、SQLite/Drizzle、Chokidar、原子写入、备份、Git、迁移。 | 各包 `tests/integration/` 与根 `tests/integration/`。 | 受影响 PR + 每日全量。 | `affected merge`；全量 `release`。 |
 | IPC 契约 | Zod 请求/响应/事件、错误 envelope、进度顺序、取消、renderer 白名单。 | `tests/contract/ipc/`，`packages/api` 与 desktop 共同负责。 | API、preload、desktop PR；发布候选全量。 | `affected merge` 与 `release`。 |
 | Electron E2E | 首次扫描、诊断、生效配置、迁移预览、确认、部署、验证、历史和回滚。 | `tests/e2e/desktop/`，Playwright。 | desktop PR 冒烟；发布候选三平台全量。 | `affected merge` 与 `release`。 |
@@ -33,6 +33,8 @@
 失败测试不得以“已知 flaky”无限重跑后放行。最多一次自动重跑只用于收集诊断，最终状态仍按第一次失败阻断；隔离 flaky 用例必须有 issue、责任人和到期日，且不能隔离安全、写入、migration 或回滚门禁。
 
 ## 3. 夹具与 golden 文件政策
+
+适配器测试只使用以下三个规范位置，不建立其他别名目录：源夹具位于 `packages/adapters/test/fixtures/<toolId>/`，golden 位于 `packages/adapters/test/golden/<toolId>/`，契约测试代码位于 `tests/contract/adapters/`。
 
 ### 3.1 数据来源
 

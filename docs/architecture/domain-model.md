@@ -97,7 +97,7 @@ AssetId = UUIDv5(assetNamespace, toolId + resource.kind + canonicalSourcePath + 
 
 **身份。** `ConversionResultId` 由 `sourceAssetId + sourceContentHash + targetToolId + targetResourceKind + adapterVersion + targetSchemaVersion` 派生。
 
-**关键属性。** 所有变体都有 `conversionResultId`、`sourceAssetId`、`sourceContentHash`、`targetToolId`、`targetResourceKind`、`adapterVersion`、`level`、`diagnostics`。三个固定等级为：
+**关键属性。** 所有变体都有 `conversionResultId`、`sourceAssetId`、`sourceContentHash`、`targetToolId`、`targetResourceKind`、`targetSchemaVersion`、`adapterVersion`、`level`、`diagnostics`。三个固定等级为：
 
 - `full`：目标完整表达源资产语义；包含可部署 `outputs`，没有已知语义丢失。
 - `partial`：目标只能表达部分语义；必须同时包含可部署 `outputs`、`retainedFields`、`droppedFields`、`transformedFields` 和用户可见 `warnings`。`transformedFields` 逐项说明源字段、目标字段和变换原因。
@@ -115,19 +115,19 @@ AssetId = UUIDv5(assetNamespace, toolId + resource.kind + canonicalSourcePath + 
 
 **关键属性。** `deploymentPlanId`、来源 `conversionResultIds`、`operations`、结构化与文本 `diffs`、`expectedSourceHashes`、`expectedTargetHashes`（不存在目标使用明确哨兵值）、`backupPolicy`、`verificationStrategy`、`requiredConfirmations`、`planHash`、`adapterVersion`、`createdAt`、`expiresAt`（可选）。
 
-**不变量。** 计划不含 `unsupported` 转换；目标路径唯一且均通过允许根校验；操作顺序确定；确认后不得修改；执行前任一来源或目标哈希漂移都会使计划失效并要求重新预览；`partial` 必须保留用户已看到并接受的警告证据。
+**不变量。** 计划不含 `unsupported` 转换；目标路径唯一且均通过允许根校验；操作顺序确定；计划一经生成即不可变且自身没有生命周期状态；执行前任一来源或目标哈希漂移都会使计划失效并要求重新预览；`partial` 必须保留用户需要看到并确认的警告证据。
 
-**关系。** `DeploymentPlan` 消费一个或多个可部署 `ConversionResult`；确认并执行后创建一个 `DeploymentRecord`。
+**关系。** `DeploymentPlan` 消费一个或多个可部署 `ConversionResult`。计划生成并持久化时，系统在同一持久化边界创建对应 `DeploymentRecord`，记录初始状态 `planned`；后续确认与执行只推进记录状态，不修改计划。
 
 ## DeploymentRecord
 
-**责任。** `DeploymentRecord` 是一次受控写入的审计与恢复记录，持续记录状态、每步结果、备份、验证和回滚证据。
+**责任。** `DeploymentRecord` 是从不可变计划产生到部署终态的审计与恢复记录，持续记录确认、每步结果、备份、验证和回滚证据。
 
-**身份。** `DeploymentRecordId` 在开始执行确认后的计划时生成，永不复用；它引用且不替代 `DeploymentPlanId`。
+**身份。** `DeploymentRecordId` 在不可变 `DeploymentPlan` 生成并持久化时同步生成，永不复用；它引用且不替代 `DeploymentPlanId`，二者是一对一关系。
 
-**关键属性。** `deploymentRecordId`、`deploymentPlanId`、`confirmedPlanHash`、`status`、`startedAt`、`finishedAt`（可选）、`operations`、`backupLocations`、`writeResults`、`verificationResult`、`rollbackResults`、`correlationId`、`diagnostics`、执行时适配器与 Schema 版本。
+**关键属性。** `deploymentRecordId`、`deploymentPlanId`、`status`（初始为 `planned`）、`createdAt`、`confirmedAt`（可选）、`confirmedPlanHash`（确认后设置）、`startedAt`（可选）、`finishedAt`（可选）、`operations`、`backupLocations`、`writeResults`、`verificationResult`、`rollbackResults`、`correlationId`、`diagnostics`、执行时适配器与 Schema 版本。
 
-**不变量。** 状态只能按部署状态机迁移；每个已写目标必须有对应备份或明确的“原先不存在”记录；`succeeded` 必须具备通过的验证证据；发生写入后失败必须尝试回滚；审计记录与日志必须脱敏；记录不因 SQLite 可重建而授权覆盖源文件。
+**不变量。** 创建记录时必须同时持久化计划且 `status=planned`；状态只能按 `planned → confirmed → backed_up → writing → verifying → succeeded` 或状态机定义的失败/回滚分支迁移；`confirmedPlanHash` 必须与所引用不可变计划的 `planHash` 一致；每个已写目标必须有对应备份或明确的“原先不存在”记录；`succeeded` 必须具备通过的验证证据；发生写入后失败必须尝试回滚；审计记录与日志必须脱敏；记录不因 SQLite 可重建而授权覆盖源文件。
 
 **关系。** `DeploymentRecord` 引用一个不可变 `DeploymentPlan`、多个目标操作与备份，可产生 `Diagnostic`，并作为后续显式回滚和历史查询的依据。
 
@@ -164,7 +164,7 @@ stateDiagram-v2
 
 ## 部署状态机
 
-部署进入 `writing` 后不接受普通取消请求，必须走完验证或补偿。`failed` 既可表示写入前失败，也可表示回滚自身未完成；调用方必须结合操作和回滚结果判断是否需要人工恢复。
+不可变 `DeploymentPlan` 持久化时同步创建 `DeploymentRecord(status=planned)`；用户确认只把记录推进到 `confirmed`，不改变计划。部署进入 `writing` 后不接受普通取消请求，必须走完验证或补偿。`failed` 既可表示写入前失败，也可表示回滚自身未完成；调用方必须结合操作和回滚结果判断是否需要人工恢复。
 
 ```mermaid
 stateDiagram-v2

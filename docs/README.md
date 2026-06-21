@@ -11,7 +11,7 @@
 3. 按工作内容进入适配器、数据、接口、安全、开发或运维文档。
 4. 通过 ADR 了解关键决策的背景、取舍和复审条件。
 
-产品需求基线位于 `docs/PRD.md`，经确认的总体技术设计位于[完整技术方案设计](superpowers/specs/2026-06-21-technical-solution-design.md)。发生冲突时，先确认需求是否变化，再更新设计、ADR 和受影响的专题文档，不在单个实现文档中静默改变系统边界。
+可访问的技术需求基线由[完整技术方案设计](superpowers/specs/2026-06-21-technical-solution-design.md)汇总。项目维护者提供原始产品需求材料时，其工作区位置为 `docs/PRD.md`；专题文档不得依赖未纳入版本控制的材料才能被理解。发生冲突时，先确认需求是否变化，再更新设计、ADR 和受影响的专题文档，不在单个实现文档中静默改变系统边界。
 
 ## 文档地图
 
@@ -29,7 +29,7 @@
 | [可观测性与恢复](operations/observability-and-recovery.md) | 如何诊断、备份和恢复本地故障？ | 支持与运维工程师 | MVP 技术基线 |
 | [ADR-0001：模块化单体](adr/0001-modular-monolith.md) | 为什么选择 TypeScript pnpm 模块化 Monorepo？ | 架构评审人员 | 已接受 |
 | [ADR-0002：Electron 安全边界](adr/0002-electron-security-boundary.md) | 特权能力为何只存在于主进程？ | 桌面与安全工程师 | 已接受 |
-| [ADR-0003：文件为事实来源](adr/0003-files-as-source-of-truth.md) | 为什么 SQLite 只是可重建索引？ | 核心与数据工程师 | 已接受 |
+| [ADR-0003：文件为事实来源](adr/0003-files-as-source-of-truth.md) | 为什么配置由文件权威管理，而 SQLite 区分派生与非派生记录？ | 核心与数据工程师 | 已接受 |
 
 ## 核心技术约束
 
@@ -37,7 +37,7 @@
 - 桌面端采用 Electron 与 React，CLI 可脱离 Electron 独立运行。
 - 桌面端和 CLI 必须调用相同核心用例，不能复制业务规则。
 - 支持 Windows、macOS 和 Linux；Linux 最低兼容基线为 glibc 2.28。
-- 配置文件是事实来源，SQLite 只保存可重建索引、派生数据和历史记录。
+- 配置文件是配置内容的事实来源；SQLite 保存可重建的派生索引，以及必须独立备份的设置和审计记录。
 - 首次扫描默认只读；写入必须经过预览、确认、备份、原子替换、验证和回滚记录。
 - 扫描不执行 Rule、Agent、Skill、MCP、Hook 或其他第三方配置中的命令。
 - Claude Code、Cursor、Codex、OpenCode 通过编译时注册的统一适配器接入。
