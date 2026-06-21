@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp -R src/migrations dist/migrations",
     "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

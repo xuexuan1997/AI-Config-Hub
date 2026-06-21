@@ -1,0 +1,25 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+export interface DatabaseMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly sql: string;
+  readonly checksum: `sha256:${string}`;
+}
+
+function checksum(sql: string): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update("ai-config-hub:migration:v1\0").update(sql).digest("hex")}`;
+}
+
+export function migration(version: number, name: string, sql: string): DatabaseMigration {
+  if (!Number.isSafeInteger(version) || version < 1)
+    throw new TypeError("Migration version must be positive");
+  if (name.trim() === "") throw new TypeError("Migration name is required");
+  return Object.freeze({ version, name, sql, checksum: checksum(sql) });
+}
+
+const initialSql = readFileSync(new URL("./migrations/0001-initial.sql", import.meta.url), "utf8");
+
+export const initialMigration = migration(1, "initial", initialSql);
+export const databaseMigrations = Object.freeze([initialMigration]);
