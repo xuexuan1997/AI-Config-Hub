@@ -12,10 +12,16 @@ import type {
   ToolAdapter,
   ToolInstallation,
 } from "@ai-config-hub/core";
-import { AssetSchema, ScanRunSummarySchema, ScopeSchema } from "@ai-config-hub/core";
+import {
+  AssetSchema,
+  EffectiveConfigSchema,
+  ScanRunSummarySchema,
+  ScopeSchema,
+} from "@ai-config-hub/core";
 import {
   AssetIdSchema,
   DiagnosticIdSchema,
+  EffectiveConfigIdSchema,
   IsoDateTimeSchema,
   ProjectIdSchema,
   ScanRunIdSchema,
@@ -181,9 +187,6 @@ export class ScanService {
       ...adapterDiagnostics,
       ...parsedItems.flatMap(({ diagnostics }) => diagnostics),
     ];
-    const diagnostics = allAdapterDiagnostics.map((diagnostic) =>
-      normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
-    );
     const scopes = buildScopes(parsedItems);
     const assets = parsedItems
       .flatMap((item) =>
@@ -214,6 +217,50 @@ export class ScanService {
         ),
       )
       .sort((left, right) => left.assetId.localeCompare(right.assetId));
+    const effectiveConfigs = [];
+    const resolvedInstallations = uniqueResolutionTargets(parsedItems);
+    for (const { adapter, tool } of resolvedInstallations) {
+      input.signal.throwIfAborted();
+      const toolAssets = assets.filter(({ toolId }) => toolId === tool.toolId);
+      const toolScopes = scopes.filter(({ toolId }) => toolId === tool.toolId);
+      for (const targetPath of tool.configRoots) {
+        const resolution = await adapter.resolveEffective({
+          tool,
+          targetPath,
+          assets: toolAssets,
+          scopes: toolScopes,
+          signal: input.signal,
+        });
+        const diagnosis = await adapter.diagnose({
+          tool,
+          assets: toolAssets,
+          effectiveConfigDraft: resolution.draft,
+          signal: input.signal,
+        });
+        allAdapterDiagnostics.push(...resolution.diagnostics, ...diagnosis.diagnostics);
+        effectiveConfigs.push(
+          EffectiveConfigSchema.parse({
+            ...resolution.draft,
+            effectiveConfigId: EffectiveConfigIdSchema.parse(
+              stableId("effective", [
+                tool.installationId,
+                targetPath,
+                resolution.draft.resolutionInputHash,
+                adapter.adapterVersion,
+              ]),
+            ),
+            toolInstallationId: tool.installationId,
+            adapterId: adapter.adapterId,
+            adapterVersion: adapter.adapterVersion,
+            diagnostics: [],
+            resolvedAt: createdAt,
+          }),
+        );
+      }
+    }
+    const diagnostics = allAdapterDiagnostics.map((diagnostic) =>
+      normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
+    );
     const succeededCount = parsedItems.filter(({ status }) => status === "parsed").length;
     const failedCount = parsedItems.length - succeededCount;
     const status =
@@ -227,7 +274,7 @@ export class ScanService {
       tools: uniqueTools(tools),
       scopes,
       assets,
-      effectiveConfigs: [],
+      effectiveConfigs,
       diagnostics,
     });
     const summary = ScanRunSummarySchema.parse({
@@ -283,6 +330,17 @@ function uniqueTools(tools: readonly ToolInstallation[]): readonly ToolInstallat
   return [...new Map(tools.map((tool) => [tool.installationId, tool])).values()].sort(
     (left, right) => left.installationId.localeCompare(right.installationId),
   );
+}
+
+function uniqueResolutionTargets(items: readonly ParsedItem[]) {
+  return [
+    ...new Map(
+      items.map((item) => [
+        `${item.adapter.adapterId}:${item.tool.installationId}`,
+        { adapter: item.adapter, tool: item.tool },
+      ]),
+    ).values(),
+  ].sort((left, right) => left.tool.installationId.localeCompare(right.tool.installationId));
 }
 
 async function mapLimit<T, R>(

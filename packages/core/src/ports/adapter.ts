@@ -18,6 +18,7 @@ import type { ConversionResult, DeployableConversionResult } from "../domain/con
 import type { DeploymentOperation, DeploymentRecord } from "../domain/deployment.js";
 import type { NormalizedResource } from "../domain/resource.js";
 import type { ScopeCandidate } from "../domain/scope.js";
+import type { Scope } from "../domain/scope.js";
 import type { FileSnapshot } from "./files.js";
 
 export interface CancellationSignal {
@@ -158,6 +159,8 @@ export interface ResolutionContext {
   readonly tool: ToolInstallation;
   readonly targetPath: AbsolutePath;
   readonly assets: readonly Asset[];
+  readonly scopes: readonly Scope[];
+  readonly resourceKinds?: readonly ResourceKind[];
   readonly signal: CancellationSignal;
 }
 

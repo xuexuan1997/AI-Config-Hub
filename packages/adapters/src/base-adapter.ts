@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type {
   AdapterCapabilities,
   AdapterDiagnostic,
@@ -23,6 +21,8 @@ import {
   type SemVer,
   type ToolId,
 } from "@ai-config-hub/shared";
+
+import { resolveAssetsByScope } from "./resolution.js";
 
 function hash(parts: readonly string[]) {
   const value = createHash("sha256");
@@ -48,24 +48,8 @@ export abstract class BaseToolAdapter implements ToolAdapter {
   abstract parse(context: Parameters<ToolAdapter["parse"]>[0]): ReturnType<ToolAdapter["parse"]>;
 
   resolveEffective(context: ResolutionContext): Promise<ResolutionResult> {
-    context.signal.throwIfAborted();
-    const assets = [...context.assets].sort((left, right) =>
-      left.assetId.localeCompare(right.assetId),
-    );
     return Promise.resolve({
-      draft: {
-        canonicalTargetPath: context.targetPath,
-        resourceKinds: [...new Set(assets.map(({ resource }) => resource.kind))].sort(),
-        resolvedResources: assets.map(({ resource }) => resource),
-        contributingAssetIds: assets.map(({ assetId }) => assetId),
-        ignoredAssetIds: [],
-        steps: assets.map(({ assetId }) => ({
-          action: "inherit" as const,
-          assetId,
-          reason: "Resource contributes to the selected target scope",
-        })),
-        resolutionInputHash: hash(assets.map(({ contentHash }) => contentHash)),
-      },
+      draft: resolveAssetsByScope(context),
       diagnostics: [],
     });
   }
@@ -151,3 +135,4 @@ export function adapterDiagnostic(
     blocking,
   };
 }
+import { createHash } from "node:crypto";

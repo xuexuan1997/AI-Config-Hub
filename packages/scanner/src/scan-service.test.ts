@@ -101,6 +101,24 @@ function adapter(): AdapterRegistration {
               diagnostics: [],
             },
       ),
+    resolveEffective: ({ assets, targetPath }: Parameters<ToolAdapter["resolveEffective"]>[0]) =>
+      Promise.resolve({
+        draft: {
+          canonicalTargetPath: targetPath,
+          resourceKinds: ["rule"],
+          resolvedResources: assets.map(({ resource }) => resource),
+          contributingAssetIds: assets.map(({ assetId }) => assetId),
+          ignoredAssetIds: [],
+          steps: assets.map(({ assetId }) => ({
+            action: "inherit" as const,
+            assetId,
+            reason: "Test fixture applies",
+          })),
+          resolutionInputHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        },
+        diagnostics: [],
+      }),
+    diagnose: () => Promise.resolve({ diagnostics: [] }),
   } as unknown as ToolAdapter;
   return {
     contractVersion: 1,
@@ -181,6 +199,7 @@ describe("ScanService", () => {
       failedCount: 1,
     });
     expect(firstRepository.calls).toHaveLength(1);
+    expect(firstRepository.calls[0]?.effectiveConfigs).toHaveLength(1);
 
     const secondRepository = repository();
     const second = new ScanService({
