@@ -20,4 +20,10 @@ describe("workspace contract", () => {
       assert.ok(script in manifest.scripts, `missing script: ${script}`);
     }
   });
+
+  it("ignores TypeScript incremental build state", async () => {
+    const gitignore = await readFile(".gitignore", "utf8");
+
+    assert.match(gitignore, /^\*\.tsbuildinfo$/m);
+  });
 });

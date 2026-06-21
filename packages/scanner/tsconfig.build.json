@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    "incremental": true,
     "outDir": "dist",
     "rootDir": "src",
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.build.tsbuildinfo"
