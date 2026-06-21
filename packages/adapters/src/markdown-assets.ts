@@ -13,11 +13,11 @@ import { redactStructuredValue, toSecretAwareString } from "./secrets.js";
 import { parseJsoncObject, requireObject } from "./structured-config.js";
 import { adapterDiagnostic } from "./base-adapter.js";
 
-function stringValue(value: unknown): string | undefined {
+export function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function stringList(value: unknown): readonly string[] {
+export function stringList(value: unknown): readonly string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value === "string")
     return value
@@ -27,7 +27,7 @@ function stringList(value: unknown): readonly string[] {
   return [];
 }
 
-function withoutKeys(
+export function withoutKeys(
   source: Readonly<Record<string, unknown>>,
   keys: readonly string[],
 ): Readonly<Record<string, unknown>> {
@@ -125,7 +125,7 @@ export function parseMarkdownAsset(
   }
 }
 
-function mcpResource(name: string, value: unknown) {
+export function mcpResource(name: string, value: unknown) {
   const config = requireObject(value, `MCP server ${name}`);
   const command = stringValue(config["command"]);
   if (command !== undefined) {
@@ -220,7 +220,7 @@ export function parseMcpJson(
   }
 }
 
-function rejectedParse(candidate: DiscoveredResource, error: unknown): ParseResult {
+export function rejectedParse(candidate: DiscoveredResource, error: unknown): ParseResult {
   const location =
     error instanceof ConfigParseError
       ? { path: candidate.sourcePath, line: error.line, column: error.column }

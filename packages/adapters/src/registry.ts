@@ -1,6 +1,11 @@
 import type { AdapterLogger, AdapterRegistration, ToolAdapter } from "@ai-config-hub/core";
 import type { AdapterId, ToolId } from "@ai-config-hub/shared";
 
+import { claudeCodeRegistration } from "./claude-code.js";
+import { codexRegistration } from "./codex.js";
+import { cursorRegistration } from "./cursor.js";
+import { opencodeRegistration } from "./opencode.js";
+
 export interface AdapterRegistry {
   readonly toolIds: readonly ToolId[];
   readonly registrations: Readonly<Partial<Record<ToolId, AdapterRegistration>>>;
@@ -43,4 +48,15 @@ export function createAdapterRegistry(
       return adapter;
     },
   });
+}
+
+const builtInRegistrations = Object.freeze([
+  claudeCodeRegistration,
+  codexRegistration,
+  cursorRegistration,
+  opencodeRegistration,
+]);
+
+export function createDefaultAdapterRegistry(): AdapterRegistry {
+  return createAdapterRegistry(builtInRegistrations);
 }

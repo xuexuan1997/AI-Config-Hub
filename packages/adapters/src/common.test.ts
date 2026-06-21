@@ -8,7 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { ConfigParseError, parseFrontmatter } from "./frontmatter.js";
-import { createAdapterRegistry } from "./registry.js";
+import { createAdapterRegistry, createDefaultAdapterRegistry } from "./registry.js";
 import { redactStructuredValue, toSecretAwareString } from "./secrets.js";
 import { parseJsoncObject, parseTomlObject } from "./structured-config.js";
 
@@ -100,6 +100,15 @@ function registration(toolId: ToolId, adapterId = `${toolId}-adapter`): AdapterR
 }
 
 describe("static adapter registry", () => {
+  it("registers exactly the four built-in adapters without filesystem discovery", () => {
+    expect(createDefaultAdapterRegistry().toolIds).toEqual([
+      "claude-code",
+      "codex",
+      "cursor",
+      "opencode",
+    ]);
+  });
+
   it("indexes explicitly supplied registrations and creates identity-checked adapters", () => {
     const registry = createAdapterRegistry([registration("codex"), registration("cursor")]);
     expect(registry.toolIds).toEqual(["codex", "cursor"]);
