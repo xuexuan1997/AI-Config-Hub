@@ -16,10 +16,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ai-config-hub/core": "workspace:*",
-    "@ai-config-hub/shared": "workspace:*"
+    "@ai-config-hub/shared": "workspace:*",
+    "drizzle-orm": "0.45.2"
   }
 }

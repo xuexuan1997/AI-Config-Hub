@@ -26,4 +26,20 @@ describe("workspace contract", () => {
 
     assert.match(gitignore, /^\*\.tsbuildinfo$/m);
   });
+
+  it("pins phase-two dependencies in the package that owns each capability", async () => {
+    const [storage, adapters, scanner] = await Promise.all(
+      ["storage", "adapters", "scanner"].map(async (name) =>
+        JSON.parse(await readFile(`packages/${name}/package.json`, "utf8")),
+      ),
+    );
+
+    assert.equal(storage.dependencies["drizzle-orm"], "0.45.2");
+    assert.equal(adapters.dependencies.yaml, "2.9.0");
+    assert.equal(adapters.dependencies["smol-toml"], "1.6.1");
+    assert.equal(adapters.dependencies["jsonc-parser"], "3.3.1");
+    for (const manifest of [storage, adapters, scanner]) {
+      assert.equal(manifest.scripts.test, "vitest run src");
+    }
+  });
 });
