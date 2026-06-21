@@ -1,0 +1,227 @@
+import type {
+  AdapterRegistration,
+  DiscoveredResource,
+  FileSnapshotPort,
+  IndexRepository,
+  ToolAdapter,
+} from "@ai-config-hub/core";
+import {
+  AbsolutePathSchema,
+  AdapterIdSchema,
+  ContentHashSchema,
+  SemVerRangeSchema,
+  SemVerSchema,
+  ToolInstallationIdSchema,
+} from "@ai-config-hub/shared";
+import { describe, expect, it } from "vitest";
+
+import { createCancellationController } from "./cancellation.js";
+import { ScanService, type ScanPhase } from "./scan-service.js";
+
+const root = AbsolutePathSchema.parse("/project");
+const candidates: DiscoveredResource[] = ["good", "broken"].map((name) => ({
+  toolId: "codex",
+  sourcePath: AbsolutePathSchema.parse(`/project/${name}.md`),
+  sourceFormat: "markdown",
+  resourceKindHint: "rule",
+  scope: {
+    kind: "project",
+    canonicalRootPath: root,
+    projectRoot: root,
+    depth: 0,
+    precedence: 100,
+  },
+}));
+
+function adapter(): AdapterRegistration {
+  const capabilities = {
+    supportedToolVersions: SemVerRangeSchema.parse(">=0.1.0"),
+    testedToolVersions: [SemVerSchema.parse("0.101.0")],
+    readableSchemaVersions: [SemVerRangeSchema.parse("^1.0.0")],
+    writtenSchemaVersion: SemVerSchema.parse("1.0.0"),
+    resourceKinds: ["rule"] as const,
+    scopeKinds: ["project"] as const,
+    supportsNestedScopes: true,
+    conversions: [],
+  };
+  const instance = {
+    adapterId: AdapterIdSchema.parse("fake-codex"),
+    adapterVersion: SemVerSchema.parse("0.1.0"),
+    toolId: "codex" as const,
+    capabilities,
+    detect: () =>
+      Promise.resolve({
+        installations: [
+          {
+            toolId: "codex" as const,
+            installationId: ToolInstallationIdSchema.parse("codex-project"),
+            configRoots: [root],
+            evidence: { marker: "AGENTS.md" },
+          },
+        ],
+        diagnostics: [],
+      }),
+    discover: () => Promise.resolve({ candidates, diagnostics: [] }),
+    parse: ({ candidate, snapshot }: Parameters<ToolAdapter["parse"]>[0]) =>
+      Promise.resolve(
+        candidate.sourcePath.endsWith("broken.md")
+          ? {
+              status: "rejected" as const,
+              assets: [],
+              diagnostics: [
+                {
+                  code: "ADAPTER_PARSE_INVALID",
+                  severity: "error" as const,
+                  message: "Invalid fixture",
+                  location: { path: candidate.sourcePath, line: 1 },
+                  evidence: {},
+                  suggestedActions: ["Fix the file"],
+                  blocking: true,
+                },
+              ],
+            }
+          : {
+              status: "parsed" as const,
+              assets: [
+                {
+                  toolId: "codex" as const,
+                  canonicalSourcePath: candidate.sourcePath,
+                  locator: "rule:good",
+                  scope: candidate.scope,
+                  sourceFormat: candidate.sourceFormat,
+                  sourceContentHash: snapshot.contentHash,
+                  resource: {
+                    kind: "rule" as const,
+                    data: { name: "good", instructions: "Use tests.", globs: [], extensions: {} },
+                  },
+                  references: [],
+                  extensions: {},
+                },
+              ],
+              diagnostics: [],
+            },
+      ),
+  } as unknown as ToolAdapter;
+  return {
+    contractVersion: 1,
+    adapterId: instance.adapterId,
+    adapterVersion: instance.adapterVersion,
+    toolId: instance.toolId,
+    capabilities,
+    create: () => instance,
+  };
+}
+
+function repository() {
+  const calls: Parameters<IndexRepository["replaceDerivedIndex"]>[0][] = [];
+  const index = {
+    replaceDerivedIndex: (replacement: Parameters<IndexRepository["replaceDerivedIndex"]>[0]) => {
+      calls.push(replacement);
+      return Promise.resolve({ revision: String(calls.length) });
+    },
+  } as unknown as IndexRepository;
+  return { index, calls };
+}
+
+const snapshots: FileSnapshotPort = {
+  snapshot: ({ path }) =>
+    Promise.resolve({
+      canonicalPath: path,
+      text: path.endsWith("broken.md") ? "broken" : "Use tests.",
+      contentHash: ContentHashSchema.parse(
+        `sha256:${path.endsWith("broken.md") ? "b".repeat(64) : "a".repeat(64)}`,
+      ),
+      modifiedAt: "2026-06-21T08:00:00.000Z",
+      size: 10,
+    }),
+};
+
+const read = {
+  realpath: (path: typeof root) => Promise.resolve(path),
+  stat: () =>
+    Promise.resolve({
+      kind: "file" as const,
+      size: 10,
+      modifiedAt: "2026-06-21T08:00:00.000Z",
+    }),
+  list: () => Promise.resolve([]),
+  readText: () => Promise.resolve(""),
+};
+
+describe("ScanService", () => {
+  it("commits one deterministic partial-success replacement after ordered phases", async () => {
+    const firstRepository = repository();
+    const phases: ScanPhase[] = [];
+    const service = new ScanService({
+      registrations: [adapter()],
+      read,
+      snapshots,
+      indexRepository: firstRepository.index,
+    });
+    const controller = createCancellationController();
+    const first = await service.scan({
+      scanRunId: "scan-1",
+      candidateRoots: [root],
+      homeDirectory: root,
+      platform: "linux",
+      signal: controller.signal,
+      onPhase: (phase) => phases.push(phase),
+    });
+    expect(phases).toEqual([
+      "discovering",
+      "reading",
+      "parsing",
+      "validating",
+      "committing",
+      "completed",
+    ]);
+    expect(first.summary).toMatchObject({
+      status: "partially_succeeded",
+      succeededCount: 1,
+      failedCount: 1,
+    });
+    expect(firstRepository.calls).toHaveLength(1);
+
+    const secondRepository = repository();
+    const second = new ScanService({
+      registrations: [adapter()],
+      read,
+      snapshots,
+      indexRepository: secondRepository.index,
+    });
+    await second.scan({
+      scanRunId: "scan-2",
+      candidateRoots: [root],
+      homeDirectory: root,
+      platform: "linux",
+      signal: createCancellationController().signal,
+    });
+    expect(secondRepository.calls[0]?.assets.map(({ assetId }) => assetId)).toEqual(
+      firstRepository.calls[0]?.assets.map(({ assetId }) => assetId),
+    );
+  });
+
+  it("honors cancellation immediately before commit and preserves the previous snapshot", async () => {
+    const target = repository();
+    const controller = createCancellationController();
+    const service = new ScanService({
+      registrations: [adapter()],
+      read,
+      snapshots,
+      indexRepository: target.index,
+    });
+    await expect(
+      service.scan({
+        scanRunId: "scan-cancelled",
+        candidateRoots: [root],
+        homeDirectory: root,
+        platform: "linux",
+        signal: controller.signal,
+        onPhase: (phase) => {
+          if (phase === "validating") controller.abort();
+        },
+      }),
+    ).rejects.toMatchObject({ code: "USER_CANCELLED" });
+    expect(target.calls).toHaveLength(0);
+  });
+});
