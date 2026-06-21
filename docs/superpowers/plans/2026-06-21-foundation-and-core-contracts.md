@@ -302,6 +302,8 @@ git commit -m "feat(shared): add stable primitives and safe errors"
 - Create: `packages/core/src/domain/scope.ts`
 - Modify: `packages/core/src/index.ts`
 - Test: `packages/core/src/domain/asset.test.ts`
+- Test: `packages/core/src/domain/resource.test.ts`
+- Test: `packages/core/src/domain/scope.test.ts`
 
 - [ ] **Step 1: Write failing asset-schema tests**
 
@@ -314,7 +316,7 @@ import { SecretAwareStringSchema } from "./secret-aware-string.js";
 describe("AssetSchema", () => {
   it("keeps normalized MCP secrets reference-based", () => {
     const result = AssetSchema.safeParse({
-      id: "asset-1",
+      assetId: "asset-1",
       toolId: "codex",
       resource: {
         kind: "mcp",
@@ -329,14 +331,17 @@ describe("AssetSchema", () => {
           extensions: {},
         },
       },
-      source: { path: "/workspace/.codex/config.toml", locator: "/mcp/docs" },
       scopeId: "scope-1",
+      canonicalSourcePath: "/workspace/.codex/config.toml",
+      locator: "/mcp/docs",
+      sourceFormat: "toml",
       contentHash: `sha256:${"a".repeat(64)}`,
-      schemaVersion: 1,
+      normalizedSchemaVersion: "1.0.0",
       adapterId: "codex.builtin",
       adapterVersion: "1.0.0",
       discoveredAt: "2026-06-21T10:00:00Z",
-      compatibility: "full",
+      references: [],
+      diagnosticSummary: { info: 0, warning: 0, error: 0 },
     });
     expect(result.success).toBe(true);
   });
@@ -361,11 +366,11 @@ Expected: FAIL with unresolved `AssetSchema`.
 
 - [ ] **Step 3: Implement discriminated resource schemas**
 
-Create Zod discriminated unions matching `docs/architecture/adapter-system.md`: rule, agent, skill, and MCP; MCP stdio/http/sse transports; literal/reference/redacted secret-aware strings; source locations; scope; compatibility levels; and immutable Asset fields. `redacted` must always have `deployable: false`, unknown tool-specific fields live only under `extensions`, and the raw source content must not be embedded in the transport-safe Asset schema.
+Create Zod discriminated unions matching `docs/architecture/adapter-system.md`: rule, agent, skill, and MCP; MCP stdio/http/sse transports; literal/reference/redacted secret-aware strings; scope; and immutable Asset fields. `redacted` must always have `deployable: false`, unknown tool-specific fields live only under `extensions`, and the raw source content must not be embedded in the transport-safe Asset schema.
 
 - [ ] **Step 4: Expand edge-case coverage**
 
-Add test cases for multi-resource locator identity, invalid scope paths, unknown resource kinds, missing Agent references, all three MCP transports, and extension preservation.
+Add test cases for multi-resource locator identity, invalid scope paths, unknown resource kinds, missing required Agent fields, all three MCP transports, and extension preservation.
 
 - [ ] **Step 5: Run core domain tests**
 

@@ -14,6 +14,12 @@ export type AssetId = z.infer<typeof AssetIdSchema>;
 export const ScopeIdSchema = StableIdSchema.brand<"ScopeId">();
 export type ScopeId = z.infer<typeof ScopeIdSchema>;
 
+export const ProjectIdSchema = StableIdSchema.brand<"ProjectId">();
+export type ProjectId = z.infer<typeof ProjectIdSchema>;
+
+export const ToolInstallationIdSchema = StableIdSchema.brand<"ToolInstallationId">();
+export type ToolInstallationId = z.infer<typeof ToolInstallationIdSchema>;
+
 export const EffectiveConfigIdSchema = StableIdSchema.brand<"EffectiveConfigId">();
 export type EffectiveConfigId = z.infer<typeof EffectiveConfigIdSchema>;
 

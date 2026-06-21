@@ -1,3 +1,35 @@
+/** @type {ReadonlyArray<{name: string, allowed: readonly string[]}>} */
+const packagePolicies = [
+  { name: "shared", allowed: ["shared"] },
+  { name: "core", allowed: ["core", "shared"] },
+  { name: "api", allowed: ["api", "core", "shared"] },
+  { name: "adapters", allowed: ["adapters", "core", "shared"] },
+  { name: "scanner", allowed: ["scanner", "adapters", "core", "shared"] },
+  { name: "deployer", allowed: ["deployer", "adapters", "core", "shared"] },
+  { name: "storage", allowed: ["storage", "core", "shared"] },
+  { name: "git", allowed: ["git", "core", "shared"] },
+];
+
+const packageDependencyRules = packagePolicies.map(({ name, allowed }) => ({
+  name: `${name}-package-dependencies`,
+  severity: "error",
+  from: { path: `^packages/${name}(?:/|$)` },
+  to: {
+    path: "^packages(?:/|$)",
+    pathNot: allowed.map((dependency) => `^packages/${dependency}(?:/|$)`),
+  },
+}));
+
+const crossPackageSourceRules = packagePolicies.map(({ name }) => ({
+  name: `${name}-uses-public-package-entries`,
+  severity: "error",
+  from: { path: `^packages/${name}(?:/|$)` },
+  to: {
+    path: "^packages/[^/]+/src(?:/|$)",
+    pathNot: `^packages/${name}/src(?:/|$)`,
+  },
+}));
+
 /** @type {import('dependency-cruiser').IConfiguration} */
 const config = {
   forbidden: [
@@ -8,35 +40,13 @@ const config = {
       to: { circular: true },
     },
     {
-      name: "shared-is-foundational",
-      severity: "error",
-      from: { path: "^packages/shared(?:/|$)" },
-      to: { path: "^(?:packages|apps)/(?!shared(?:/|$))" },
-    },
-    {
-      name: "core-depends-only-on-shared",
-      severity: "error",
-      from: { path: "^packages/core(?:/|$)" },
-      to: { path: "^packages/(?!shared(?:/|$))" },
-    },
-    {
-      name: "api-depends-only-on-core-and-shared",
-      severity: "error",
-      from: { path: "^packages/api(?:/|$)" },
-      to: { path: "^packages/(?!(?:core|shared)(?:/|$))" },
-    },
-    {
       name: "packages-do-not-depend-on-apps",
       severity: "error",
       from: { path: "^packages(?:/|$)" },
       to: { path: "^apps(?:/|$)" },
     },
-    {
-      name: "no-cross-package-source-imports",
-      severity: "error",
-      from: { path: "^(?:packages|apps)/([^/]+)/src" },
-      to: { path: "^(?:packages|apps)/(?!$1(?:/|$))[^/]+/src" },
-    },
+    ...packageDependencyRules,
+    ...crossPackageSourceRules,
   ],
   options: {
     doNotFollow: { path: "node_modules" },
