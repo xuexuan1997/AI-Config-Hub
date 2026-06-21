@@ -7,6 +7,8 @@ const sensitiveKey =
   /(?:token|secret|password|passwd|private[_-]?key|api[_-]?key|authorization|cookie|credential)/i;
 const sensitiveContainer = /^(?:env|headers|http_headers|query)$/i;
 const environmentReference = /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+const embeddedSecret =
+  /(?:^|\s)(?:bearer\s+\S+|--?(?:token|secret|password|passwd|private[_-]?key|api[_-]?key|authorization|cookie|credential)(?:=|\s+)\S+)/i;
 
 function digest(value: string) {
   return ContentHashSchema.parse(
@@ -28,7 +30,11 @@ export function toSecretAwareString(value: string, key?: string): SecretAwareStr
   if (environmentReference.test(value)) {
     return { kind: "reference", expression: value, deployable: true };
   }
-  if ((key !== undefined && sensitiveKey.test(key)) || urlContainsSecret(value)) {
+  if (
+    (key !== undefined && sensitiveKey.test(key)) ||
+    embeddedSecret.test(value) ||
+    urlContainsSecret(value)
+  ) {
     return { kind: "redacted", digest: digest(value), deployable: false };
   }
   return { kind: "literal", value, deployable: true };
