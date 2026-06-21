@@ -6,7 +6,13 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary"],
     },
-    exclude: ["**/dist/**", "**/.worktrees/**", "tests/integration/**", "tests/e2e/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.worktrees/**",
+      "tests/integration/**",
+      "tests/e2e/**",
+    ],
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "tests/**/*.test.ts"],
   },
 });
