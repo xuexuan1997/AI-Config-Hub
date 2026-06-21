@@ -38,6 +38,9 @@ export type DiagnosticId = z.infer<typeof DiagnosticIdSchema>;
 export const TaskIdSchema = StableIdSchema.brand<"TaskId">();
 export type TaskId = z.infer<typeof TaskIdSchema>;
 
+export const ScanRunIdSchema = StableIdSchema.brand<"ScanRunId">();
+export type ScanRunId = z.infer<typeof ScanRunIdSchema>;
+
 export const CorrelationIdSchema = StableIdSchema.brand<"CorrelationId">();
 export type CorrelationId = z.infer<typeof CorrelationIdSchema>;
 
