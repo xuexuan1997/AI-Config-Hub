@@ -58,7 +58,8 @@ export type AbsolutePath = z.infer<typeof AbsolutePathSchema>;
 
 export const ContentHashSchema = z
   .string()
-  .regex(/^sha256:[0-9a-f]{64}$/, "Expected a prefixed SHA-256 hash");
+  .regex(/^sha256:[0-9a-f]{64}$/, "Expected a prefixed SHA-256 hash")
+  .brand<"ContentHash">();
 export type ContentHash = z.infer<typeof ContentHashSchema>;
 
 export const SemVerSchema = z

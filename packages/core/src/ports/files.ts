@@ -1,0 +1,48 @@
+import type { AbsolutePath, ContentHash, IsoDateTime } from "@ai-config-hub/shared";
+
+export interface CanonicalPath {
+  readonly path: AbsolutePath;
+  readonly comparisonKey: string;
+  readonly displayPath: string;
+}
+
+export interface FileSnapshot {
+  readonly canonicalPath: AbsolutePath;
+  readonly text: string;
+  readonly contentHash: ContentHash;
+  readonly modifiedAt: IsoDateTime;
+  readonly size: number;
+}
+
+export interface PathPolicyPort {
+  canonicalize(input: {
+    readonly path: string;
+    readonly basePath?: AbsolutePath;
+    readonly allowedRoots: readonly AbsolutePath[];
+    readonly intent: "read" | "write";
+  }): Promise<CanonicalPath>;
+}
+
+export interface FileSnapshotPort {
+  snapshot(input: {
+    readonly path: AbsolutePath;
+    readonly allowedRoots: readonly AbsolutePath[];
+  }): Promise<FileSnapshot>;
+}
+
+export interface DeploymentFilePort {
+  createBackup(input: {
+    readonly source: AbsolutePath;
+    readonly destination: AbsolutePath;
+    readonly expectedHash: ContentHash;
+  }): Promise<{ readonly backupPath: AbsolutePath; readonly backupHash: ContentHash }>;
+  atomicReplace(input: {
+    readonly target: AbsolutePath;
+    readonly text: string;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }>;
+  remove(input: {
+    readonly target: AbsolutePath;
+    readonly expectedHash: ContentHash;
+  }): Promise<void>;
+}
