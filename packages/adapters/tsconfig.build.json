@@ -4,6 +4,7 @@
     "noEmit": false,
     "incremental": true,
     "outDir": "dist",
+    "paths": {},
     "rootDir": "src",
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.build.tsbuildinfo"
   },

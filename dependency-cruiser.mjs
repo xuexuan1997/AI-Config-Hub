@@ -25,7 +25,7 @@ const crossPackageSourceRules = packagePolicies.map(({ name }) => ({
   severity: "error",
   from: { path: `^packages/${name}(?:/|$)` },
   to: {
-    path: "^packages/[^/]+/src(?:/|$)",
+    path: "^packages/[^/]+/src/(?!index\\.ts$)",
     pathNot: `^packages/${name}/src(?:/|$)`,
   },
 }));
@@ -44,6 +44,16 @@ const config = {
       severity: "error",
       from: { path: "^packages(?:/|$)" },
       to: { path: "^apps(?:/|$)" },
+    },
+    {
+      name: "renderer-no-privileged-capabilities",
+      severity: "error",
+      from: {
+        path: "^(?:apps/desktop/src/renderer|tests/architecture/fixtures/renderer)(?:/|$)",
+      },
+      to: {
+        path: "^(?:(?:node:)?(?:fs|fs/promises|child_process|worker_threads|net|tls)|@ai-config-hub/(?:storage|deployer|git)|packages/(?:storage|deployer|git)(?:/|$))",
+      },
     },
     ...packageDependencyRules,
     ...crossPackageSourceRules,
