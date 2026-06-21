@@ -29,10 +29,11 @@ CREATE INDEX idx_projects_git_root ON projects(git_root_normalized);
 CREATE TABLE scan_runs (
   id TEXT PRIMARY KEY,
   domain_id TEXT NOT NULL UNIQUE,
+  task_id TEXT UNIQUE,
   project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
   scan_kind TEXT NOT NULL CHECK(scan_kind IN ('full','incremental','targeted')),
-  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','partially_succeeded','failed','cancelled')),
-  phase TEXT NOT NULL CHECK(phase IN ('queued','discovering','reading','parsing','validating','committing','completed','failed','cancelled')),
+  status TEXT NOT NULL CHECK(status IN ('queued','detecting','discovering','parsing','resolving','diagnosing','indexing','succeeded','partially_succeeded','failed','cancelled')),
+  phase TEXT NOT NULL,
   requested_roots_json TEXT NOT NULL,
   started_at INTEGER NOT NULL,
   finished_at INTEGER,
@@ -41,7 +42,10 @@ CREATE TABLE scan_runs (
   succeeded_count INTEGER NOT NULL DEFAULT 0 CHECK(succeeded_count >= 0),
   failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count >= 0),
   cancel_requested_at INTEGER,
-  error_summary_json TEXT
+  error_summary_json TEXT,
+  progress_json TEXT,
+  summary_json TEXT,
+  effective_configs_json TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 CREATE INDEX idx_scan_runs_status ON scan_runs(status, started_at DESC);
 CREATE INDEX idx_scan_runs_project ON scan_runs(project_id, started_at DESC);
@@ -144,7 +148,7 @@ CREATE TABLE deployments (
   source_asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
   target_tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE RESTRICT,
   plan_id TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL CHECK(status IN ('planned','awaiting_confirmation','running','succeeded','failed','rolling_back','rolled_back','recovery_required','cancelled')),
+  status TEXT NOT NULL CHECK(status IN ('planned','confirmed','backed_up','writing','verifying','succeeded','failed','rolling_back','rolled_back')),
   source_hash TEXT NOT NULL,
   target_hash_before TEXT,
   plan_json TEXT NOT NULL,

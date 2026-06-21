@@ -31,6 +31,7 @@ export const projects = sqliteTable("projects", {
 export const scanRuns = sqliteTable("scan_runs", {
   id: id(),
   domainId: requiredText("domain_id").unique(),
+  taskId: text("task_id").unique(),
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   scanKind: requiredText("scan_kind"),
   status: requiredText("status"),
@@ -44,6 +45,9 @@ export const scanRuns = sqliteTable("scan_runs", {
   failedCount: requiredInteger("failed_count").default(0),
   cancelRequestedAt: integer("cancel_requested_at"),
   errorSummaryJson: text("error_summary_json"),
+  progressJson: text("progress_json"),
+  summaryJson: text("summary_json"),
+  effectiveConfigsJson: requiredText("effective_configs_json").default("[]"),
 });
 
 export const scopes = sqliteTable("scopes", {
