@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    zod:
+      specifier: 4.4.3
+      version: 4.4.3
+
 importers:
 
   .:
@@ -35,6 +41,138 @@ importers:
       vitest:
         specifier: 4.1.9
         version: 4.1.9(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@24.13.2))
+
+  apps/cli:
+    dependencies:
+      '@ai-config-hub/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@ai-config-hub/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ai-config-hub/deployer':
+        specifier: workspace:*
+        version: link:../../packages/deployer
+      '@ai-config-hub/git':
+        specifier: workspace:*
+        version: link:../../packages/git
+      '@ai-config-hub/scanner':
+        specifier: workspace:*
+        version: link:../../packages/scanner
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@ai-config-hub/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+
+  apps/desktop:
+    dependencies:
+      '@ai-config-hub/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@ai-config-hub/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ai-config-hub/deployer':
+        specifier: workspace:*
+        version: link:../../packages/deployer
+      '@ai-config-hub/git':
+        specifier: workspace:*
+        version: link:../../packages/git
+      '@ai-config-hub/scanner':
+        specifier: workspace:*
+        version: link:../../packages/scanner
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@ai-config-hub/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+
+  packages/adapters:
+    dependencies:
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/api:
+    dependencies:
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+
+  packages/core:
+    dependencies:
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+
+  packages/deployer:
+    dependencies:
+      '@ai-config-hub/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/git:
+    dependencies:
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/scanner:
+    dependencies:
+      '@ai-config-hub/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/shared:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+
+  packages/storage:
+    dependencies:
+      '@ai-config-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ai-config-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 
@@ -1066,6 +1204,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   '@babel/helper-string-parser@7.29.7': {}
@@ -1982,3 +2123,5 @@ snapshots:
   word-wrap@1.2.5: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@4.4.3: {}

@@ -10,8 +10,8 @@
   "scripts": {
     "dev": "pnpm -r --parallel --if-present dev",
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm -r --if-present typecheck",
-    "lint": "eslint . && prettier --check . && depcruise --validate dependency-cruiser.cjs apps packages",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --if-present typecheck",
+    "lint": "eslint . && prettier --check . && depcruise --config dependency-cruiser.mjs apps packages",
     "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",

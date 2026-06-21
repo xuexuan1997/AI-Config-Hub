@@ -1,0 +1,9 @@
+.worktrees/
+coverage/
+dist/
+docs/
+node_modules/
+playwright-report/
+test-results/
+README.md
+pnpm-lock.yaml
