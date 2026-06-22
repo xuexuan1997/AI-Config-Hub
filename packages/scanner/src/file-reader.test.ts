@@ -62,6 +62,15 @@ describe("root-confined file access", () => {
       contentHash: `sha256:${"8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"}`,
       size: 5,
     });
+    await expect(
+      snapshots.snapshot({
+        path: absolute(join(root, "missing.md")),
+        allowedRoots: [absolute(root)],
+      }),
+    ).resolves.toBeUndefined();
+    await expect(read.readText(absolute(join(root, "missing.md")))).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   it("rejects a file that changes while its snapshot is being read", async () => {

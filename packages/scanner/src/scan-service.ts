@@ -130,13 +130,11 @@ export class ScanService {
     const readItems = await mapLimit(work, this.maxConcurrency, async (item): Promise<ReadItem> => {
       input.signal.throwIfAborted();
       try {
-        return {
-          ...item,
-          snapshot: await this.options.snapshots.snapshot({
-            path: item.candidate.sourcePath,
-            allowedRoots: item.tool.configRoots,
-          }),
-        };
+        const snapshot = await this.options.snapshots.snapshot({
+          path: item.candidate.sourcePath,
+          allowedRoots: item.tool.configRoots,
+        });
+        return snapshot === undefined ? item : { ...item, snapshot };
       } catch {
         return {
           ...item,

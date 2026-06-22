@@ -81,12 +81,25 @@ export async function createNodeFileAccess(
   async function snapshot(
     path: AbsolutePath,
     allowedRoots: readonly AbsolutePath[] = options.allowedRoots,
-  ): Promise<FileSnapshot> {
+  ): Promise<FileSnapshot | undefined> {
     const canonicalPath = await canonical(path, allowedRoots);
-    let before;
-    let bytes;
+    let before: BigIntStats;
     try {
       before = await stat(canonicalPath, { bigint: true });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        return undefined;
+      }
+      throw error;
+    }
+
+    let bytes: Buffer;
+    try {
       bytes = await readFile(canonicalPath);
       await options.beforeFinalStat?.();
       const after = await stat(canonicalPath, { bigint: true });
@@ -167,7 +180,16 @@ export async function createNodeFileAccess(
       );
     },
     async readText(path: AbsolutePath): Promise<string> {
-      return (await snapshot(path)).text;
+      const result = await snapshot(path);
+      if (result === undefined) {
+        throw new AppError({
+          code: "NOT_FOUND",
+          message: "Configuration file does not exist",
+          retryable: true,
+          suggestedActions: ["Refresh the configuration index and try again"],
+        });
+      }
+      return result.text;
     },
   });
 

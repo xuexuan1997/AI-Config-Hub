@@ -31,6 +31,7 @@ import {
 } from "@ai-config-hub/shared";
 
 const MAX_DIFF_BYTES = 200 * 1024;
+const DIFF_TRUNCATION_MARKER = "# AI Config Hub: diff truncated at a complete UTF-8 line boundary";
 
 export interface PreviewRequest {
   readonly assets: readonly Asset[];
@@ -61,7 +62,7 @@ function compareText(left: string, right: string): number {
 }
 
 function error(
-  code: "UNSUPPORTED_CONVERSION" | "TARGET_CONFLICT" | "VALIDATION_FAILED",
+  code: "UNSUPPORTED_CONVERSION" | "TARGET_CONFLICT" | "VALIDATION_FAILED" | "PREVIEW_TOO_LARGE",
   message: string,
 ): AppError {
   return new AppError({
@@ -89,15 +90,6 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function isMissing(errorValue: unknown): boolean {
-  return (
-    typeof errorValue === "object" &&
-    errorValue !== null &&
-    "code" in errorValue &&
-    errorValue.code === "ENOENT"
-  );
-}
-
 function hasRedactedValue(resource: NormalizedResource): boolean {
   if (resource.kind !== "mcp") return false;
   const transport = resource.data.transport;
@@ -119,23 +111,74 @@ function hasRedactedValue(resource: NormalizedResource): boolean {
   );
 }
 
-function bounded(text: string): string {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.byteLength <= MAX_DIFF_BYTES) return text;
-  let result = bytes.subarray(0, MAX_DIFF_BYTES).toString("utf8");
-  while (Buffer.byteLength(result, "utf8") > MAX_DIFF_BYTES) result = result.slice(0, -1);
-  return result;
+interface DiffLineGroup {
+  readonly text: string;
+  readonly side: "old" | "new";
+}
+
+function lineGroups(text: string, side: DiffLineGroup["side"]): readonly DiffLineGroup[] {
+  if (text === "") return [];
+  const hasTrailingNewline = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (hasTrailingNewline) lines.pop();
+  return lines.map((line, index) => ({
+    side,
+    text:
+      `${side === "old" ? "-" : "+"}${line}` +
+      (index === lines.length - 1 && !hasTrailingNewline ? "\n\\ No newline at end of file" : ""),
+  }));
+}
+
+function diffHeader(
+  path: AbsolutePath,
+  previousExists: boolean,
+  oldCount: number,
+  newCount: number,
+): string {
+  return (
+    `--- ${previousExists ? path : "/dev/null"}\n` +
+    `+++ ${path}\n` +
+    `@@ -${oldCount === 0 ? "0" : "1"},${String(oldCount)} ` +
+    `+${newCount === 0 ? "0" : "1"},${String(newCount)} @@`
+  );
+}
+
+function renderDiff(
+  path: AbsolutePath,
+  previousExists: boolean,
+  groups: readonly DiffLineGroup[],
+  truncated: boolean,
+): string {
+  const oldCount = groups.filter(({ side }) => side === "old").length;
+  const newCount = groups.length - oldCount;
+  const body = [...groups.map(({ text }) => text)].join("\n");
+  const header = diffHeader(path, previousExists, oldCount, newCount);
+  return `${truncated ? `${DIFF_TRUNCATION_MARKER}\n` : ""}${header}${body === "" ? "" : `\n${body}`}`;
 }
 
 function unifiedDiff(path: AbsolutePath, previous: string | undefined, next: string): string {
-  const before = previous === undefined ? "/dev/null" : path;
-  const previousLines = previous === undefined ? [] : previous.split("\n");
-  const nextLines = next.split("\n");
-  const oldText = previousLines.map((line) => `-${line}`).join("\n");
-  const newText = nextLines.map((line) => `+${line}`).join("\n");
-  return bounded(
-    `--- ${before}\n+++ ${path}\n@@ -1,${String(previousLines.length)} +1,${String(nextLines.length)} @@\n${oldText}${oldText === "" ? "" : "\n"}${newText}`,
+  const groups = [...lineGroups(previous ?? "", "old"), ...lineGroups(next, "new")];
+  const full = renderDiff(path, previous !== undefined, groups, false);
+  if (Buffer.byteLength(full, "utf8") <= MAX_DIFF_BYTES) return full;
+
+  const oldCount = groups.filter(({ side }) => side === "old").length;
+  const newCount = groups.length - oldCount;
+  let usedBytes = Buffer.byteLength(
+    `${DIFF_TRUNCATION_MARKER}\n${diffHeader(path, previous !== undefined, oldCount, newCount)}`,
+    "utf8",
   );
+  const included: DiffLineGroup[] = [];
+  for (const group of groups) {
+    const groupBytes = Buffer.byteLength(`\n${group.text}`, "utf8");
+    if (usedBytes + groupBytes > MAX_DIFF_BYTES) break;
+    included.push(group);
+    usedBytes += groupBytes;
+  }
+  const truncated = renderDiff(path, previous !== undefined, included, true);
+  if (Buffer.byteLength(truncated, "utf8") > MAX_DIFF_BYTES) {
+    throw error("PREVIEW_TOO_LARGE", "Diff headers exceed the preview byte limit");
+  }
+  return truncated;
 }
 
 function outputHash(text: string): ContentHash {
@@ -154,6 +197,10 @@ export class DeploymentPreviewService {
   }> {
     request.signal.throwIfAborted();
     if (request.assets.length === 0) throw error("VALIDATION_FAILED", "Preview requires assets");
+    const sourceAssetIds = new Set(request.assets.map(({ assetId }) => assetId));
+    if (sourceAssetIds.size !== request.assets.length) {
+      throw error("VALIDATION_FAILED", "Preview source asset identities must be unique");
+    }
     if (request.assets.some(({ resource }) => hasRedactedValue(resource))) {
       throw error("UNSUPPORTED_CONVERSION", "Redacted MCP values are not deployable");
     }
@@ -171,18 +218,39 @@ export class DeploymentPreviewService {
       compareText(left.assetId, right.assetId),
     );
     const conversions: ConversionResult[] = [];
+    const conversionResultIds = new Set<string>();
     const outputs: PlannedOutput[] = [];
     const targetKeys = new Set<string>();
 
     for (const asset of assets) {
       request.signal.throwIfAborted();
-      const conversion = ConversionResultSchema.parse(
+      const parsedConversion = ConversionResultSchema.safeParse(
         await adapter.convert({
           asset,
           target: request.target,
           signal: request.signal,
         }),
       );
+      request.signal.throwIfAborted();
+      if (!parsedConversion.success) {
+        throw error("VALIDATION_FAILED", "Adapter returned an invalid conversion result");
+      }
+      const conversion = parsedConversion.data;
+      if (
+        conversion.sourceAssetId !== asset.assetId ||
+        conversion.sourceContentHash !== asset.contentHash ||
+        conversion.targetToolId !== request.target.toolId ||
+        conversion.targetResourceKind !== request.target.resourceKind ||
+        conversion.targetSchemaVersion !== request.target.targetSchemaVersion ||
+        conversion.adapterId !== adapter.adapterId ||
+        conversion.adapterVersion !== adapter.adapterVersion
+      ) {
+        throw error("VALIDATION_FAILED", "Conversion result is not bound to its request");
+      }
+      if (conversionResultIds.has(conversion.conversionResultId)) {
+        throw error("VALIDATION_FAILED", "Conversion result identities must be unique");
+      }
+      conversionResultIds.add(conversion.conversionResultId);
       conversions.push(conversion);
       if (conversion.level === "unsupported") {
         throw error("UNSUPPORTED_CONVERSION", conversion.reasons.join("; "));
@@ -219,15 +287,11 @@ export class DeploymentPreviewService {
     const expectedTargetHashes: Record<AbsolutePath, ContentHash | "absent"> = {};
     for (const output of outputs) {
       request.signal.throwIfAborted();
-      let current: FileSnapshot | undefined;
-      try {
-        current = await this.options.snapshots.snapshot({
-          path: output.targetPath,
-          allowedRoots: [canonicalRoot.path],
-        });
-      } catch (cause) {
-        if (!isMissing(cause)) throw cause;
-      }
+      const current: FileSnapshot | undefined = await this.options.snapshots.snapshot({
+        path: output.targetPath,
+        allowedRoots: [canonicalRoot.path],
+      });
+      request.signal.throwIfAborted();
       expectedTargetHashes[output.targetPath] = current?.contentHash ?? "absent";
       if (current?.contentHash === output.contentHash && current.text === output.text) continue;
       if (current === undefined) {
@@ -319,6 +383,7 @@ export class DeploymentPreviewService {
       correlationId: request.correlationId,
       diagnostics: conversions.flatMap(({ diagnostics }) => diagnostics),
     });
+    request.signal.throwIfAborted();
     await this.options.deploymentRepository.savePlanAndRecord({ plan, record });
     return Object.freeze({ plan, record, conversions: Object.freeze(conversions) });
   }

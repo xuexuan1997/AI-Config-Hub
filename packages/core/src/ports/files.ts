@@ -24,10 +24,14 @@ export interface PathPolicyPort {
 }
 
 export interface FileSnapshotPort {
+  /**
+   * Returns undefined only when the target is absent at the initial identity check.
+   * Implementations must reject when a target disappears or changes after that check.
+   */
   snapshot(input: {
     readonly path: AbsolutePath;
     readonly allowedRoots: readonly AbsolutePath[];
-  }): Promise<FileSnapshot>;
+  }): Promise<FileSnapshot | undefined>;
 }
 
 export interface DeploymentFilePort {

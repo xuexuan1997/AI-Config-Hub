@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
+import type { AdapterRegistry } from "@ai-config-hub/adapters";
 import {
   codexRegistration,
   createAdapterRegistry,
@@ -14,10 +15,12 @@ import {
   type FileSnapshotPort,
   type NormalizedResource,
   type PathPolicyPort,
+  type ToolAdapter,
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
   ContentHashSchema,
+  ConversionResultIdSchema,
   CorrelationIdSchema,
   IsoDateTimeSchema,
   type ContentHash,
@@ -84,19 +87,28 @@ class MemoryDeploymentRepository implements DeploymentRepository {
   }
 }
 
-function fixture(current: Readonly<Record<string, string>> = {}) {
+function fixture(
+  current: Readonly<Record<string, string>> = {},
+  options: {
+    readonly registry?: AdapterRegistry;
+    readonly snapshot?: FileSnapshotPort["snapshot"];
+  } = {},
+) {
   const repository = new MemoryDeploymentRepository();
-  const snapshot = vi.fn<FileSnapshotPort["snapshot"]>(({ path }) => {
-    const text = current[path];
-    if (text === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
-    return Promise.resolve({
-      canonicalPath: path,
-      text,
-      contentHash: hash(text),
-      modifiedAt: NOW,
-      size: Buffer.byteLength(text),
-    });
-  });
+  const snapshot = vi.fn<FileSnapshotPort["snapshot"]>(
+    options.snapshot ??
+      (({ path }) => {
+        const text = current[path];
+        if (text === undefined) return Promise.resolve(undefined);
+        return Promise.resolve({
+          canonicalPath: path,
+          text,
+          contentHash: hash(text),
+          modifiedAt: NOW,
+          size: Buffer.byteLength(text),
+        });
+      }),
+  );
   const canonicalize = vi.fn<PathPolicyPort["canonicalize"]>(({ path, allowedRoots }) => {
     const resolved = posix.resolve(path);
     const allowed = allowedRoots.some((root) => {
@@ -109,12 +121,27 @@ function fixture(current: Readonly<Record<string, string>> = {}) {
     return Promise.resolve({ path: absolute, comparisonKey: absolute, displayPath: path });
   });
   const service = new DeploymentPreviewService({
-    registry: createAdapterRegistry([codexRegistration, cursorRegistration]),
+    registry: options.registry ?? createAdapterRegistry([codexRegistration, cursorRegistration]),
     snapshots: { snapshot },
     pathPolicy: { canonicalize },
     deploymentRepository: repository,
   });
   return { service, repository, snapshot, canonicalize };
+}
+
+function registryWithConversion(
+  convert: ToolAdapter["convert"],
+  toolId: "codex" | "cursor" = "codex",
+): AdapterRegistry {
+  const base = createAdapterRegistry([toolId === "codex" ? codexRegistration : cursorRegistration]);
+  return {
+    ...base,
+    create(requestedToolId, logger) {
+      const adapter = base.create(requestedToolId, logger);
+      Object.defineProperty(adapter, "convert", { value: convert });
+      return adapter;
+    },
+  };
 }
 
 function request(assets: readonly ReturnType<typeof asset>[], targetRoot = ROOT): PreviewRequest {
@@ -276,5 +303,153 @@ describe("DeploymentPreviewService", () => {
     ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
     expect(context.snapshot).not.toHaveBeenCalled();
     expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate source asset identities before conversion or persistence", async () => {
+    const source = asset("asset-duplicate");
+    const convert = vi.fn<ToolAdapter["convert"]>();
+    const context = fixture({}, { registry: registryWithConversion(convert) });
+
+    await expect(context.service.preview(request([source, source]))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(convert).not.toHaveBeenCalled();
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects conversion results that are not bound to their source, target, or adapter", async () => {
+    const source = asset("asset-untrusted");
+    const trustedAdapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const valid = await trustedAdapter.convert({
+      asset: source,
+      target: request([source]).target,
+      signal: new AbortController().signal,
+    });
+    const mismatches = [
+      { sourceAssetId: "different-asset" },
+      { sourceContentHash: hash("different-source") },
+      { targetToolId: "cursor" },
+      { targetResourceKind: "agent" },
+      { targetSchemaVersion: "2.0.0" },
+      { adapterId: "different-adapter" },
+      { adapterVersion: "2.0.0" },
+    ] as const;
+
+    for (const mismatch of mismatches) {
+      const context = fixture(
+        {},
+        {
+          registry: registryWithConversion(() =>
+            Promise.resolve({ ...valid, ...mismatch } as typeof valid),
+          ),
+        },
+      );
+      await expect(context.service.preview(request([source]))).rejects.toMatchObject({
+        code: "VALIDATION_FAILED",
+      });
+      expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects duplicate conversion result identities", async () => {
+    const first = asset("first", {
+      kind: "agent",
+      data: { name: "first", instructions: "First.", allowedTools: [], extensions: {} },
+    });
+    const second = asset("second", {
+      kind: "agent",
+      data: { name: "second", instructions: "Second.", allowedTools: [], extensions: {} },
+    });
+    const adapter = cursorRegistration.create({ logger: { debug() {}, warn() {} } });
+    const convert: ToolAdapter["convert"] = async (context) => {
+      const converted = await adapter.convert(context);
+      return {
+        ...converted,
+        conversionResultId: ConversionResultIdSchema.parse("duplicate-conversion"),
+      };
+    };
+    const context = fixture({}, { registry: registryWithConversion(convert, "cursor") });
+
+    await expect(
+      context.service.preview({
+        ...request([first, second]),
+        target: { toolId: "cursor", resourceKind: "agent", targetSchemaVersion: "1.0.0" },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not persist when cancellation happens while awaiting a target snapshot", async () => {
+    const controller = new AbortController();
+    const context = fixture(
+      {},
+      {
+        snapshot: () => {
+          controller.abort();
+          return Promise.resolve(undefined);
+        },
+      },
+    );
+
+    await expect(
+      context.service.preview({ ...request([asset("cancelled")]), signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rechecks cancellation immediately before persistence", async () => {
+    let checks = 0;
+    const signal = new AbortController().signal;
+    Object.defineProperty(signal, "throwIfAborted", {
+      value() {
+        checks += 1;
+        if (checks === 6) throw new DOMException("Preview cancelled", "AbortError");
+      },
+    });
+    const context = fixture();
+
+    await expect(
+      context.service.preview({ ...request([asset("cancelled-before-save")]), signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("emits semantically accurate newline markers in unified diffs", async () => {
+    const source = asset("newline", {
+      kind: "rule",
+      data: { name: "newline", instructions: "new", globs: [], extensions: {} },
+    });
+    const result = await fixture({ "/target/AGENTS.md": "old" }).service.preview(request([source]));
+
+    expect(result.plan.diffs[0]?.unifiedText).toBe(
+      "--- /target/AGENTS.md\n" +
+        "+++ /target/AGENTS.md\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-old\n" +
+        "\\ No newline at end of file\n" +
+        "+new",
+    );
+  });
+
+  it("truncates ASCII and multibyte diffs at line boundaries with an explicit honest marker", async () => {
+    for (const content of ["ascii\n".repeat(80_000), "你好世界\n".repeat(40_000)]) {
+      const source = asset(`large-${content.charCodeAt(0)}`, {
+        kind: "rule",
+        data: { name: "large", instructions: content, globs: [], extensions: {} },
+      });
+      const result = await fixture({ "/target/AGENTS.md": "old\n" }).service.preview(
+        request([source]),
+      );
+      const diff = result.plan.diffs[0]?.unifiedText ?? "";
+      const header = diff.match(/@@ -1,(\d+) \+1,(\d+) @@/);
+      const displayedOld = diff.split("\n").filter((line) => line.startsWith("-")).length - 1;
+      const displayedNew = diff.split("\n").filter((line) => line.startsWith("+")).length - 1;
+
+      expect(Buffer.byteLength(diff, "utf8")).toBeLessThanOrEqual(200 * 1024);
+      expect(diff).toContain("# AI Config Hub: diff truncated");
+      expect(header?.[1]).toBe(String(displayedOld));
+      expect(header?.[2]).toBe(String(displayedNew));
+      expect(diff).not.toContain("�");
+    }
   });
 });
