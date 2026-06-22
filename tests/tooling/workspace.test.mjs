@@ -42,4 +42,20 @@ describe("workspace contract", () => {
       assert.equal(manifest.scripts.test, "vitest run src");
     }
   });
+
+  it("installs pnpm before setup-node initializes its pnpm cache", async () => {
+    const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+    const jobsSection = workflow.split(/^jobs:\s*$/m)[1];
+    assert.ok(jobsSection, "workflow must define jobs");
+    const jobs = jobsSection.split(/^ {2}[a-z][a-z-]+:\s*$/m).slice(1);
+
+    assert.equal(jobs.length, 4);
+    for (const job of jobs) {
+      const installPnpm = job.indexOf("uses: pnpm/action-setup@v4");
+      const setupNode = job.indexOf("uses: actions/setup-node@v4");
+
+      assert.ok(installPnpm >= 0, "job must install pnpm");
+      assert.ok(installPnpm < setupNode, "pnpm must be installed before setup-node cache lookup");
+    }
+  });
 });
