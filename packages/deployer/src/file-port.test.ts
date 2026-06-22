@@ -64,6 +64,33 @@ describe("NodeDeploymentFilePort confinement", () => {
     await expect(lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects replace outside an allowed root without changing the file", async () => {
+    const { outsideRoot, port } = await fixture();
+    const target = join(outsideRoot, "existing.txt");
+    await writeFile(target, "outside");
+
+    await expect(
+      port.atomicReplace({
+        target: absolute(target),
+        text: "changed",
+        expectedHash: hash("outside"),
+      }),
+    ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
+    await expect(readFile(target, "utf8")).resolves.toBe("outside");
+  });
+
+  it("rejects delete outside an allowed root without removing the file", async () => {
+    const { outsideRoot, port } = await fixture();
+    const target = join(outsideRoot, "existing.txt");
+    await writeFile(target, "outside");
+
+    await expect(
+      port.remove({ target: absolute(target), expectedHash: hash("outside") }),
+    ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
+    await expect(readFile(target, "utf8")).resolves.toBe("outside");
+    await expect(lstat(target)).resolves.toBeDefined();
+  });
+
   it("rejects create through a symlink escaping an allowed root", async () => {
     const { allowedRoot, outsideRoot, port } = await fixture();
     const link = join(allowedRoot, "escape");
