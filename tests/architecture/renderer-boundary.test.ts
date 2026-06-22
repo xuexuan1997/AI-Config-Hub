@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
+const dependencyCruiseTimeoutMs = 10_000;
 
 function cruise(fixture: string) {
   return spawnSync(
@@ -20,14 +21,22 @@ function cruise(fixture: string) {
 }
 
 describe("renderer trust boundary", () => {
-  it("allows the browser-safe API package", () => {
-    const result = cruise("safe.ts");
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-  });
+  it(
+    "allows the browser-safe API package",
+    () => {
+      const result = cruise("safe.ts");
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+    },
+    dependencyCruiseTimeoutMs,
+  );
 
-  it("rejects Node built-ins and privileged infrastructure packages", () => {
-    const result = cruise("unsafe.ts");
-    expect(result.status, "unsafe renderer fixture unexpectedly passed").not.toBe(0);
-    expect(result.stdout).toContain("renderer-no-privileged-capabilities");
-  });
+  it(
+    "rejects Node built-ins and privileged infrastructure packages",
+    () => {
+      const result = cruise("unsafe.ts");
+      expect(result.status, "unsafe renderer fixture unexpectedly passed").not.toBe(0);
+      expect(result.stdout).toContain("renderer-no-privileged-capabilities");
+    },
+    dependencyCruiseTimeoutMs,
+  );
 });
