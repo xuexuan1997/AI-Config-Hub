@@ -7,11 +7,13 @@ const packageSource = (name) => fileURLToPath(new URL(`../${name}/src/index.ts`,
 export default defineConfig({
   resolve: {
     alias: {
+      "@ai-config-hub/adapters": packageSource("adapters"),
       "@ai-config-hub/core": packageSource("core"),
       "@ai-config-hub/shared": packageSource("shared"),
     },
   },
   test: {
+    globalSetup: ["./scripts/vitest-native-setup.mjs"],
     include: ["src/**/*.test.ts"],
   },
 });
