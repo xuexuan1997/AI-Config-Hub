@@ -18,6 +18,7 @@ import {
 } from "@ai-config-hub/shared";
 
 import { adapterDiagnostic, BaseToolAdapter } from "./base-adapter.js";
+import { conversionCapabilities } from "./conversion.js";
 import { candidate, markerPath, walkFiles } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
@@ -29,7 +30,7 @@ const capabilities: AdapterCapabilities = {
   resourceKinds: ["rule", "agent", "skill", "mcp"],
   scopeKinds: ["user", "project", "directory"],
   supportsNestedScopes: true,
-  conversions: [],
+  conversions: conversionCapabilities,
 };
 
 class CursorAdapter extends BaseToolAdapter {

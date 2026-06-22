@@ -20,6 +20,7 @@ import {
 } from "@ai-config-hub/shared";
 
 import { BaseToolAdapter } from "./base-adapter.js";
+import { conversionCapabilities } from "./conversion.js";
 import { candidate, markerPath, walkFiles } from "./discovery.js";
 import {
   parseMarkdownAsset,
@@ -39,7 +40,7 @@ const capabilities: AdapterCapabilities = {
   resourceKinds: ["rule", "agent", "skill", "mcp"],
   scopeKinds: ["user", "project", "directory"],
   supportsNestedScopes: true,
-  conversions: [],
+  conversions: conversionCapabilities,
 };
 
 function baseAsset(

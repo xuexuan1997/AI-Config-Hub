@@ -14,21 +14,10 @@ import type {
   VerificationContext,
   VerificationResult,
 } from "@ai-config-hub/core";
-import {
-  ContentHashSchema,
-  ConversionResultIdSchema,
-  type AdapterId,
-  type SemVer,
-  type ToolId,
-} from "@ai-config-hub/shared";
+import type { AdapterId, SemVer, ToolId } from "@ai-config-hub/shared";
 
+import { convertAsset } from "./conversion.js";
 import { resolveAssetsByScope } from "./resolution.js";
-
-function hash(parts: readonly string[]) {
-  const value = createHash("sha256");
-  for (const part of parts) value.update(String(part.length)).update(":").update(part);
-  return ContentHashSchema.parse(`sha256:${value.digest("hex")}`);
-}
 
 export abstract class BaseToolAdapter implements ToolAdapter {
   abstract readonly adapterId: AdapterId;
@@ -60,22 +49,7 @@ export abstract class BaseToolAdapter implements ToolAdapter {
   }
 
   convert(context: ConversionContext): Promise<ConversionResult> {
-    context.signal.throwIfAborted();
-    return Promise.resolve({
-      level: "unsupported",
-      conversionResultId: ConversionResultIdSchema.parse(
-        `conversion:${hash([context.asset.assetId, context.target.toolId, context.target.resourceKind])}`,
-      ),
-      sourceAssetId: context.asset.assetId,
-      sourceContentHash: context.asset.contentHash,
-      targetToolId: context.target.toolId,
-      targetResourceKind: context.target.resourceKind,
-      targetSchemaVersion: context.target.targetSchemaVersion,
-      adapterId: this.adapterId,
-      adapterVersion: this.adapterVersion,
-      diagnostics: [],
-      reasons: ["This adapter currently declares read-only capability for this conversion"],
-    });
+    return Promise.resolve(convertAsset(context, this.adapterId, this.adapterVersion, this.toolId));
   }
 
   planDeployment(context: DeploymentPlanningContext): Promise<DeploymentPlanningResult> {
@@ -135,4 +109,3 @@ export function adapterDiagnostic(
     blocking,
   };
 }
-import { createHash } from "node:crypto";

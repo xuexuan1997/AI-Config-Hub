@@ -6,4 +6,5 @@ export * from "./claude-code.js";
 export * from "./cursor.js";
 export * from "./codex.js";
 export * from "./opencode.js";
+export * from "./conversion.js";
 export * from "./resolution.js";
