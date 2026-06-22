@@ -6,3 +6,8 @@ export {
   type NodeDeploymentFilePortOptions,
 } from "./file-port.js";
 export * from "./path-locks.js";
+export {
+  DeploymentPreviewService,
+  type DeploymentPreviewServiceOptions,
+  type PreviewRequest,
+} from "./preview-service.js";
