@@ -15,6 +15,7 @@ export default async function setup() {
     "-std=c11",
     "-O2",
     "-D_GNU_SOURCE",
+    "-DAICH_NATIVE_TESTING",
     "-Wall",
     "-Wextra",
     "-Werror",

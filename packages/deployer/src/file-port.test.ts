@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
@@ -16,9 +17,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AbsolutePathSchema, ContentHashSchema, type AbsolutePath } from "@ai-config-hub/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
-import { CommittedButDurabilityUncertainError, NodeDeploymentFilePort } from "./file-port.js";
+import {
+  CommittedButDurabilityUncertainError,
+  createNodeDeploymentFilePortForTest,
+  MutationOutcomeUncertainError,
+  NodeDeploymentFilePort,
+  type NodeDeploymentFilePortOptions,
+} from "./file-port.js";
 import { PathLockManager } from "./path-locks.js";
 
 const temporaryDirectories: string[] = [];
@@ -68,6 +75,13 @@ afterEach(async () => {
 });
 
 describe("NodeDeploymentFilePort confinement", () => {
+  it("keeps the public options contract limited to roots", () => {
+    expectTypeOf<NodeDeploymentFilePortOptions>().toEqualTypeOf<{
+      readonly allowedRoots: readonly AbsolutePath[];
+      readonly backupRoot: AbsolutePath;
+    }>();
+  });
+
   it("allows a child whose name starts with two dots", async () => {
     const { allowedRoot, port } = await fixture();
     const target = join(allowedRoot, "..config", "created.txt");
@@ -292,6 +306,147 @@ describe("NodeDeploymentFilePort writes", () => {
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "fails closed when the native helper is missing",
+    async () => {
+      const { allowedRoot, port } = await fixture();
+      const target = join(allowedRoot, "target.txt");
+      const helper = process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"];
+      process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"] = join(allowedRoot, "missing-helper");
+      try {
+        await expect(
+          port.atomicReplace({ target: absolute(target), text: "unsafe", expectedHash: "absent" }),
+        ).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
+        await expect(lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        if (helper === undefined) delete process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"];
+        else process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"] = helper;
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "reports an uncertain outcome when the native helper is killed",
+    async () => {
+      const { allowedRoot, port } = await fixture();
+      const target = join(allowedRoot, "target.txt");
+      const fakeHelper = join(allowedRoot, "killed-helper");
+      const helper = process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"];
+      await writeFile(fakeHelper, "#!/bin/sh\nkill -KILL $$\n");
+      await chmod(fakeHelper, 0o700);
+      process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"] = fakeHelper;
+      try {
+        await expect(
+          port.atomicReplace({ target: absolute(target), text: "unknown", expectedHash: "absent" }),
+        ).rejects.toBeInstanceOf(MutationOutcomeUncertainError);
+      } finally {
+        if (helper === undefined) delete process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"];
+        else process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"] = helper;
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "keeps backup confined when its destination parent is swapped",
+    async () => {
+      const { allowedRoot, backupRoot, outsideRoot, port } = await fixture();
+      const source = join(allowedRoot, "source.txt");
+      const parent = join(backupRoot, "parent");
+      const movedParent = join(backupRoot, "original-parent");
+      const destination = join(parent, "backup.txt");
+      const marker = join(allowedRoot, "native-backup-pause");
+      await writeFile(source, "source");
+      await mkdir(parent);
+      process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"] = marker;
+      try {
+        const backup = port.createBackup({
+          source: absolute(source),
+          destination: absolute(destination),
+          expectedHash: hash("source"),
+        });
+        await waitForPath(marker);
+        await rename(parent, movedParent);
+        await symlink(outsideRoot, parent);
+        await writeFile(`${marker}.continue`, "continue");
+
+        await expect(backup).resolves.toMatchObject({ backupHash: hash("source") });
+        await expect(readFile(join(movedParent, "backup.txt"), "utf8")).resolves.toBe("source");
+        await expect(lstat(join(outsideRoot, "backup.txt"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        delete process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"];
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "rejects remove when target identity changes after hash verification",
+    async () => {
+      const { allowedRoot, port } = await fixture();
+      const target = join(allowedRoot, "target.txt");
+      const changed = join(allowedRoot, "changed.txt");
+      const marker = join(allowedRoot, "native-remove-pause");
+      await writeFile(target, "expected");
+      process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"] = marker;
+      try {
+        const removal = port.remove({ target: absolute(target), expectedHash: hash("expected") });
+        await waitForPath(marker);
+        await writeFile(changed, "external change");
+        await rename(changed, target);
+        await writeFile(`${marker}.continue`, "continue");
+
+        await expect(removal).rejects.toMatchObject({ code: "STALE_TARGET" });
+        await expect(readFile(target, "utf8")).resolves.toBe("external change");
+      } finally {
+        delete process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"];
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "uses no-replace link fallback and cleans temporary files",
+    async () => {
+      const { allowedRoot, port } = await fixture();
+      const target = join(allowedRoot, "target.txt");
+      process.env["AICH_TEST_FORCE_RENAMEAT2_UNSUPPORTED"] = "1";
+      try {
+        await expect(
+          port.atomicReplace({ target: absolute(target), text: "created", expectedHash: "absent" }),
+        ).resolves.toEqual({ resultingHash: hash("created") });
+        await expect(
+          port.atomicReplace({
+            target: absolute(target),
+            text: "conflict",
+            expectedHash: "absent",
+          }),
+        ).rejects.toMatchObject({ code: "STALE_TARGET" });
+        expect((await readdir(allowedRoot)).filter((name) => name.startsWith(".aich-"))).toEqual(
+          [],
+        );
+      } finally {
+        delete process.env["AICH_TEST_FORCE_RENAMEAT2_UNSUPPORTED"];
+      }
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "reports uncertain durability when a newly created directory cannot be synced",
+    async () => {
+      const { allowedRoot, port } = await fixture();
+      const target = join(allowedRoot, "new-parent", "target.txt");
+      process.env["AICH_TEST_FAIL_MKDIR_FSYNC"] = "1";
+      try {
+        await expect(
+          port.atomicReplace({ target: absolute(target), text: "value", expectedHash: "absent" }),
+        ).rejects.toBeInstanceOf(CommittedButDurabilityUncertainError);
+        await expect(lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        delete process.env["AICH_TEST_FAIL_MKDIR_FSYNC"];
+      }
+    },
+  );
+
   it("creates and confines a backup root that does not exist yet", async () => {
     const base = await mkdtemp(join(tmpdir(), "ai-config-hub-deployer-missing-backup-"));
     temporaryDirectories.push(base);
@@ -368,11 +523,13 @@ describe("NodeDeploymentFilePort writes", () => {
   it("reports when replacement committed but parent durability is uncertain", async () => {
     const { allowedRoot, backupRoot } = await fixture();
     const target = join(allowedRoot, "target.txt");
-    const port = new NodeDeploymentFilePort({
-      allowedRoots: [absolute(allowedRoot)],
-      backupRoot: absolute(backupRoot),
-      beforeParentSync: () => Promise.reject(new Error("simulated fsync failure")),
-    });
+    const port = createNodeDeploymentFilePortForTest(
+      {
+        allowedRoots: [absolute(allowedRoot)],
+        backupRoot: absolute(backupRoot),
+      },
+      { beforeParentSync: () => Promise.reject(new Error("simulated fsync failure")) },
+    );
     if (process.platform === "linux") process.env["AICH_TEST_FAIL_PARENT_FSYNC"] = "1";
     const error = await port
       .atomicReplace({ target: absolute(target), text: "committed", expectedHash: "absent" })

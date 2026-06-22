@@ -21,7 +21,19 @@
 #define RENAME_NOREPLACE (1U << 0)
 #endif
 
-enum { EXIT_CONFLICT = 20, EXIT_PATH = 21, EXIT_DURABILITY = 22, EXIT_INTERNAL = 23 };
+/*
+ * Security contract: roots are controlled by the current user and intent is durably journaled
+ * before invocation. Stable directory fds prevent path-redirection races. Hash/identity prechecks
+ * plus post-mutation verification detect ordinary drift, but Linux path syscalls cannot provide a
+ * linearizable hash CAS against a malicious same-UID process or a writer retaining an open fd.
+ */
+enum {
+  EXIT_CONFLICT = 20,
+  EXIT_PATH = 21,
+  EXIT_DURABILITY = 22,
+  EXIT_INTERNAL = 23,
+  EXIT_OUTCOME_UNCERTAIN = 24
+};
 
 typedef struct {
   uint32_t state[8];
@@ -119,16 +131,29 @@ static int open_absolute_root(const char *path, int create) {
   for (char *part = strtok_r(copy, "/", &save); part != NULL; part = strtok_r(NULL, "/", &save)) {
     if (!valid_segment(part)) { errno = EINVAL; goto fail; }
     int next = openat(current, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    int created = 0;
     if (next < 0 && create && errno == ENOENT) {
-      if (mkdirat(current, part, 0700) < 0 && errno != EEXIST) goto fail;
+      if (mkdirat(current, part, 0700) == 0) created = 1;
+      else if (errno != EEXIST) goto fail;
       next = openat(current, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     }
     if (next < 0) goto fail;
+    if (created) {
+#ifdef AICH_NATIVE_TESTING
+      if (getenv("AICH_TEST_FAIL_MKDIR_FSYNC") != NULL) errno = EIO;
+      else
+#endif
+      if (fsync(next) == 0 && fsync(current) == 0) goto directory_synced;
+      close(next); goto durability_fail;
+    }
+directory_synced:
     close(current); current = next;
   }
   free(copy); return current;
 fail:
   free(copy); close(current); return -1;
+durability_fail:
+  free(copy); close(current); return -2;
 }
 
 static int open_parent(int root, const char *relative_path, int create, char **leaf) {
@@ -149,15 +174,28 @@ static int open_parent(int root, const char *relative_path, int create, char **l
       return current;
     }
     int next = openat(current, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    int created = 0;
     if (next < 0 && create && errno == ENOENT) {
-      if (mkdirat(current, part, 0700) < 0 && errno != EEXIST) goto fail;
+      if (mkdirat(current, part, 0700) == 0) created = 1;
+      else if (errno != EEXIST) goto fail;
       next = openat(current, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     }
     if (next < 0) goto fail;
+    if (created) {
+#ifdef AICH_NATIVE_TESTING
+      if (getenv("AICH_TEST_FAIL_MKDIR_FSYNC") != NULL) errno = EIO;
+      else
+#endif
+      if (fsync(next) == 0 && fsync(current) == 0) goto child_directory_synced;
+      close(next); goto durability_fail;
+    }
+child_directory_synced:
     close(current); current = next; part = next_part;
   }
 fail:
   free(copy); close(current); return -1;
+durability_fail:
+  free(copy); close(current); return -2;
 }
 
 static int same_identity(const struct stat *left, const struct stat *right) {
@@ -188,6 +226,15 @@ static int verify_open_target(int parent, const char *leaf, const char *expected
   return strcmp(actual, expected) == 0 ? 0 : EXIT_CONFLICT;
 }
 
+static int path_has_hash(int parent, const char *leaf, const char *expected) {
+  int fd = openat(parent, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) return 0;
+  char actual[72];
+  int matches = hash_fd(fd, actual) == 0 && strcmp(actual, expected) == 0;
+  close(fd);
+  return matches;
+}
+
 static int identity_still_matches(int parent, const char *leaf, const struct stat *identity) {
   struct stat current;
   return fstatat(parent, leaf, &current, AT_SYMLINK_NOFOLLOW) == 0 &&
@@ -195,11 +242,14 @@ static int identity_still_matches(int parent, const char *leaf, const struct sta
 }
 
 static int sync_parent(int parent) {
+#ifdef AICH_NATIVE_TESTING
   if (getenv("AICH_TEST_FAIL_PARENT_FSYNC") != NULL) { errno = EIO; return -1; }
+#endif
   return fsync(parent);
 }
 
 static int test_pause_before_commit(void) {
+#ifdef AICH_NATIVE_TESTING
   const char *marker = getenv("AICH_TEST_PAUSE_BEFORE_COMMIT");
   if (marker == NULL) return 0;
   int signal_fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -215,6 +265,25 @@ static int test_pause_before_commit(void) {
     usleep(1000);
   }
   free(continuation); errno = ETIMEDOUT; return -1;
+#else
+  return 0;
+#endif
+}
+
+static int rename_noreplace(int parent, const char *temp, const char *leaf) {
+  int result;
+#ifdef AICH_NATIVE_TESTING
+  if (getenv("AICH_TEST_FORCE_RENAMEAT2_UNSUPPORTED") != NULL) {
+    errno = ENOSYS;
+    result = -1;
+  } else
+#endif
+  result = (int)syscall(SYS_renameat2, parent, temp, parent, leaf, RENAME_NOREPLACE);
+  if (result == 0) return 0;
+  if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP) return -1;
+  if (linkat(parent, temp, parent, leaf, 0) < 0) return -1;
+  if (unlinkat(parent, temp, 0) < 0) return -2;
+  return 0;
 }
 
 static int write_stdin_to_temp(int parent, const char *temp, mode_t mode, char hash_output[72]) {
@@ -240,18 +309,19 @@ static int write_stdin_to_temp(int parent, const char *temp, mode_t mode, char h
 
 static int replace_file(const char *root_path, const char *relative_path, const char *expected) {
   int root = open_absolute_root(root_path, 0);
-  if (root < 0) return EXIT_PATH;
+  if (root < 0) return root == -2 ? EXIT_DURABILITY : EXIT_PATH;
   char *leaf = NULL;
   int parent = open_parent(root, relative_path, strcmp(expected, "absent") == 0, &leaf);
   close(root);
-  if (parent < 0) return EXIT_PATH;
+  if (parent < 0) return parent == -2 ? EXIT_DURABILITY : EXIT_PATH;
   char temp[80]; snprintf(temp, sizeof(temp), ".aich-%ld.tmp", (long)getpid());
   char resulting_hash[72];
   if (write_stdin_to_temp(parent, temp, 0600, resulting_hash) < 0) goto internal;
   if (strcmp(expected, "absent") == 0) {
     if (test_pause_before_commit() < 0) goto internal;
-    if (syscall(SYS_renameat2, parent, temp, parent, leaf, RENAME_NOREPLACE) < 0) {
-      int code = errno == EEXIST ? EXIT_CONFLICT : EXIT_INTERNAL;
+    int rename_result = rename_noreplace(parent, temp, leaf);
+    if (rename_result < 0) {
+      int code = rename_result == -2 ? EXIT_DURABILITY : errno == EEXIST ? EXIT_CONFLICT : EXIT_INTERNAL;
       unlinkat(parent, temp, 0); free(leaf); close(parent); return code;
     }
   } else {
@@ -263,6 +333,7 @@ static int replace_file(const char *root_path, const char *relative_path, const 
     close(target);
     if (renameat(parent, temp, parent, leaf) < 0) goto internal;
   }
+  if (!path_has_hash(parent, leaf, resulting_hash)) { free(leaf); close(parent); return EXIT_OUTCOME_UNCERTAIN; }
   if (sync_parent(parent) < 0) { free(leaf); close(parent); return EXIT_DURABILITY; }
   puts(resulting_hash); free(leaf); close(parent); return 0;
 internal:
@@ -271,16 +342,22 @@ internal:
 
 static int remove_file(const char *root_path, const char *relative_path, const char *expected) {
   int root = open_absolute_root(root_path, 0);
-  if (root < 0) return EXIT_PATH;
+  if (root < 0) return root == -2 ? EXIT_DURABILITY : EXIT_PATH;
   char *leaf = NULL; int parent = open_parent(root, relative_path, 0, &leaf); close(root);
-  if (parent < 0) return EXIT_PATH;
+  if (parent < 0) return parent == -2 ? EXIT_DURABILITY : EXIT_PATH;
   int target = -1; struct stat identity;
   int code = verify_open_target(parent, leaf, expected, &target, &identity);
   if (code != 0) { if (target >= 0) close(target); free(leaf); close(parent); return code; }
   if (test_pause_before_commit() < 0) code = EXIT_INTERNAL;
   else if (!identity_still_matches(parent, leaf, &identity)) code = EXIT_CONFLICT;
   else if (unlinkat(parent, leaf, 0) < 0) code = errno == ENOENT ? EXIT_CONFLICT : EXIT_INTERNAL;
-  else if (sync_parent(parent) < 0) code = EXIT_DURABILITY;
+  else {
+    struct stat after;
+    if (fstatat(parent, leaf, &after, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT)
+      code = EXIT_OUTCOME_UNCERTAIN;
+    else if (sync_parent(parent) < 0)
+      code = EXIT_DURABILITY;
+  }
   close(target); free(leaf); close(parent); return code;
 }
 
@@ -288,20 +365,20 @@ static int backup_file(const char *source_root_path, const char *source_relative
                        const char *destination_root_path, const char *destination_relative,
                        const char *expected) {
   int source_root = open_absolute_root(source_root_path, 0);
-  if (source_root < 0) return EXIT_PATH;
+  if (source_root < 0) return source_root == -2 ? EXIT_DURABILITY : EXIT_PATH;
   char *source_leaf = NULL, *destination_leaf = NULL;
   int source_parent = open_parent(source_root, source_relative, 0, &source_leaf);
   close(source_root);
-  if (source_parent < 0) return EXIT_PATH;
+  if (source_parent < 0) return source_parent == -2 ? EXIT_DURABILITY : EXIT_PATH;
   int source = -1, destination_parent = -1;
   struct stat identity;
   int code = verify_open_target(source_parent, source_leaf, expected, &source, &identity);
   if (code != 0) goto done;
   int destination_root = open_absolute_root(destination_root_path, 1);
-  if (destination_root < 0) { code = EXIT_PATH; goto done; }
+  if (destination_root < 0) { code = destination_root == -2 ? EXIT_DURABILITY : EXIT_PATH; goto done; }
   destination_parent = open_parent(destination_root, destination_relative, 1, &destination_leaf);
   close(destination_root);
-  if (destination_parent < 0) { code = EXIT_PATH; goto done; }
+  if (destination_parent < 0) { code = destination_parent == -2 ? EXIT_DURABILITY : EXIT_PATH; goto done; }
   char temp[80]; snprintf(temp, sizeof(temp), ".aich-%ld.tmp", (long)getpid());
   int output = openat(destination_parent, temp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
   if (output < 0) { code = EXIT_INTERNAL; goto done; }
@@ -318,7 +395,9 @@ static int backup_file(const char *source_root_path, const char *source_relative
   if (code == 0 && (fchmod(output, identity.st_mode & 0777) < 0 || fsync(output) < 0)) code = EXIT_INTERNAL;
   if (close(output) < 0 && code == 0) code = EXIT_INTERNAL;
   if (code == 0 && !identity_still_matches(source_parent, source_leaf, &identity)) code = EXIT_CONFLICT;
+  if (code == 0 && test_pause_before_commit() < 0) code = EXIT_INTERNAL;
   if (code == 0 && renameat(destination_parent, temp, destination_parent, destination_leaf) < 0) code = EXIT_INTERNAL;
+  if (code == 0 && !path_has_hash(destination_parent, destination_leaf, expected)) code = EXIT_OUTCOME_UNCERTAIN;
   if (code == 0 && sync_parent(destination_parent) < 0) code = EXIT_DURABILITY;
   if (code == 0) puts(expected);
   if (code != 0 && code != EXIT_DURABILITY) unlinkat(destination_parent, temp, 0);

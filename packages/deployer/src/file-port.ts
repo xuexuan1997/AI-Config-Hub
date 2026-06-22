@@ -16,9 +16,13 @@ import {
 export interface NodeDeploymentFilePortOptions {
   readonly allowedRoots: readonly AbsolutePath[];
   readonly backupRoot: AbsolutePath;
-  /** Test seam for failures after a mutation has committed but before parent fsync. */
+}
+
+interface DeploymentFilePortTestHooks {
   readonly beforeParentSync?: () => Promise<void>;
 }
+
+const testHooks = new WeakMap<NodeDeploymentFilePort, DeploymentFilePortTestHooks>();
 
 export class CommittedButDurabilityUncertainError extends AppError {
   readonly committed = true;
@@ -34,6 +38,27 @@ export class CommittedButDurabilityUncertainError extends AppError {
       cause,
     });
     this.name = "CommittedButDurabilityUncertainError";
+  }
+}
+
+export class MutationOutcomeUncertainError extends AppError {
+  readonly mutationOutcomeUncertain = true;
+  readonly requiresRescan = true;
+
+  constructor(operation: "backup" | "replace" | "remove", signal: string | null) {
+    super({
+      code: "INTERNAL_ERROR",
+      message: "Deployment helper terminated before reporting the mutation outcome",
+      retryable: false,
+      suggestedActions: ["Rescan the target and backup state before retrying or compensating"],
+      safeContext: {
+        mutationOutcomeUncertain: true,
+        requiresRescan: true,
+        operation,
+        signal: signal ?? "unknown",
+      },
+    });
+    this.name = "MutationOutcomeUncertainError";
   }
 }
 
@@ -148,6 +173,8 @@ async function runNativeHelper(
     process.env["AI_CONFIG_HUB_DEPLOYMENT_HELPER"] ??
     fileURLToPath(new URL("./native/deployment-file-helper", import.meta.url));
 
+  // Security contract: the caller must durably journal intent before starting the helper.
+  // A signal can terminate the helper after commit but before its protocol response.
   return await new Promise<string>((resolvePromise, reject) => {
     const child = spawn(executable, [operation, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -159,8 +186,10 @@ async function runNativeHelper(
     child.once("error", (cause) => {
       reject(nativeHelperError("Linux deployment helper could not be started", cause));
     });
-    child.once("close", (code) => {
-      if (code === 0) {
+    child.once("close", (code, signal) => {
+      if (code === null) {
+        reject(new MutationOutcomeUncertainError(operation, signal));
+      } else if (code === 0) {
         resolvePromise(Buffer.concat(stdout).toString("utf8").trim());
       } else if (code === 20) {
         reject(staleTargetError());
@@ -173,6 +202,8 @@ async function runNativeHelper(
             new Error(Buffer.concat(stderr).toString("utf8") || "parent fsync failed"),
           ),
         );
+      } else if (code === 24) {
+        reject(new MutationOutcomeUncertainError(operation, signal));
       } else {
         reject(
           nativeHelperError(
@@ -267,15 +298,14 @@ export class NodeDeploymentFilePort implements DeploymentFilePort {
     const backupHash = contentHash(bytes);
     if (backupHash !== input.expectedHash) throw staleTargetError();
     const sourceMode = (await stat(source)).mode & 0o777;
+    const beforeParentSync = testHooks.get(this)?.beforeParentSync;
 
     await writeAtomically({
       destination,
       bytes,
       mode: sourceMode,
       operation: "backup",
-      ...(this.options.beforeParentSync === undefined
-        ? {}
-        : { beforeParentSync: this.options.beforeParentSync }),
+      ...(beforeParentSync === undefined ? {} : { beforeParentSync }),
     });
     return { backupPath: destination, backupHash };
   }
@@ -300,15 +330,14 @@ export class NodeDeploymentFilePort implements DeploymentFilePort {
     }
     if ((await currentHash(target)) !== input.expectedHash) throw staleTargetError();
     const resultingHash = contentHash(input.text);
+    const beforeParentSync = testHooks.get(this)?.beforeParentSync;
 
     await writeAtomically({
       destination: target,
       bytes: input.text,
       mode: 0o600,
       operation: "replace",
-      ...(this.options.beforeParentSync === undefined
-        ? {}
-        : { beforeParentSync: this.options.beforeParentSync }),
+      ...(beforeParentSync === undefined ? {} : { beforeParentSync }),
     });
     return { resultingHash };
   }
@@ -327,10 +356,20 @@ export class NodeDeploymentFilePort implements DeploymentFilePort {
     await lstat(target);
     await unlink(target);
     try {
-      await this.options.beforeParentSync?.();
+      await testHooks.get(this)?.beforeParentSync?.();
       await syncDirectory(dirname(target));
     } catch (cause) {
       throw new CommittedButDurabilityUncertainError("remove", cause);
     }
   }
+}
+
+/** Internal test factory; intentionally not exported from the package entry point. */
+export function createNodeDeploymentFilePortForTest(
+  options: NodeDeploymentFilePortOptions,
+  hooks: DeploymentFilePortTestHooks,
+): NodeDeploymentFilePort {
+  const port = new NodeDeploymentFilePort(options);
+  testHooks.set(port, hooks);
+  return port;
 }
