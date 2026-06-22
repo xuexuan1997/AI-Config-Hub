@@ -58,4 +58,13 @@ describe("workspace contract", () => {
       assert.ok(installPnpm < setupNode, "pnpm must be installed before setup-node cache lookup");
     }
   });
+
+  it("publishes immutable tag-bound releases with narrow permissions", async () => {
+    const workflow = await readFile(".github/workflows/release.yml", "utf8");
+    assert.match(workflow, /^\s+tags:\s*\["v\*"\]$/m);
+    assert.match(workflow, /^\s+contents:\s*write$/m);
+    assert.match(workflow, /gh release create "\$GITHUB_REF_NAME"/);
+    assert.match(workflow, /--repo "\$GITHUB_REPOSITORY"/);
+    assert.match(workflow, /--verify-tag/);
+  });
 });
