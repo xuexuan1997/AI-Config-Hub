@@ -1,0 +1,21 @@
+{
+  "name": "@ai-config-hub/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package": "pnpm run build"
+  },
+  "dependencies": {
+    "@ai-config-hub/adapters": "workspace:*",
+    "@ai-config-hub/api": "workspace:*",
+    "@ai-config-hub/core": "workspace:*",
+    "@ai-config-hub/deployer": "workspace:*",
+    "@ai-config-hub/git": "workspace:*",
+    "@ai-config-hub/scanner": "workspace:*",
+    "@ai-config-hub/shared": "workspace:*",
+    "@ai-config-hub/storage": "workspace:*"
+  }
+}

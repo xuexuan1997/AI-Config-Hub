@@ -1,0 +1,27 @@
+{
+  "name": "@ai-config-hub/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && cp -R src/migrations dist/migrations",
+    "test": "vitest run src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-config-hub/core": "workspace:*",
+    "@ai-config-hub/shared": "workspace:*",
+    "drizzle-orm": "0.45.2"
+  }
+}

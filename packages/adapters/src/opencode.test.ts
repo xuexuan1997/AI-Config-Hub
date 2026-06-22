@@ -1,0 +1,73 @@
+import type { ToolInstallation } from "@ai-config-hub/core";
+import { AbsolutePathSchema, ToolInstallationIdSchema } from "@ai-config-hub/shared";
+import { describe, expect, it } from "vitest";
+
+import { opencodeRegistration } from "./opencode.js";
+import { fixtureSnapshot, memoryReadApi, neverCancelled } from "./test-support.js";
+
+const files = {
+  "/project/AGENTS.md": "# OpenCode guidance\nUse tests.\n",
+  "/project/CLAUDE.md": "# Compatible guidance\nKeep changes small.\n",
+  "/project/docs/local.md": "# Configured instruction\nDo not fetch remote instructions.\n",
+  "/project/.opencode/agents/reviewer.md":
+    "---\nname: reviewer\ndescription: Reviews code\nmodel: openai/gpt-5\ntools: [read, grep]\n---\nReview carefully.\n",
+  "/project/.opencode/skills/release/SKILL.md":
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+  "/project/opencode.jsonc": `{
+    // Local instruction paths only; URLs are ignored.
+    "instructions": ["docs/local.md", "https://example.test/never-fetch.md"],
+    "agent": {
+      "planner": { "description": "Plans work", "prompt": "Plan carefully.", "model": "openai/gpt-5", "mode": "subagent" }
+    },
+    "mcp": {
+      "local": { "type": "local", "command": ["npx", "docs", "--api-key=top-secret-canary"], "environment": { "TOKEN": "top-secret-canary" } },
+      "remote": { "type": "remote", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer top-secret-canary" } }
+    }
+  }`,
+} as const;
+
+const tool: ToolInstallation = {
+  toolId: "opencode",
+  installationId: ToolInstallationIdSchema.parse("opencode-project"),
+  configRoots: [AbsolutePathSchema.parse("/project")],
+  evidence: { scope: "project" },
+};
+
+describe("OpenCode adapter read path", () => {
+  it("normalizes markdown plus config agents and MCP without remote access", async () => {
+    const read = memoryReadApi(files);
+    const adapter = opencodeRegistration.create({ logger: { debug() {}, warn() {} } });
+    const discovery = await adapter.discover({
+      tool,
+      allowedRoots: tool.configRoots,
+      read,
+      signal: neverCancelled,
+    });
+    expect(discovery.candidates.map(({ sourcePath }) => sourcePath)).toContain(
+      "/project/docs/local.md",
+    );
+    expect(discovery.candidates.every(({ sourcePath }) => !sourcePath.startsWith("https:"))).toBe(
+      true,
+    );
+
+    const results = await Promise.all(
+      discovery.candidates.map(async (candidate) =>
+        adapter.parse({
+          tool,
+          candidate,
+          snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+          signal: neverCancelled,
+        }),
+      ),
+    );
+    const assets = results.flatMap(({ assets }) => assets);
+    expect(new Set(assets.map(({ resource }) => resource.kind))).toEqual(
+      new Set(["rule", "agent", "skill", "mcp"]),
+    );
+    expect(assets.find(({ locator }) => locator === "agent:planner")?.resource).toMatchObject({
+      kind: "agent",
+      data: { name: "planner", instructions: "Plan carefully." },
+    });
+    expect(JSON.stringify(results)).not.toContain("top-secret-canary");
+  });
+});

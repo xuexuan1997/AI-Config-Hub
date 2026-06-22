@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["*.ts", "tests/**/*.ts"],
+  "exclude": [".worktrees", "apps", "node_modules", "packages"]
+}

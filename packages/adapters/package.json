@@ -1,0 +1,29 @@
+{
+  "name": "@ai-config-hub/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-config-hub/core": "workspace:*",
+    "@ai-config-hub/shared": "workspace:*",
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.6.1",
+    "yaml": "2.9.0"
+  }
+}
