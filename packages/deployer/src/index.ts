@@ -11,3 +11,8 @@ export {
   type DeploymentPreviewServiceOptions,
   type PreviewRequest,
 } from "./preview-service.js";
+export {
+  DeploymentExecutionService,
+  type DeploymentExecutionServiceOptions,
+  type ExecuteDeploymentRequest,
+} from "./execution-service.js";

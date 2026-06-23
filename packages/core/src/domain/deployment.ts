@@ -142,6 +142,18 @@ const RollbackResultSchema = z
   .strict()
   .readonly();
 
+const OperationJournalEntrySchema = z
+  .object({
+    targetPath: AbsolutePathSchema,
+    operationKind: z.enum(["create", "replace", "delete"]),
+    phase: z.enum(["intent", "completed"]),
+    expectedTargetHash: z.union([ContentHashSchema, z.literal("absent")]),
+    resultingHash: ContentHashSchema.optional(),
+    recordedAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .readonly();
+
 export const DeploymentRecordSchema = z
   .object({
     deploymentRecordId: DeploymentRecordIdSchema,
@@ -153,6 +165,7 @@ export const DeploymentRecordSchema = z
       .record(AbsolutePathSchema, z.union([AbsolutePathSchema, z.literal("previously-absent")]))
       .readonly(),
     resultingHashes: z.record(AbsolutePathSchema, ContentHashSchema).readonly(),
+    operationJournal: z.array(OperationJournalEntrySchema).readonly().optional(),
     verificationResult: VerificationResultSchema,
     rollbackResults: z.array(RollbackResultSchema).readonly(),
     adapterId: AdapterIdSchema,
