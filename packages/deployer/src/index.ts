@@ -16,3 +16,8 @@ export {
   type DeploymentExecutionServiceOptions,
   type ExecuteDeploymentRequest,
 } from "./execution-service.js";
+export {
+  DeploymentRollbackService,
+  type DeploymentRollbackServiceOptions,
+  type ExecuteRollbackRequest,
+} from "./rollback-service.js";

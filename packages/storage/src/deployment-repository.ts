@@ -42,8 +42,8 @@ export class SqliteDeploymentRepository implements DeploymentRepository {
         `INSERT INTO deployments(
           id, domain_id, target_tool_id, plan_id, status, source_hash, target_hash_before,
           plan_json, compatibility, requested_at, confirmed_at, finished_at, verification_json,
-          rollback_state, correlation_id
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?, ?, ?)`,
+          rollback_state, correlation_id, rollback_of_domain_id
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         randomUUID(),
@@ -60,6 +60,7 @@ export class SqliteDeploymentRepository implements DeploymentRepository {
         recordJson,
         record.status,
         record.correlationId,
+        record.rollbackOfRecordId ?? null,
       );
     return Promise.resolve();
   }

@@ -207,7 +207,11 @@ export async function openDatabase(options: OpenDatabaseOptions): Promise<OpenDa
       ).count,
     );
     if (tableCount === 0) {
-      for (const item of migrations) applyMigration(database, item, options.appVersion);
+      for (const item of migrations) {
+        const backupId =
+          item.version === 1 ? undefined : await createVerifiedBackup(database, path, item.version);
+        applyMigration(database, item, options.appVersion, backupId);
+      }
       return { mode: "read_write", database };
     }
 

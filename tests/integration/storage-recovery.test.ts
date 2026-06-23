@@ -23,7 +23,11 @@ describe("storage recovery boundary", () => {
     const directory = await mkdtemp(join(tmpdir(), "ai-config-hub-recovery-"));
     directories.push(directory);
     const path = join(directory, "index.sqlite");
-    const initial = await openDatabase({ path, appVersion: "0.1.0" });
+    const initial = await openDatabase({
+      path,
+      appVersion: "0.1.0",
+      migrations: [initialMigration],
+    });
     initial.database.close();
 
     const broken = migration(2, "broken_upgrade", "CREATE TABLE broken(id TEXT); INVALID SQL;");

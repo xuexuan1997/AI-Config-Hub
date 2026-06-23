@@ -20,6 +20,11 @@ export function migration(version: number, name: string, sql: string): DatabaseM
 }
 
 const initialSql = readFileSync(new URL("./migrations/0001-initial.sql", import.meta.url), "utf8");
+const rollbackLinksSql = readFileSync(
+  new URL("./migrations/0002-rollback-links.sql", import.meta.url),
+  "utf8",
+);
 
 export const initialMigration = migration(1, "initial", initialSql);
-export const databaseMigrations = Object.freeze([initialMigration]);
+export const rollbackLinksMigration = migration(2, "rollback-links", rollbackLinksSql);
+export const databaseMigrations = Object.freeze([initialMigration, rollbackLinksMigration]);

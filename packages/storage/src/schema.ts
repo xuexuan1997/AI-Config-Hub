@@ -145,6 +145,7 @@ export const deployments = sqliteTable("deployments", {
   verificationJson: text("verification_json"),
   rollbackState: requiredText("rollback_state"),
   correlationId: requiredText("correlation_id"),
+  rollbackOfDomainId: text("rollback_of_domain_id"),
 });
 
 export const deploymentOperations = sqliteTable("deployment_operations", {

@@ -104,7 +104,11 @@ describe("SQLite bootstrap", () => {
 
   it("refuses checksum drift and returns a read-only recovery connection", async () => {
     const path = databasePath();
-    const first = await openDatabase({ path, appVersion: "0.1.0" });
+    const first = await openDatabase({
+      path,
+      appVersion: "0.1.0",
+      migrations: [initialMigration],
+    });
     first.database.close();
     const drifted: DatabaseMigration = {
       ...initialMigration,
@@ -121,7 +125,11 @@ describe("SQLite bootstrap", () => {
 
   it("creates and verifies a private online backup before upgrading a non-empty database", async () => {
     const path = databasePath();
-    const first = await openDatabase({ path, appVersion: "0.1.0" });
+    const first = await openDatabase({
+      path,
+      appVersion: "0.1.0",
+      migrations: [initialMigration],
+    });
     first.database.close();
     const secondMigration = migration(
       2,

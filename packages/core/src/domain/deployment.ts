@@ -158,6 +158,7 @@ export const DeploymentRecordSchema = z
   .object({
     deploymentRecordId: DeploymentRecordIdSchema,
     deploymentPlanId: DeploymentPlanIdSchema,
+    rollbackOfRecordId: DeploymentRecordIdSchema.optional(),
     confirmedPlanHash: ContentHashSchema.optional(),
     status: DeploymentStatusSchema,
     operations: z.array(DeploymentOperationSchema).readonly(),
