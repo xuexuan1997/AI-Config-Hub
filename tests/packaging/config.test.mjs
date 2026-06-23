@@ -10,6 +10,7 @@ describe("desktop AppImage packaging config", () => {
     assert.equal(manifest.main, "dist/main/main/main.js");
     assert.match(config, /^appId: io\.aiconfighub\.desktop$/m);
     assert.match(config, /^productName: AI Config Hub$/m);
+    assert.match(config, /^executableName: ai-config-hub$/m);
     assert.match(config, /^asar: true$/m);
     assert.match(config, /^npmRebuild: false$/m);
     assert.match(config, /^buildDependenciesFromSource: false$/m);

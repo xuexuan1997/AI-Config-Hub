@@ -1,5 +1,6 @@
 appId: io.aiconfighub.desktop
 productName: AI Config Hub
+executableName: ai-config-hub
 copyright: Copyright © 2026 AI Config Hub
 asar: true
 npmRebuild: false
