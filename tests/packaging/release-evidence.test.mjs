@@ -35,9 +35,11 @@ describe("release evidence scripts", () => {
   it("keeps AppImage smoke bounded and headless", async () => {
     const smokeScript = await readFile("scripts/release/smoke-appimage.sh", "utf8");
 
-    assert.match(smokeScript, /timeout 60/);
-    assert.match(smokeScript, /ELECTRON_RUN_AS_NODE=1/);
-    assert.match(smokeScript, /process\.versions\.electron/);
+    assert.match(smokeScript, /timeout 120 "\$artifact" --appimage-extract/);
+    assert.match(smokeScript, /squashfs-root\/AppRun/);
+    assert.match(smokeScript, /squashfs-root\/ai-config-hub/);
+    assert.match(smokeScript, /resources\/app\.asar/);
+    assert.doesNotMatch(smokeScript, /--appimage-extract-and-run/);
   });
 
   it("uses bounded release workflows without network-only SBOM generation", async () => {
