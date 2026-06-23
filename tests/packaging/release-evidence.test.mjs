@@ -39,4 +39,16 @@ describe("release evidence scripts", () => {
     assert.match(smokeScript, /ELECTRON_RUN_AS_NODE=1/);
     assert.match(smokeScript, /process\.versions\.electron/);
   });
+
+  it("uses bounded release workflows without network-only SBOM generation", async () => {
+    const packageWorkflow = await readFile(".github/workflows/linux-package.yml", "utf8");
+    const releaseWorkflow = await readFile(".github/workflows/release.yml", "utf8");
+
+    assert.match(packageWorkflow, /timeout-minutes: 30/);
+    assert.match(packageWorkflow, /pnpm release:sbom/);
+    assert.doesNotMatch(packageWorkflow, /pnpm dlx @cyclonedx\/cyclonedx-npm/);
+    assert.match(releaseWorkflow, /timeout-minutes: 15/);
+    assert.match(releaseWorkflow, /gh release upload "\$GITHUB_REF_NAME"/);
+    assert.match(releaseWorkflow, /--clobber/);
+  });
 });
