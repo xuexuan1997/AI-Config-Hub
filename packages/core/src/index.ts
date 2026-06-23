@@ -14,3 +14,4 @@ export type * from "./ports/git.js";
 export type * from "./ports/repositories.js";
 export * from "./use-cases/application-services.js";
 export * from "./use-cases/contracts.js";
+export * from "./use-cases/task-service.js";
