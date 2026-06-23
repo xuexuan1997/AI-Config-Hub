@@ -262,8 +262,12 @@ function parseHistory(stdout: string): readonly GitCommitSummary[] {
           suggestedActions: ["Inspect the local history repository"],
         });
       }
-      return { commitId, authoredAt, subject };
+      return { commitId, authoredAt: normalizeUtc(authoredAt), subject };
     });
+}
+
+function normalizeUtc(value: IsoDateTime): IsoDateTime {
+  return (value.endsWith("+00:00") ? value.slice(0, -6) + "Z" : value) as IsoDateTime;
 }
 
 function isNodeNotFound(error: unknown): boolean {
