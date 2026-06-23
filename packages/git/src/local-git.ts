@@ -267,7 +267,7 @@ function parseHistory(stdout: string): readonly GitCommitSummary[] {
 }
 
 function normalizeUtc(value: IsoDateTime): IsoDateTime {
-  return (value.endsWith("+00:00") ? value.slice(0, -6) + "Z" : value) as IsoDateTime;
+  return value.endsWith("+00:00") ? value.slice(0, -6) + "Z" : value;
 }
 
 function isNodeNotFound(error: unknown): boolean {
