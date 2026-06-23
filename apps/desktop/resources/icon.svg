@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI Config Hub">
+  <defs>
+    <linearGradient id="g" x1="24" x2="232" y1="24" y2="232">
+      <stop stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#315efb"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#0b1020"/>
+  <path fill="url(#g)" d="M64 76a28 28 0 0 1 28-28h72a28 28 0 0 1 28 28v104a28 28 0 0 1-28 28H92a28 28 0 0 1-28-28V76Zm32 4v96h64V80H96Z"/>
+  <path fill="#e5eefb" d="M112 104h32v16h-32v-16Zm0 32h32v16h-32v-16Z"/>
+</svg>

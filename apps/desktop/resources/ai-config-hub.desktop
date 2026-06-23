@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=AI Config Hub
+Comment=Manage and deploy AI tool configuration
+Exec=AI Config Hub
+Icon=ai-config-hub
+Terminal=false
+Type=Application
+Categories=Development;

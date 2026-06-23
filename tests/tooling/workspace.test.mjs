@@ -87,8 +87,19 @@ describe("workspace contract", () => {
   it("publishes immutable tag-bound releases with narrow permissions", async () => {
     const workflow = await readFile(".github/workflows/release.yml", "utf8");
     assert.match(workflow, /^\s+tags:\s*\["v\*"\]$/m);
+    assert.match(workflow, /^\s+contents:\s*read$/m);
+    assert.match(workflow, /^\s+package:\s*$/m);
+    assert.match(workflow, /uses: \.\/\.github\/workflows\/linux-package\.yml/);
+    assert.match(workflow, /^\s+publish:\s*$/m);
+    assert.match(workflow, /^\s+needs:\s*package$/m);
     assert.match(workflow, /^\s+contents:\s*write$/m);
+    assert.match(workflow, /pnpm release:verify/);
     assert.match(workflow, /gh release create "\$GITHUB_REF_NAME"/);
+    assert.match(workflow, /AI-Config-Hub-\*-x86_64\.AppImage/);
+    assert.match(workflow, /SHA256SUMS/);
+    assert.match(workflow, /version-manifest\.json/);
+    assert.match(workflow, /sbom\.cdx\.json/);
+    assert.match(workflow, /elf-compatibility\.json/);
     assert.match(workflow, /--repo "\$GITHUB_REPOSITORY"/);
     assert.match(workflow, /--verify-tag/);
   });

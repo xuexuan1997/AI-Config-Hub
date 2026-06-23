@@ -1,6 +1,6 @@
 {
   "name": "ai-config-hub",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.5.3",
@@ -15,6 +15,9 @@
     "test": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
+    "package:linux": "pnpm --filter @ai-config-hub/desktop package:linux",
+    "release:evidence": "node scripts/release/generate-manifest.mjs release/linux-x64",
+    "release:verify": "node scripts/release/verify-artifacts.mjs release/linux-x64",
     "package": "pnpm --filter @ai-config-hub/desktop package && pnpm --filter @ai-config-hub/cli package"
   },
   "devDependencies": {

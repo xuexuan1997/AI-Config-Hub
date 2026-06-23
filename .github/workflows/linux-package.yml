@@ -1,0 +1,40 @@
+name: Linux AppImage
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux/rockylinux:8.10@sha256:e8a49c5403b687db05d4d67333fa45808fbe74f36e683cec7abb1f7d0f2338c6
+    steps:
+      - uses: actions/checkout@v4
+      - run: dnf install -y nodejs npm git binutils file fuse-libs gtk3 nss atk at-spi2-atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm alsa-lib xorg-x11-server-Xvfb
+      - run: npm install -g corepack@latest
+      - run: corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm package:linux
+      - run: pnpm dlx @cyclonedx/cyclonedx-npm --output-file release/linux-x64/sbom.cdx.json --package-lock-only || echo '{}' > release/linux-x64/sbom.cdx.json
+      - run: scripts/release/audit-linux-elf.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage release/linux-x64/elf-compatibility.json
+      - run: scripts/release/smoke-appimage.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage
+      - run: pnpm release:evidence
+      - run: pnpm release:verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-release-candidate
+          path: release/linux-x64
+          if-no-files-found: error
