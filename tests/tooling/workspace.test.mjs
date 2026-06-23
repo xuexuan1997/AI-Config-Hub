@@ -103,4 +103,20 @@ describe("workspace contract", () => {
     assert.match(workflow, /--repo "\$GITHUB_REPOSITORY"/);
     assert.match(workflow, /--verify-tag/);
   });
+
+  it("builds Linux AppImages with the pinned Node runtime and parseable ELF evidence", async () => {
+    const [workflow, auditScript] = await Promise.all([
+      readFile(".github/workflows/linux-package.yml", "utf8"),
+      readFile("scripts/release/audit-linux-elf.sh", "utf8"),
+    ]);
+
+    assert.match(workflow, /rockylinux\/rockylinux:8\.10@sha256:/);
+    assert.match(workflow, /uses: pnpm\/action-setup@v4/);
+    assert.match(workflow, /uses: actions\/setup-node@v4/);
+    assert.match(workflow, /node-version-file: \.node-version/);
+    assert.doesNotMatch(workflow, /dnf install .*nodejs npm/);
+    assert.match(workflow, /pnpm package:linux/);
+    assert.match(auditScript, /JSON\.stringify/);
+    assert.doesNotMatch(auditScript, /%q/);
+  });
 });

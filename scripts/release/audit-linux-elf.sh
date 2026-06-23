@@ -18,7 +18,9 @@ while IFS= read -r -d '' file; do
       echo "Unsupported glibc symbol $max_symbol in $file" >&2
       exit 1
     fi
-    printf '{"path":%q,"maxGlibc":%q}\n' "${file#"$workdir/root/"}" "${max_symbol:-none}" >> "$records"
+    node -e 'console.log(JSON.stringify({path: process.argv[1], maxGlibc: process.argv[2]}))' \
+      "${file#"$workdir/root/"}" \
+      "${max_symbol:-none}" >> "$records"
   fi
 done < <(find "$workdir/root" -type f -print0)
 
