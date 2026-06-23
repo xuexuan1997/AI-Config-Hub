@@ -10,5 +10,6 @@ fi
 
 AI_CONFIG_HUB_E2E_ROOT="$(mktemp -d)" \
 AI_CONFIG_HUB_USER_DATA="$(mktemp -d)" \
-"$artifact" --appimage-extract-and-run --no-sandbox --version >/tmp/ai-config-hub-smoke.txt
+ELECTRON_RUN_AS_NODE=1 \
+timeout 60 "$artifact" --appimage-extract-and-run -e "console.log(process.versions.electron)" >/tmp/ai-config-hub-smoke.txt
 test -s /tmp/ai-config-hub-smoke.txt

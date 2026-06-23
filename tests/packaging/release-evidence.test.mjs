@@ -31,4 +31,12 @@ describe("release evidence scripts", () => {
     assert.match(manifest, /"architecture": "x86_64"/);
     assert.match(manifest, /"glibcBaseline": "2.28"/);
   });
+
+  it("keeps AppImage smoke bounded and headless", async () => {
+    const smokeScript = await readFile("scripts/release/smoke-appimage.sh", "utf8");
+
+    assert.match(smokeScript, /timeout 60/);
+    assert.match(smokeScript, /ELECTRON_RUN_AS_NODE=1/);
+    assert.match(smokeScript, /process\.versions\.electron/);
+  });
 });
