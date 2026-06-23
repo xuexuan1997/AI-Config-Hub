@@ -3,13 +3,14 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
+  "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "vite --config vite.config.ts",
-    "build:main": "tsc -p tsconfig.build.json",
+    "build:main": "pnpm --filter @ai-config-hub/shared build && pnpm --filter @ai-config-hub/core build && pnpm --filter @ai-config-hub/api build && tsc -p tsconfig.build.json",
     "build:renderer": "vite build --config vite.config.ts",
     "build": "pnpm run build:main && pnpm run build:renderer",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run --root ../.. apps/desktop/src",
     "test:e2e": "playwright test --project desktop",
     "package": "pnpm run build",
     "package:linux": "pnpm run build && electron-builder --linux AppImage --x64"
