@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "dev": "vite --config vite.config.ts",
+    "build:main": "tsc -p tsconfig.build.json",
+    "build:renderer": "vite build --config vite.config.ts",
+    "build": "pnpm run build:main && pnpm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "package": "pnpm run build"
+    "test": "vitest run src",
+    "test:e2e": "playwright test --project desktop",
+    "package": "pnpm run build",
+    "package:linux": "pnpm run build && electron-builder --linux AppImage --x64"
   },
   "dependencies": {
     "@ai-config-hub/adapters": "workspace:*",
@@ -16,6 +22,16 @@
     "@ai-config-hub/git": "workspace:*",
     "@ai-config-hub/scanner": "workspace:*",
     "@ai-config-hub/shared": "workspace:*",
-    "@ai-config-hub/storage": "workspace:*"
+    "@ai-config-hub/storage": "workspace:*",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "electron": "42.4.1",
+    "electron-builder": "26.15.3",
+    "vite": "8.0.16"
   }
 }

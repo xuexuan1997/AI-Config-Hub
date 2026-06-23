@@ -43,6 +43,31 @@ describe("workspace contract", () => {
     }
   });
 
+  it("pins the secure desktop Electron and React toolchain", async () => {
+    const manifest = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
+
+    assert.equal(manifest.dependencies.react, "19.2.7");
+    assert.equal(manifest.dependencies["react-dom"], "19.2.7");
+    assert.equal(manifest.devDependencies.electron, "42.4.1");
+    assert.equal(manifest.devDependencies["electron-builder"], "26.15.3");
+    assert.equal(manifest.devDependencies.vite, "8.0.16");
+    assert.equal(manifest.devDependencies["@vitejs/plugin-react"], "6.0.2");
+    assert.equal(manifest.devDependencies["@types/react"], "19.2.17");
+    assert.equal(manifest.devDependencies["@types/react-dom"], "19.2.3");
+
+    for (const script of [
+      "dev",
+      "build:main",
+      "build:renderer",
+      "build",
+      "test",
+      "test:e2e",
+      "package:linux",
+    ]) {
+      assert.ok(script in manifest.scripts, `missing desktop script: ${script}`);
+    }
+  });
+
   it("installs pnpm before setup-node initializes its pnpm cache", async () => {
     const workflow = await readFile(".github/workflows/ci.yml", "utf8");
     const jobsSection = workflow.split(/^jobs:\s*$/m)[1];

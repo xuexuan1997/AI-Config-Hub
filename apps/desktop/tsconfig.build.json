@@ -3,10 +3,11 @@
   "compilerOptions": {
     "noEmit": false,
     "incremental": true,
-    "outDir": "dist",
+    "outDir": "dist/main",
     "paths": {},
     "rootDir": "src",
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.build.tsbuildinfo"
   },
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/renderer/**"]
 }
