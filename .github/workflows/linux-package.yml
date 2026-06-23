@@ -18,7 +18,7 @@ jobs:
       image: rockylinux/rockylinux:8.10@sha256:e8a49c5403b687db05d4d67333fa45808fbe74f36e683cec7abb1f7d0f2338c6
     steps:
       - uses: actions/checkout@v4
-      - run: dnf install -y git binutils file fuse-libs gtk3 nss atk at-spi2-atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm alsa-lib xorg-x11-server-Xvfb
+      - run: dnf install -y git gcc make binutils file fuse-libs gtk3 nss atk at-spi2-atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm alsa-lib xorg-x11-server-Xvfb
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
