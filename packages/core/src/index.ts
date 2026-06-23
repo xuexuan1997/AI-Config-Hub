@@ -12,4 +12,5 @@ export type * from "./ports/events.js";
 export type * from "./ports/files.js";
 export type * from "./ports/git.js";
 export type * from "./ports/repositories.js";
+export * from "./use-cases/application-services.js";
 export * from "./use-cases/contracts.js";
