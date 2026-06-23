@@ -6,7 +6,7 @@ import {
   type UseCaseContractMap,
 } from "../use-cases/contracts.js";
 import type { AdapterReadApi, ToolAdapter } from "./adapter.js";
-import type { GitPort } from "./git.js";
+import type { LocalGitPort } from "./git.js";
 
 describe("ToolAdapter contract", () => {
   it("contains every approved semantic capability", () => {
@@ -25,9 +25,13 @@ describe("ToolAdapter contract", () => {
   });
 });
 
-describe("GitPort", () => {
+describe("LocalGitPort", () => {
   it("does not expose a generic shell command", () => {
-    expectTypeOf<keyof GitPort>().not.toEqualTypeOf<"exec">();
+    expectTypeOf<keyof LocalGitPort>().not.toEqualTypeOf<"exec">();
+  });
+
+  it("does not expose remote repository operations", () => {
+    expectTypeOf<keyof LocalGitPort>().not.toEqualTypeOf<"clone" | "pull" | "push">();
   });
 });
 

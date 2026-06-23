@@ -1,2 +1,1 @@
-/** Public entry for @ai-config-hub/git. */
-export {};
+export * from "./local-git.js";
