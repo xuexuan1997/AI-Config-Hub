@@ -2,6 +2,7 @@
 set -euo pipefail
 
 artifact="${1:?AppImage path required}"
+artifact="$(cd "$(dirname "$artifact")" && pwd -P)/$(basename "$artifact")"
 glibc="$(getconf GNU_LIBC_VERSION | awk '{print $2}')"
 if [[ "$(printf '%s\n2.28\n' "$glibc" | sort -V | head -1)" != "2.28" ]]; then
   echo "Host glibc $glibc is older than required 2.28" >&2

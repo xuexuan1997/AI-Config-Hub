@@ -35,6 +35,7 @@ describe("release evidence scripts", () => {
   it("keeps AppImage smoke bounded and headless", async () => {
     const smokeScript = await readFile("scripts/release/smoke-appimage.sh", "utf8");
 
+    assert.match(smokeScript, /pwd -P/);
     assert.match(smokeScript, /timeout 120 "\$artifact" --appimage-extract/);
     assert.match(smokeScript, /squashfs-root\/AppRun/);
     assert.match(smokeScript, /squashfs-root\/ai-config-hub/);
