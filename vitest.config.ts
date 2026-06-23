@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   test: {
+    globalSetup: ["./packages/deployer/scripts/vitest-native-setup.mjs"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
