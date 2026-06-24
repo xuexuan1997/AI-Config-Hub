@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, webContents } from "electro
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { createProjectDialogPort } from "./dialog.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { createSecureWindowOptions } from "./window-options.js";
 
@@ -35,19 +36,12 @@ if (app.requestSingleInstanceLock()) {
         ipcMain,
         appVersion: () => app.getVersion(),
         webContents: () => webContents.getAllWebContents(),
-        dialog: {
-          async selectDirectory() {
-            const options = {
-              title: "Select AI Config Hub project",
-              properties: ["openDirectory" as const],
-            };
-            const result =
-              mainWindow === undefined
-                ? await dialog.showOpenDialog(options)
-                : await dialog.showOpenDialog(mainWindow, options);
-            return result.canceled ? undefined : result.filePaths[0];
-          },
-        },
+        dialog: createProjectDialogPort({
+          dialog,
+          env: process.env,
+          getMainWindow: () => mainWindow,
+          platform: process.platform,
+        }),
       });
       await createMainWindow();
     })
