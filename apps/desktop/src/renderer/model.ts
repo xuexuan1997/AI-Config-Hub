@@ -17,6 +17,7 @@ export interface AppState {
 export type AppAction =
   | { readonly type: "route"; readonly route: Route }
   | { readonly type: "project"; readonly root: string | undefined }
+  | { readonly type: "message"; readonly message: string | undefined }
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
   | { readonly type: "preview"; readonly preview: CommandResponse<"migration.preview"> }
@@ -34,16 +35,35 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "route":
       return { ...state, route: action.route };
     case "project":
-      return action.root === undefined
+      if (action.root === undefined) {
+        return {
+          route: state.route,
+          scanStatus: state.scanStatus,
+          assets: state.assets,
+          history: state.history,
+          ...(state.preview === undefined ? {} : { preview: state.preview }),
+          ...(state.message === undefined ? {} : { message: state.message }),
+        };
+      }
+      return {
+        route: state.route,
+        scanStatus: state.scanStatus,
+        assets: state.assets,
+        history: state.history,
+        projectRoot: action.root,
+        ...(state.preview === undefined ? {} : { preview: state.preview }),
+      };
+    case "message":
+      return action.message === undefined
         ? {
             route: state.route,
             scanStatus: state.scanStatus,
             assets: state.assets,
             history: state.history,
+            ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.preview === undefined ? {} : { preview: state.preview }),
-            ...(state.message === undefined ? {} : { message: state.message }),
           }
-        : { ...state, projectRoot: action.root };
+        : { ...state, message: action.message };
     case "scan":
       return {
         ...state,
@@ -67,4 +87,13 @@ export async function refreshAssets(api: DesktopApi): Promise<AppState["assets"]
 export async function refreshHistory(api: DesktopApi): Promise<AppState["history"]> {
   const response = await api.invoke("history.list", { limit: 50 });
   return response.ok ? response.data.items : [];
+}
+
+export function formatUiError(error: unknown, action: string): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const lowerDetail = detail.toLowerCase();
+  if (lowerDetail.includes("filechooser") || lowerDetail.includes("file chooser")) {
+    return `${action} failed: the system file chooser is unavailable. Please type the project path manually and click Use path. (${detail})`;
+  }
+  return `${action} failed: ${detail}`;
 }

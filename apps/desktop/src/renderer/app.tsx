@@ -2,7 +2,7 @@ import { useReducer } from "react";
 
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
-import { initialState, reducer, refreshAssets, refreshHistory } from "./model.js";
+import { formatUiError, initialState, reducer, refreshAssets, refreshHistory } from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { DeploymentView } from "./views/deployment.js";
 import { HistoryView } from "./views/history.js";
@@ -12,54 +12,88 @@ import { OverviewView } from "./views/overview.js";
 export function App(props: { readonly api: DesktopApi }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
+  async function runAction(action: string, work: () => Promise<void>) {
+    try {
+      await work();
+    } catch (error) {
+      dispatch({ type: "message", message: formatUiError(error, action) });
+    }
+  }
+
   async function selectProject() {
-    dispatch({ type: "project", root: await props.api.selectProjectRoot() });
+    await runAction("Select project", async () => {
+      dispatch({ type: "project", root: await props.api.selectProjectRoot() });
+    });
+  }
+
+  function useProjectPath(path: string) {
+    const root = path.trim();
+    if (root.length === 0) {
+      dispatch({ type: "message", message: "Enter a project path first." });
+    } else {
+      dispatch({ type: "project", root });
+    }
   }
 
   async function scan() {
-    const response = await props.api.invoke("scan.start", { mode: "full" });
-    dispatch({
-      type: "scan",
-      status: response.ok ? "queued" : "error",
-      message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+    await runAction("Start scan", async () => {
+      const response = await props.api.invoke("scan.start", {
+        mode: "full",
+        ...(state.projectRoot === undefined ? {} : { roots: [state.projectRoot] }),
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "queued" : "error",
+        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+      });
+      dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+      dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
-    dispatch({ type: "assets", assets: await refreshAssets(props.api) });
-    dispatch({ type: "history", history: await refreshHistory(props.api) });
   }
 
   async function preview() {
-    const sourceAssetId = state.assets[0]?.id ?? "asset-demo";
-    const response = await props.api.invoke("migration.preview", {
-      sourceAssetIds: [sourceAssetId],
-      targetToolKey: "cursor",
-      targetScopeId: "scope-demo",
-      conflictPolicy: "replace",
+    await runAction("Preview migration", async () => {
+      const sourceAssetId = state.assets[0]?.id ?? "asset-demo";
+      const response = await props.api.invoke("migration.preview", {
+        sourceAssetIds: [sourceAssetId],
+        targetToolKey: "cursor",
+        targetScopeId: "scope-demo",
+        conflictPolicy: "replace",
+      });
+      if (response.ok) dispatch({ type: "preview", preview: response.data });
+      else dispatch({ type: "message", message: response.error.message });
     });
-    if (response.ok) dispatch({ type: "preview", preview: response.data });
   }
 
   async function deploy() {
-    if (state.preview === undefined) return;
-    const response = await props.api.invoke("deployment.execute", { planId: state.preview.planId });
-    dispatch({
-      type: "scan",
-      status: response.ok ? "complete" : "error",
-      message: response.ok
-        ? `Deployment queued: ${response.data.deploymentId}`
-        : response.error.message,
+    const previewPlan = state.preview;
+    if (previewPlan === undefined) return;
+    await runAction("Execute deployment", async () => {
+      const response = await props.api.invoke("deployment.execute", {
+        planId: previewPlan.planId,
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "complete" : "error",
+        message: response.ok
+          ? `Deployment queued: ${response.data.deploymentId}`
+          : response.error.message,
+      });
     });
   }
 
   async function rollback() {
-    const response = await props.api.invoke("deployment.rollback", {
-      deploymentId: "desktop-deployment",
-    });
-    dispatch({
-      type: "scan",
-      status: response.ok ? "complete" : "error",
-      message: response.ok
-        ? `Rollback queued: ${response.data.rollbackId}`
-        : response.error.message,
+    await runAction("Preview rollback", async () => {
+      const response = await props.api.invoke("deployment.rollback", {
+        deploymentId: "desktop-deployment",
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "complete" : "error",
+        message: response.ok
+          ? `Rollback queued: ${response.data.rollbackId}`
+          : response.error.message,
+      });
     });
   }
 
@@ -68,6 +102,7 @@ export function App(props: { readonly api: DesktopApi }) {
       state={state}
       onRoute={(route) => dispatch({ type: "route", route })}
       onSelectProject={() => void selectProject()}
+      onUseProjectPath={useProjectPath}
     >
       {state.route === "overview" ? (
         <OverviewView state={state} onScan={() => void scan()} />
@@ -76,7 +111,9 @@ export function App(props: { readonly api: DesktopApi }) {
         <AssetsView
           state={state}
           onRefresh={() => {
-            void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
+            void runAction("Refresh assets", async () => {
+              dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+            });
           }}
         />
       ) : null}
@@ -94,9 +131,9 @@ export function App(props: { readonly api: DesktopApi }) {
         <HistoryView
           state={state}
           onRefresh={() => {
-            void refreshHistory(props.api).then((history) =>
-              dispatch({ type: "history", history }),
-            );
+            void runAction("Refresh history", async () => {
+              dispatch({ type: "history", history: await refreshHistory(props.api) });
+            });
           }}
         />
       ) : null}

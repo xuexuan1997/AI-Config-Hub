@@ -14,6 +14,7 @@ export function AppShell(props: {
   readonly state: AppState;
   readonly onRoute: (route: Route) => void;
   readonly onSelectProject: () => void;
+  readonly onUseProjectPath: (path: string) => void;
   readonly children: ReactNode;
 }) {
   return (
@@ -39,9 +40,29 @@ export function AppShell(props: {
             <p className="eyebrow">Project</p>
             <strong>{props.state.projectRoot ?? "No project selected"}</strong>
           </div>
-          <button type="button" onClick={props.onSelectProject}>
-            Select project
-          </button>
+          <div className="project-actions">
+            <button type="button" onClick={props.onSelectProject}>
+              Select project
+            </button>
+            <form
+              className="project-path-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                const projectPath = form.get("projectPath");
+                props.onUseProjectPath(typeof projectPath === "string" ? projectPath : "");
+              }}
+            >
+              <input
+                aria-label="Project path"
+                defaultValue={props.state.projectRoot ?? ""}
+                key={props.state.projectRoot ?? "empty-project"}
+                name="projectPath"
+                placeholder="/path/to/project"
+              />
+              <button type="submit">Use path</button>
+            </form>
+          </div>
         </header>
         {props.state.message === undefined ? null : (
           <div className="status-banner">{props.state.message}</div>

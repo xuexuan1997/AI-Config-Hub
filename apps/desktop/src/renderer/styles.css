@@ -30,6 +30,16 @@ button:disabled {
   opacity: 0.5;
 }
 
+input {
+  background: #070b16;
+  border: 1px solid #243455;
+  border-radius: 10px;
+  color: #e5eefb;
+  font: inherit;
+  min-width: 260px;
+  padding: 0.65rem 0.8rem;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -79,6 +89,18 @@ main {
 .topbar {
   border-bottom: 1px solid #1f2a44;
   padding-bottom: 1rem;
+}
+
+.project-actions,
+.project-path-form {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.project-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .eyebrow,
