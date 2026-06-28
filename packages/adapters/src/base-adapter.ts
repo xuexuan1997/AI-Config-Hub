@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   AdapterCapabilities,
   AdapterDiagnostic,
@@ -14,7 +16,14 @@ import type {
   VerificationContext,
   VerificationResult,
 } from "@ai-config-hub/core";
-import type { AdapterId, SemVer, ToolId } from "@ai-config-hub/shared";
+import {
+  ContentHashSchema,
+  type AbsolutePath,
+  type AdapterId,
+  type ContentHash,
+  type SemVer,
+  type ToolId,
+} from "@ai-config-hub/shared";
 
 import { convertAsset } from "./conversion.js";
 import { resolveAssetsByScope } from "./resolution.js";
@@ -74,21 +83,75 @@ export abstract class BaseToolAdapter implements ToolAdapter {
     });
   }
 
-  verify(context: VerificationContext): Promise<VerificationResult> {
+  async verify(context: VerificationContext): Promise<VerificationResult> {
     context.signal.throwIfAborted();
-    const verifiedHashes: Record<string, never> = {};
-    return Promise.resolve({
-      status: "failed",
+    const verifiedHashes = {} as Record<AbsolutePath, ContentHash>;
+    const diagnostics: AdapterDiagnostic[] = [];
+
+    for (const operation of context.deployment.operations) {
+      context.signal.throwIfAborted();
+      if (operation.kind === "delete") {
+        const stat = await context.read.stat(operation.targetPath);
+        if (stat.kind !== "missing") {
+          diagnostics.push(
+            verificationDiagnostic(
+              "DEPLOYMENT_DELETE_NOT_APPLIED",
+              `Deployment expected ${operation.targetPath} to be deleted`,
+              operation.targetPath,
+            ),
+          );
+        }
+        continue;
+      }
+
+      try {
+        const stat = await context.read.stat(operation.targetPath);
+        if (stat.kind !== "file") {
+          diagnostics.push(
+            verificationDiagnostic(
+              "DEPLOYMENT_TARGET_MISSING",
+              `Deployment target is not a file: ${operation.targetPath}`,
+              operation.targetPath,
+            ),
+          );
+          continue;
+        }
+        const actualHash = hash(await context.read.readText(operation.targetPath));
+        verifiedHashes[operation.targetPath] = actualHash;
+        const expectedHash = context.deployment.resultingHashes[operation.targetPath];
+        if (expectedHash === undefined) {
+          diagnostics.push(
+            verificationDiagnostic(
+              "DEPLOYMENT_RESULT_HASH_MISSING",
+              `Deployment result hash is missing for ${operation.targetPath}`,
+              operation.targetPath,
+            ),
+          );
+        } else if (actualHash !== expectedHash) {
+          diagnostics.push(
+            verificationDiagnostic(
+              "DEPLOYMENT_TARGET_HASH_MISMATCH",
+              `Deployment target hash does not match the recorded write: ${operation.targetPath}`,
+              operation.targetPath,
+            ),
+          );
+        }
+      } catch (error) {
+        diagnostics.push(
+          verificationDiagnostic(
+            "DEPLOYMENT_TARGET_UNREADABLE",
+            error instanceof Error ? error.message : `Unable to read ${operation.targetPath}`,
+            operation.targetPath,
+          ),
+        );
+      }
+    }
+
+    return {
+      status: diagnostics.some((diagnostic) => diagnostic.blocking) ? "failed" : "passed",
       verifiedHashes,
-      diagnostics: [
-        adapterDiagnostic(
-          "ADAPTER_VERIFICATION_CAPABILITY_UNAVAILABLE",
-          "error",
-          "This adapter cannot verify writes until its deployment path is enabled",
-          true,
-        ),
-      ],
-    });
+      diagnostics,
+    };
   }
 }
 
@@ -108,4 +171,18 @@ export function adapterDiagnostic(
     suggestedActions: ["Review the source configuration and scan again"],
     blocking,
   };
+}
+
+function hash(text: string): ContentHash {
+  return ContentHashSchema.parse(
+    `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`,
+  );
+}
+
+function verificationDiagnostic(
+  code: string,
+  message: string,
+  path: AbsolutePath,
+): AdapterDiagnostic {
+  return adapterDiagnostic(code, "error", message, true, { path });
 }

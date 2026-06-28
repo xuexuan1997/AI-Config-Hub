@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, webContents } from "electro
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { createDesktopCommandServices, type DesktopCommandServiceRuntime } from "./composition.js";
 import { createProjectDialogPort } from "./dialog.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { createSecureWindowOptions } from "./window-options.js";
@@ -9,9 +10,10 @@ import { createSecureWindowOptions } from "./window-options.js";
 const currentDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | undefined;
 let unregisterIpc: (() => void) | undefined;
+let commandServices: DesktopCommandServiceRuntime | undefined;
 
 async function createMainWindow(): Promise<void> {
-  const preloadPath = resolve(currentDir, "../preload/preload.js");
+  const preloadPath = resolve(currentDir, "../preload/preload.cjs");
   const rendererPath = resolve(currentDir, "../../renderer/index.html");
   const window = new BrowserWindow(createSecureWindowOptions(preloadPath));
   mainWindow = window;
@@ -32,8 +34,14 @@ if (app.requestSingleInstanceLock()) {
   void app
     .whenReady()
     .then(async () => {
+      commandServices = await createDesktopCommandServices({
+        appVersion: app.getVersion(),
+        userDataPath: desktopUserDataPath(),
+      });
       unregisterIpc = registerIpcHandlers({
         ipcMain,
+        services: commandServices.services,
+        taskEvents: commandServices.taskEvents,
         appVersion: () => app.getVersion(),
         webContents: () => webContents.getAllWebContents(),
         dialog: createProjectDialogPort({
@@ -53,10 +61,15 @@ if (app.requestSingleInstanceLock()) {
   });
   app.on("before-quit", () => {
     unregisterIpc?.();
+    commandServices?.close();
   });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
 } else {
   app.quit();
+}
+
+function desktopUserDataPath(): string {
+  return resolve(process.env["AI_CONFIG_HUB_USER_DATA"] ?? app.getPath("userData"));
 }

@@ -8,7 +8,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ["**/*.ts", "**/*.tsx"],
+    files: ["**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -24,5 +24,11 @@ export default tseslint.config(
   {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
     ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    files: ["apps/desktop/src/preload/preload.cts"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
   },
 );

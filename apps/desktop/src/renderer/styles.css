@@ -111,7 +111,8 @@ span {
 
 .status-banner,
 article,
-.diff-card {
+.diff-card,
+.detail-panel {
   background: #111a2f;
   border: 1px solid #243455;
   border-radius: 16px;
@@ -155,6 +156,41 @@ pre {
   border-radius: 10px;
   overflow-x: auto;
   padding: 1rem;
+}
+
+.detail-panel {
+  margin-top: 1.5rem;
+}
+
+.detail-panel dl {
+  display: grid;
+  gap: 0.5rem 1rem;
+  grid-template-columns: max-content 1fr;
+}
+
+.detail-panel dt {
+  color: #8ea0c2;
+}
+
+.detail-panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-list {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  padding: 0;
+}
+
+.diagnostic-list li {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.diagnostic-list small {
+  color: #aab8d5;
 }
 
 .confirm {

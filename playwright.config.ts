@@ -6,6 +6,10 @@ export default defineConfig({
   reporter: [["html", { outputFolder: "playwright-report", open: "never" }], ["list"]],
   retries: process.env["CI"] === undefined ? 0 : 2,
   ...(process.env["CI"] === undefined ? {} : { workers: 1 }),
+  projects: [
+    { name: "cli", testMatch: /cli\.spec\.ts/ },
+    { name: "desktop", testMatch: /desktop\.spec\.ts/ },
+  ],
   use: {
     screenshot: "only-on-failure",
     trace: "retain-on-failure",

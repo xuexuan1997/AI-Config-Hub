@@ -2,7 +2,18 @@ import { useReducer } from "react";
 
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
-import { formatUiError, initialState, reducer, refreshAssets, refreshHistory } from "./model.js";
+import {
+  formatUiError,
+  initialState,
+  previewRequestForState,
+  reducer,
+  refreshAssetDetail,
+  refreshAssets,
+  refreshDiagnostics,
+  refreshHistory,
+  rollbackRequestForState,
+  scanActionForTaskEvent,
+} from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { DeploymentView } from "./views/deployment.js";
 import { HistoryView } from "./views/history.js";
@@ -46,20 +57,43 @@ export function App(props: { readonly api: DesktopApi }) {
         status: response.ok ? "queued" : "error",
         message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
       });
+      if (response.ok) {
+        props.api.subscribeTask(response.data.taskId, 0, (event) => {
+          const action = scanActionForTaskEvent(event);
+          if (action !== undefined) dispatch(action);
+          if (event.type === "completed") {
+            void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
+            void refreshDiagnostics(props.api).then(({ diagnostics, diagnosticCounts }) =>
+              dispatch({ type: "diagnostics", diagnostics, counts: diagnosticCounts }),
+            );
+            void refreshHistory(props.api).then((history) =>
+              dispatch({ type: "history", history }),
+            );
+          }
+        });
+      }
       dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+      const diagnostics = await refreshDiagnostics(props.api);
+      dispatch({
+        type: "diagnostics",
+        diagnostics: diagnostics.diagnostics,
+        counts: diagnostics.diagnosticCounts,
+      });
       dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
 
   async function preview() {
     await runAction("Preview migration", async () => {
-      const sourceAssetId = state.assets[0]?.id ?? "asset-demo";
-      const response = await props.api.invoke("migration.preview", {
-        sourceAssetIds: [sourceAssetId],
-        targetToolKey: "cursor",
-        targetScopeId: "scope-demo",
-        conflictPolicy: "replace",
-      });
+      const request = previewRequestForState(state);
+      if (request === undefined) {
+        dispatch({
+          type: "message",
+          message: "Select a project and scan at least one asset first.",
+        });
+        return;
+      }
+      const response = await props.api.invoke("migration.preview", request);
       if (response.ok) dispatch({ type: "preview", preview: response.data });
       else dispatch({ type: "message", message: response.error.message });
     });
@@ -67,7 +101,7 @@ export function App(props: { readonly api: DesktopApi }) {
 
   async function deploy() {
     const previewPlan = state.preview;
-    if (previewPlan === undefined) return;
+    if (previewPlan === undefined || !state.deploymentConfirmed) return;
     await runAction("Execute deployment", async () => {
       const response = await props.api.invoke("deployment.execute", {
         planId: previewPlan.planId,
@@ -79,14 +113,21 @@ export function App(props: { readonly api: DesktopApi }) {
           ? `Deployment queued: ${response.data.deploymentId}`
           : response.error.message,
       });
+      dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
 
   async function rollback() {
     await runAction("Preview rollback", async () => {
-      const response = await props.api.invoke("deployment.rollback", {
-        deploymentId: "desktop-deployment",
-      });
+      const request = rollbackRequestForState(state);
+      if (request === undefined) {
+        dispatch({
+          type: "message",
+          message: "No succeeded deployment is available to roll back.",
+        });
+        return;
+      }
+      const response = await props.api.invoke("deployment.rollback", request);
       dispatch({
         type: "scan",
         status: response.ok ? "complete" : "error",
@@ -94,6 +135,7 @@ export function App(props: { readonly api: DesktopApi }) {
           ? `Rollback queued: ${response.data.rollbackId}`
           : response.error.message,
       });
+      dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
 
@@ -113,6 +155,28 @@ export function App(props: { readonly api: DesktopApi }) {
           onRefresh={() => {
             void runAction("Refresh assets", async () => {
               dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+              const diagnostics = await refreshDiagnostics(props.api);
+              dispatch({
+                type: "diagnostics",
+                diagnostics: diagnostics.diagnostics,
+                counts: diagnostics.diagnosticCounts,
+              });
+            });
+          }}
+          onInspect={(assetId) => {
+            void runAction("Inspect asset", async () => {
+              const detail = await refreshAssetDetail(props.api, assetId);
+              if (detail === undefined) {
+                dispatch({ type: "message", message: "Asset detail is unavailable." });
+                return;
+              }
+              dispatch({ type: "assetDetail", detail });
+              const diagnostics = await refreshDiagnostics(props.api, assetId);
+              dispatch({
+                type: "diagnostics",
+                diagnostics: diagnostics.diagnostics,
+                counts: diagnostics.diagnosticCounts,
+              });
             });
           }}
         />
@@ -123,6 +187,7 @@ export function App(props: { readonly api: DesktopApi }) {
       {state.route === "deployment" ? (
         <DeploymentView
           state={state}
+          onConfirm={(confirmed) => dispatch({ type: "deploymentConfirmation", confirmed })}
           onDeploy={() => void deploy()}
           onRollback={() => void rollback()}
         />

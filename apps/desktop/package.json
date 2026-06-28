@@ -11,7 +11,7 @@
     "build": "pnpm run build:main && pnpm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run --root ../.. apps/desktop/src",
-    "test:e2e": "playwright test --project desktop",
+    "test:e2e": "playwright test --config ../../playwright.config.ts --project desktop",
     "package": "pnpm run build",
     "package:linux": "pnpm run build && electron-builder --linux AppImage --x64"
   },

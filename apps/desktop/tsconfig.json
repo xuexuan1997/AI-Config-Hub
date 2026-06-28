@@ -4,6 +4,6 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "vite.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.cts", "vite.config.ts"],
   "exclude": ["src/renderer/**"]
 }
