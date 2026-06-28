@@ -50,7 +50,12 @@ test.describe("Desktop end to end", () => {
 
       await page.getByRole("button", { name: "Assets" }).click();
       await expect(page.getByRole("cell", { name: "codex" }).first()).toBeVisible();
-      await page.getByRole("button", { name: "Inspect" }).first().click();
+      await page
+        .locator("tbody tr")
+        .filter({ hasText: "codex" })
+        .filter({ hasText: "AGENTS" })
+        .getByRole("button", { name: "Inspect" })
+        .click();
 
       await expect(page.getByRole("region", { name: "Asset detail" })).toContainText("AGENTS");
       await expect(page.getByRole("region", { name: "Asset detail" })).toContainText(
@@ -58,16 +63,44 @@ test.describe("Desktop end to end", () => {
       );
 
       await page.getByRole("button", { name: "Migration" }).click();
-      await page.getByRole("button", { name: "Preview Codex → Cursor" }).click();
+      const sourceAssets = page.getByRole("group", { name: "Source assets" });
+      for (const source of await sourceAssets.getByRole("checkbox").all()) {
+        if (await source.isChecked()) await source.uncheck();
+      }
+      const codexSource = sourceAssets
+        .locator("label")
+        .filter({ hasText: "rule:AGENTS" })
+        .filter({ hasText: "codex / rule" })
+        .getByRole("checkbox");
+      const codexSkill = sourceAssets
+        .locator("label")
+        .filter({ hasText: "codex / skill" })
+        .getByRole("checkbox");
+      if (!(await codexSource.isChecked())) await codexSource.check();
+      await codexSkill.check();
+      await expect(page.getByRole("button", { name: "Preview migration" })).toBeDisabled();
+      await expect(page.getByText("Select source assets from one resource type.")).toBeVisible();
+      await codexSkill.uncheck();
+      await page.getByRole("button", { name: "Preview migration" }).click();
       await expect(page.getByText(/Plan deployment-plan:/)).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText(/\.cursor\/rules\/agents\.mdc/)).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: /replace .*\.cursor\/rules\/agents\.mdc/ }),
+      ).toBeVisible();
 
       await page.getByRole("button", { name: "Deployment" }).click();
+      await expect(page.getByRole("button", { name: "Execute rollback" })).toBeDisabled();
+      await expect(
+        page.getByText("No succeeded deployment is available to roll back."),
+      ).toBeVisible();
       await page.getByLabel("I understand this writes verified config files.").check();
+      await expect(page.getByRole("button", { name: "Execute deployment" })).toBeDisabled();
+      await expect(page.getByText(/Confirm required migration actions: overwrite\./)).toBeVisible();
+      await page.getByLabel("Overwrite existing target files.").check();
       await page.getByRole("button", { name: "Execute deployment" }).click();
       await expect(page.getByText(/Deployment queued:/)).toBeVisible({ timeout: 30_000 });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
+      expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor rule.");
 
       await page.getByRole("button", { name: "History" }).click();
       await page.getByRole("button", { name: "Refresh history" }).click();
@@ -76,9 +109,10 @@ test.describe("Desktop end to end", () => {
       ).toBeVisible();
 
       await page.getByRole("button", { name: "Deployment" }).click();
-      await page.getByRole("button", { name: "Preview rollback" }).click();
+      await page.getByRole("button", { name: "Execute rollback" }).click();
       await expect(page.getByText(/Rollback queued:/)).toBeVisible({ timeout: 30_000 });
-      await expect.poll(() => existsSync(cursorRulePath)).toBe(false);
+      await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
+      expect(await readFile(cursorRulePath, "utf8")).toBe("Existing Cursor rule.\n");
 
       await page.getByRole("button", { name: "History" }).click();
       await page.getByRole("button", { name: "Refresh history" }).click();
@@ -102,7 +136,21 @@ async function createFixtureWorkspace(): Promise<{
   const userData = join(root, "user-data");
   await mkdir(projectRoot, { recursive: true });
   await mkdir(userData, { recursive: true });
+  await mkdir(join(projectRoot, ".agents", "skills", "release"), { recursive: true });
+  await mkdir(join(projectRoot, ".cursor", "rules"), { recursive: true });
   await writeFile(join(projectRoot, "AGENTS.md"), "Use local TypeScript conventions.\n", {
+    encoding: "utf8",
+    flag: "wx",
+  });
+  await writeFile(
+    join(projectRoot, ".agents", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+    {
+      encoding: "utf8",
+      flag: "wx",
+    },
+  );
+  await writeFile(join(projectRoot, ".cursor", "rules", "agents.mdc"), "Existing Cursor rule.\n", {
     encoding: "utf8",
     flag: "wx",
   });

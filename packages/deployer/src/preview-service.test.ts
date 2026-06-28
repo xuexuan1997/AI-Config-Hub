@@ -174,6 +174,7 @@ describe("DeploymentPreviewService", () => {
       ],
       requiredConfirmations: [],
       createdAt: NOW,
+      expiresAt: "2026-06-22T08:10:00.000Z",
     });
     expect(result.record).toMatchObject({
       deploymentPlanId: result.plan.deploymentPlanId,
@@ -210,6 +211,29 @@ describe("DeploymentPreviewService", () => {
     expect(Buffer.byteLength(plan.diffs[0]?.unifiedText ?? "", "utf8")).toBeLessThanOrEqual(
       200 * 1024,
     );
+  });
+
+  it("applies conflict policies before persistence", async () => {
+    const existing = "Old instruction.\n";
+    const failContext = fixture({ "/target/AGENTS.md": existing });
+
+    await expect(
+      failContext.service.preview({
+        ...request([asset("asset-conflict-fail")]),
+        conflictPolicy: "fail",
+      }),
+    ).rejects.toMatchObject({ code: "TARGET_CONFLICT" });
+    expect(failContext.repository.savePlanAndRecord).not.toHaveBeenCalled();
+
+    const mergeContext = fixture({ "/target/AGENTS.md": existing });
+    await expect(
+      mergeContext.service.preview({
+        ...request([asset("asset-conflict-merge")]),
+        conflictPolicy: "merge",
+      }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_CONVERSION" });
+    expect(mergeContext.snapshot).not.toHaveBeenCalled();
+    expect(mergeContext.repository.savePlanAndRecord).not.toHaveBeenCalled();
   });
 
   it("omits byte-identical targets while retaining changed outputs and performs no file writes", async () => {

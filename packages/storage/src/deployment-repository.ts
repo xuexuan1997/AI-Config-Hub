@@ -117,12 +117,35 @@ export class SqliteDeploymentRepository implements DeploymentRepository {
       }[]
     )
       .map(({ verification_json }) => parseJson(DeploymentRecordSchema, verification_json))
-      .sort((left, right) => left.deploymentRecordId.localeCompare(right.deploymentRecordId));
+      .sort(
+        (left, right) =>
+          Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+          right.deploymentRecordId.localeCompare(left.deploymentRecordId),
+      );
+    if (input.kinds !== undefined) {
+      const kinds = new Set(input.kinds);
+      records = records.filter((record) =>
+        kinds.has(record.rollbackOfRecordId === undefined ? "deployment" : "rollback"),
+      );
+    }
+    if (input.statuses !== undefined) {
+      const statuses = new Set(input.statuses);
+      records = records.filter((record) => statuses.has(record.status));
+    }
+    if (input.from !== undefined) {
+      const from = Date.parse(input.from);
+      records = records.filter((record) => Date.parse(record.createdAt) >= from);
+    }
+    if (input.to !== undefined) {
+      const to = Date.parse(input.to);
+      records = records.filter((record) => Date.parse(record.createdAt) <= to);
+    }
     if (input.cursor !== undefined) {
       const cursor = String(input.cursor);
-      records = records.filter(
-        ({ deploymentRecordId }) => deploymentRecordId.localeCompare(cursor) > 0,
+      const cursorIndex = records.findIndex(
+        ({ deploymentRecordId }) => deploymentRecordId === cursor,
       );
+      records = cursorIndex === -1 ? [] : records.slice(cursorIndex + 1);
     }
     const items = records.slice(0, input.limit);
     const last = items.at(-1);

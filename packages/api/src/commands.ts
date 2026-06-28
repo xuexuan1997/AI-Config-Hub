@@ -112,8 +112,13 @@ const MigrationPreviewRequestSchema = z
   })
   .strict()
   .readonly();
+const DeploymentConfirmationSchema = z.enum(["partial_conversion", "overwrite", "delete"]);
 const DeploymentExecuteRequestSchema = z
-  .object({ planId: DeploymentPlanIdSchema })
+  .object({
+    planId: DeploymentPlanIdSchema,
+    confirmedPlanHash: ContentHashSchema,
+    confirmations: z.array(DeploymentConfirmationSchema).max(3).readonly(),
+  })
   .strict()
   .readonly();
 const DeploymentRollbackRequestSchema = z
@@ -363,6 +368,7 @@ const MigrationPreviewResponseSchema = z
     planHash: ContentHashSchema,
     compatibility: z.enum(["full", "partial"]),
     changes: z.array(PlannedChangeSchema).min(1).max(200).readonly(),
+    requiredConfirmations: z.array(DeploymentConfirmationSchema).max(3).readonly(),
     warnings: z.array(DiagnosticViewSchema).max(1_000).readonly(),
     sourceHashes: z.record(AssetIdSchema, ContentHashSchema).readonly(),
     targetHashes: z.record(z.string().min(1), ContentHashSchema.nullable()).readonly(),

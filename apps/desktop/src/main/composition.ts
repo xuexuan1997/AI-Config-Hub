@@ -5,7 +5,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { createDefaultAdapterRegistry } from "@ai-config-hub/adapters";
-import { EffectiveConfigSchema } from "@ai-config-hub/core";
+import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
 import type {
   AdapterRegistration,
   DeploymentPlan,
@@ -362,6 +362,7 @@ function createServices(
         readonly sourceAssetIds: readonly string[];
         readonly targetToolKey: string;
         readonly targetScopeId: string;
+        readonly conflictPolicy?: "fail" | "replace" | "merge";
       };
       const assets = await Promise.all(
         request.sourceAssetIds.map(async (assetId) => {
@@ -372,6 +373,16 @@ function createServices(
       );
       const first = assets[0];
       if (first === undefined) throw unsupported("Migration preview requires at least one asset");
+      if (new Set(assets.map((asset) => asset.resource.kind)).size > 1) {
+        throw new AppError({
+          code: "VALIDATION_FAILED",
+          message: "Migration preview source assets must have the same resource type",
+          retryable: false,
+          suggestedActions: [
+            "Select one resource type at a time and create separate migration previews",
+          ],
+        });
+      }
       const targetRoot = AbsolutePathSchema.parse(resolve(request.targetScopeId));
       const allowedRoots = [
         ...new Set([targetRoot, ...assets.map((asset) => dirname(asset.canonicalSourcePath))]),
@@ -393,6 +404,7 @@ function createServices(
         targetRoot,
         backupRoot: runtime.backupRoot,
         allowedRoots,
+        conflictPolicy: request.conflictPolicy ?? "replace",
         now: now(runtime),
         correlationId: CorrelationIdSchema.parse(`correlation:desktop:${randomUUID()}`),
         signal: AbortSignal.timeout(60_000),
@@ -400,7 +412,11 @@ function createServices(
       return migrationPreviewResponse(preview.plan, now(runtime));
     },
     "deployment.execute": async (payload) => {
-      const request = payload as { readonly planId: string };
+      const request = payload as {
+        readonly planId: string;
+        readonly confirmedPlanHash: string;
+        readonly confirmations?: readonly DeploymentPlan["requiredConfirmations"][number][];
+      };
       const planId = DeploymentPlanIdSchema.parse(request.planId);
       const found = deploymentRecordForPlan(runtime, planId);
       const plan = await runtime.repositories.deployments.getPlan(planId);
@@ -424,8 +440,8 @@ function createServices(
       });
       const record = await service.execute({
         deploymentRecordId: found.deploymentRecordId,
-        confirmedPlanHash: plan.planHash,
-        confirmations: plan.requiredConfirmations,
+        confirmedPlanHash: ContentHashSchema.parse(request.confirmedPlanHash),
+        confirmations: request.confirmations ?? [],
         allowedRoots: roots,
         now: now(runtime),
       });
@@ -470,7 +486,10 @@ function createServices(
       const request = payload as { readonly deploymentId: string };
       const originalId = DeploymentRecordIdSchema.parse(request.deploymentId);
       const roots = rollbackRoots(runtime, originalId);
-      const access = await createNodeFileAccess({ allowedRoots: roots, platform: platform() });
+      const access = await createNodeFileAccess({
+        allowedRoots: [...roots, runtime.backupRoot],
+        platform: platform(),
+      });
       const service = new DeploymentRollbackService({
         deploymentRepository: runtime.repositories.deployments,
         snapshots: access.snapshots,
@@ -506,6 +525,14 @@ function createServices(
           systemRecoveryLock: record.status !== "succeeded",
         },
       });
+      if (record.status !== "succeeded") {
+        throw new AppError({
+          code: "VALIDATION_FAILED",
+          message: `Rollback did not succeed: ${record.status}`,
+          retryable: false,
+          suggestedActions: ["Review rollback diagnostics before retrying"],
+        });
+      }
       return {
         taskId,
         status: "queued",
@@ -514,8 +541,21 @@ function createServices(
       };
     },
     "history.list": async (payload) => {
-      const request = payload as { readonly cursor?: string; readonly limit?: number };
+      const request = payload as {
+        readonly kinds?: readonly ("deployment" | "rollback")[];
+        readonly statuses?: readonly string[];
+        readonly from?: string;
+        readonly to?: string;
+        readonly cursor?: string;
+        readonly limit?: number;
+      };
       const page = await runtime.repositories.deployments.listRecords({
+        ...(request.kinds === undefined ? {} : { kinds: request.kinds }),
+        ...(request.statuses === undefined
+          ? {}
+          : { statuses: request.statuses.map((status) => DeploymentStatusSchema.parse(status)) }),
+        ...(request.from === undefined ? {} : { from: IsoDateTimeSchema.parse(request.from) }),
+        ...(request.to === undefined ? {} : { to: IsoDateTimeSchema.parse(request.to) }),
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
@@ -541,7 +581,9 @@ function createServices(
       const request = payload as {
         readonly expectedRevision: number;
         readonly patch: {
+          readonly theme?: "system" | "light" | "dark";
           readonly pathDisplay?: "full" | "abbreviated";
+          readonly scanHints?: boolean;
           readonly fileWatching?: boolean;
         };
       };
@@ -550,9 +592,11 @@ function createServices(
         expectedRevision: String(request.expectedRevision),
         settings: {
           ...current.settings,
+          ...(request.patch.theme === undefined ? {} : { theme: request.patch.theme }),
           ...(request.patch.pathDisplay === undefined
             ? {}
             : { pathDisplay: request.patch.pathDisplay }),
+          ...(request.patch.scanHints === undefined ? {} : { scanHints: request.patch.scanHints }),
           ...(request.patch.fileWatching === undefined
             ? {}
             : { fileWatching: request.patch.fileWatching }),
@@ -740,6 +784,7 @@ function migrationPreviewResponse(plan: DeploymentPlan, generatedAt: string) {
     compatibility: plan.requiredConfirmations.includes("partial_conversion")
       ? ("partial" as const)
       : ("full" as const),
+    requiredConfirmations: plan.requiredConfirmations,
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
       return {
@@ -765,9 +810,9 @@ function migrationPreviewResponse(plan: DeploymentPlan, generatedAt: string) {
         hash === "absent" ? null : hash,
       ]),
     ),
-    expiresAt: IsoDateTimeSchema.parse(
-      new Date(Date.parse(generatedAt) + 10 * 60 * 1_000).toISOString(),
-    ),
+    expiresAt:
+      plan.expiresAt ??
+      IsoDateTimeSchema.parse(new Date(Date.parse(generatedAt) + 10 * 60 * 1_000).toISOString()),
   };
 }
 
@@ -839,7 +884,9 @@ function existingAncestor(path: string): AbsolutePath {
 
 function settingsValues(settings: PublicSettings) {
   return {
+    theme: settings.theme,
     pathDisplay: settings.pathDisplay,
+    scanHints: settings.scanHints,
     fileWatching: settings.fileWatching,
   };
 }
@@ -850,7 +897,9 @@ function selectSettings(
 ): Partial<ReturnType<typeof settingsValues>> {
   const selected: Partial<ReturnType<typeof settingsValues>> = {};
   for (const key of keys) {
+    if (key === "theme") selected.theme = values.theme;
     if (key === "pathDisplay") selected.pathDisplay = values.pathDisplay;
+    if (key === "scanHints") selected.scanHints = values.scanHints;
     if (key === "fileWatching") selected.fileWatching = values.fileWatching;
   }
   return selected;

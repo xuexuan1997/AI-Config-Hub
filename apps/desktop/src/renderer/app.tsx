@@ -3,8 +3,11 @@ import { useReducer } from "react";
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
 import {
+  deploymentBlockersForState,
+  deploymentConfirmationsForState,
   formatUiError,
   initialState,
+  migrationPreviewBlockersForState,
   previewRequestForState,
   reducer,
   refreshAssetDetail,
@@ -85,6 +88,11 @@ export function App(props: { readonly api: DesktopApi }) {
 
   async function preview() {
     await runAction("Preview migration", async () => {
+      const blockers = migrationPreviewBlockersForState(state);
+      if (blockers.length > 0) {
+        dispatch({ type: "message", message: blockers[0] });
+        return;
+      }
       const request = previewRequestForState(state);
       if (request === undefined) {
         dispatch({
@@ -100,11 +108,18 @@ export function App(props: { readonly api: DesktopApi }) {
   }
 
   async function deploy() {
+    const blockers = deploymentBlockersForState(state);
+    if (blockers.length > 0) {
+      dispatch({ type: "message", message: blockers[0] });
+      return;
+    }
     const previewPlan = state.preview;
-    if (previewPlan === undefined || !state.deploymentConfirmed) return;
+    if (previewPlan === undefined) return;
     await runAction("Execute deployment", async () => {
       const response = await props.api.invoke("deployment.execute", {
         planId: previewPlan.planId,
+        confirmedPlanHash: previewPlan.planHash,
+        confirmations: deploymentConfirmationsForState(state),
       });
       dispatch({
         type: "scan",
@@ -182,12 +197,25 @@ export function App(props: { readonly api: DesktopApi }) {
         />
       ) : null}
       {state.route === "migration" ? (
-        <MigrationView state={state} onPreview={() => void preview()} />
+        <MigrationView
+          state={state}
+          onPreview={() => void preview()}
+          onToggleSource={(assetId, selected) =>
+            dispatch({ type: "migrationSource", assetId, selected })
+          }
+          onTargetTool={(targetToolKey) => dispatch({ type: "migrationTarget", targetToolKey })}
+          onConflictPolicy={(conflictPolicy) =>
+            dispatch({ type: "migrationConflictPolicy", conflictPolicy })
+          }
+        />
       ) : null}
       {state.route === "deployment" ? (
         <DeploymentView
           state={state}
           onConfirm={(confirmed) => dispatch({ type: "deploymentConfirmation", confirmed })}
+          onConfirmRequirement={(confirmation, granted) =>
+            dispatch({ type: "deploymentConfirmationGrant", confirmation, granted })
+          }
           onDeploy={() => void deploy()}
           onRollback={() => void rollback()}
         />

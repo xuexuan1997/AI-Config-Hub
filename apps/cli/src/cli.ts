@@ -29,10 +29,14 @@ interface ListOptions extends GlobalOptions {
   readonly tool?: string[];
   readonly resource?: string[];
   readonly scopeKind?: string[];
+  readonly kind?: string[];
+  readonly status?: string[];
   readonly severity?: string;
   readonly query?: string;
   readonly cursor?: string;
   readonly limit?: number;
+  readonly from?: string;
+  readonly to?: string;
 }
 
 interface EffectiveOptions extends GlobalOptions {
@@ -48,6 +52,11 @@ interface MigrateOptions extends GlobalOptions {
   readonly target: string;
   readonly scope: string;
   readonly conflict?: "fail" | "replace" | "merge";
+}
+
+interface DeployOptions extends GlobalOptions {
+  readonly planHash: string;
+  readonly confirm?: string[];
 }
 
 interface InvokeOptions extends GlobalOptions {
@@ -201,9 +210,19 @@ export function createCliProgram(options: CliProgramOptions): Command {
   program
     .command("deploy")
     .argument("<plan-id>", "deployment plan id")
+    .requiredOption("--plan-hash <hash>", "preview plan hash to confirm")
+    .option("--confirm <confirmation>", "required confirmation to grant", collect, [])
     .option("--json", "print a JSON API envelope")
-    .action(async (planId: string, flags: GlobalOptions) => {
-      await invoke("deployment.execute", { planId }, flags);
+    .action(async (planId: string, flags: DeployOptions) => {
+      await invoke(
+        "deployment.execute",
+        {
+          planId,
+          confirmedPlanHash: flags.planHash,
+          confirmations: flags.confirm ?? [],
+        },
+        flags,
+      );
     });
 
   program
@@ -217,11 +236,26 @@ export function createCliProgram(options: CliProgramOptions): Command {
   program
     .command("history")
     .description("List scan, preview, deployment, and rollback history.")
+    .option("--kind <kind>", "history kind to include", collect, [])
+    .option("--status <status>", "history status to include", collect, [])
+    .option("--from <iso-date-time>", "created-at lower bound")
+    .option("--to <iso-date-time>", "created-at upper bound")
     .option("--cursor <cursor>", "pagination cursor")
     .option("--limit <count>", "page size", parsePositiveInteger)
     .option("--json", "print a JSON API envelope")
     .action(async (flags: ListOptions) => {
-      await invoke("history.list", compact({ cursor: flags.cursor, limit: flags.limit }), flags);
+      await invoke(
+        "history.list",
+        compact({
+          kinds: flags.kind,
+          statuses: flags.status,
+          from: flags.from,
+          to: flags.to,
+          cursor: flags.cursor,
+          limit: flags.limit,
+        }),
+        flags,
+      );
     });
 
   program

@@ -4,6 +4,42 @@ import type { DesktopApi } from "../preload/api.js";
 
 export type Route = "overview" | "assets" | "migration" | "deployment" | "history";
 
+export type MigrationTargetToolKey = CommandRequest<"migration.preview">["targetToolKey"];
+export type MigrationConflictPolicy = CommandRequest<"migration.preview">["conflictPolicy"];
+export type MigrationSourceAssetId = CommandResponse<"assets.list">["items"][number]["id"];
+export type DeploymentConfirmation = CommandRequest<"deployment.execute">["confirmations"][number];
+
+export const MIGRATION_TARGET_TOOL_OPTIONS = [
+  "claude-code",
+  "cursor",
+  "codex",
+  "opencode",
+] as const satisfies readonly MigrationTargetToolKey[];
+export const MIGRATION_CONFLICT_POLICY_OPTIONS = [
+  "replace",
+  "fail",
+  "merge",
+] as const satisfies readonly MigrationConflictPolicy[];
+
+export interface MigrationFormState {
+  readonly sourceAssetIds: readonly MigrationSourceAssetId[];
+  readonly targetToolKey: MigrationTargetToolKey;
+  readonly conflictPolicy: MigrationConflictPolicy;
+}
+
+export interface MigrationHashRow {
+  readonly kind: "source" | "target";
+  readonly label: string;
+  readonly hash: CommandResponse<"migration.preview">["planHash"] | "absent";
+}
+
+export interface MigrationSourceDriftRow {
+  readonly assetId: string;
+  readonly status: "current" | "changed" | "missing";
+  readonly expectedHash: CommandResponse<"migration.preview">["planHash"];
+  readonly currentHash: CommandResponse<"migration.preview">["planHash"] | null;
+}
+
 export interface AppState {
   readonly route: Route;
   readonly projectRoot?: string;
@@ -12,8 +48,10 @@ export interface AppState {
   readonly assetDetail?: CommandResponse<"assets.get">;
   readonly diagnostics: CommandResponse<"diagnostics.list">["items"];
   readonly diagnosticCounts: CommandResponse<"diagnostics.list">["countsBySeverity"];
+  readonly migration: MigrationFormState;
   readonly preview?: CommandResponse<"migration.preview">;
   readonly deploymentConfirmed: boolean;
+  readonly deploymentConfirmationGrants: readonly DeploymentConfirmation[];
   readonly history: CommandResponse<"history.list">["items"];
   readonly message?: string;
 }
@@ -30,8 +68,23 @@ export type AppAction =
       readonly diagnostics: AppState["diagnostics"];
       readonly counts: AppState["diagnosticCounts"];
     }
+  | {
+      readonly type: "migrationSource";
+      readonly assetId: AppState["assets"][number]["id"];
+      readonly selected: boolean;
+    }
+  | { readonly type: "migrationTarget"; readonly targetToolKey: MigrationTargetToolKey }
+  | {
+      readonly type: "migrationConflictPolicy";
+      readonly conflictPolicy: MigrationConflictPolicy;
+    }
   | { readonly type: "preview"; readonly preview: CommandResponse<"migration.preview"> }
   | { readonly type: "deploymentConfirmation"; readonly confirmed: boolean }
+  | {
+      readonly type: "deploymentConfirmationGrant";
+      readonly confirmation: DeploymentConfirmation;
+      readonly granted: boolean;
+    }
   | { readonly type: "history"; readonly history: AppState["history"] };
 
 export const initialState: AppState = {
@@ -40,9 +93,28 @@ export const initialState: AppState = {
   assets: [],
   diagnostics: [],
   diagnosticCounts: { info: 0, warning: 0, error: 0 },
+  migration: { sourceAssetIds: [], targetToolKey: "cursor", conflictPolicy: "replace" },
   deploymentConfirmed: false,
+  deploymentConfirmationGrants: [],
   history: [],
 };
+
+function clearPreview(state: AppState): AppState {
+  const { preview: discardedPreview, ...withoutPreview } = state;
+  void discardedPreview;
+  return { ...withoutPreview, deploymentConfirmed: false, deploymentConfirmationGrants: [] };
+}
+
+function migrationSourceAssetIds(
+  state: AppState,
+  assets: AppState["assets"],
+): MigrationFormState["sourceAssetIds"] {
+  const available = new Set(assets.map((asset) => asset.id));
+  const retained = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
+  if (retained.length > 0) return retained;
+  const first = assets[0];
+  return first === undefined ? [] : [first.id];
+}
 
 export function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -50,31 +122,33 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, route: action.route };
     case "project":
       if (action.root === undefined) {
-        return {
+        return clearPreview({
           route: state.route,
           scanStatus: state.scanStatus,
           assets: state.assets,
           diagnostics: state.diagnostics,
           diagnosticCounts: state.diagnosticCounts,
+          migration: state.migration,
           deploymentConfirmed: state.deploymentConfirmed,
+          deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
           ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
-          ...(state.preview === undefined ? {} : { preview: state.preview }),
           ...(state.message === undefined ? {} : { message: state.message }),
-        };
+        });
       }
-      return {
+      return clearPreview({
         route: state.route,
         scanStatus: state.scanStatus,
         assets: state.assets,
         diagnostics: state.diagnostics,
         diagnosticCounts: state.diagnosticCounts,
+        migration: state.migration,
         deploymentConfirmed: state.deploymentConfirmed,
+        deploymentConfirmationGrants: state.deploymentConfirmationGrants,
         history: state.history,
         projectRoot: action.root,
         ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
-        ...(state.preview === undefined ? {} : { preview: state.preview }),
-      };
+      });
     case "message":
       return action.message === undefined
         ? {
@@ -83,7 +157,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
             assets: state.assets,
             diagnostics: state.diagnostics,
             diagnosticCounts: state.diagnosticCounts,
+            migration: state.migration,
             deploymentConfirmed: state.deploymentConfirmed,
+            deploymentConfirmationGrants: state.deploymentConfirmationGrants,
             history: state.history,
             ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
@@ -97,15 +173,58 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ...(action.message === undefined ? {} : { message: action.message }),
       };
     case "assets":
-      return { ...state, assets: action.assets };
+      return clearPreview({
+        ...state,
+        assets: action.assets,
+        migration: {
+          ...state.migration,
+          sourceAssetIds: migrationSourceAssetIds(state, action.assets),
+        },
+      });
     case "assetDetail":
       return { ...state, assetDetail: action.detail };
     case "diagnostics":
       return { ...state, diagnostics: action.diagnostics, diagnosticCounts: action.counts };
+    case "migrationSource": {
+      const current = state.migration.sourceAssetIds;
+      const sourceAssetIds = action.selected
+        ? current.includes(action.assetId)
+          ? current
+          : [...current, action.assetId]
+        : current.filter((assetId) => assetId !== action.assetId);
+      return clearPreview({
+        ...state,
+        migration: { ...state.migration, sourceAssetIds },
+      });
+    }
+    case "migrationTarget":
+      return clearPreview({
+        ...state,
+        migration: { ...state.migration, targetToolKey: action.targetToolKey },
+      });
+    case "migrationConflictPolicy":
+      return clearPreview({
+        ...state,
+        migration: { ...state.migration, conflictPolicy: action.conflictPolicy },
+      });
     case "preview":
-      return { ...state, preview: action.preview, deploymentConfirmed: false };
+      return {
+        ...state,
+        preview: action.preview,
+        deploymentConfirmed: false,
+        deploymentConfirmationGrants: [],
+      };
     case "deploymentConfirmation":
       return { ...state, deploymentConfirmed: action.confirmed };
+    case "deploymentConfirmationGrant": {
+      const current = state.deploymentConfirmationGrants;
+      const deploymentConfirmationGrants = action.granted
+        ? current.includes(action.confirmation)
+          ? current
+          : [...current, action.confirmation]
+        : current.filter((confirmation) => confirmation !== action.confirmation);
+      return { ...state, deploymentConfirmationGrants };
+    }
     case "history":
       return { ...state, history: action.history };
   }
@@ -148,14 +267,114 @@ export async function refreshHistory(api: DesktopApi): Promise<AppState["history
 export function previewRequestForState(
   state: AppState,
 ): CommandRequest<"migration.preview"> | undefined {
-  const sourceAsset = state.assets[0];
-  if (state.projectRoot === undefined || sourceAsset === undefined) return undefined;
+  if (migrationPreviewBlockersForState(state).length > 0) return undefined;
+  const targetScopeId = state.projectRoot;
+  if (targetScopeId === undefined) return undefined;
+  const available = new Set(state.assets.map((asset) => asset.id));
+  const sourceAssetIds = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
   return {
-    sourceAssetIds: [sourceAsset.id],
-    targetToolKey: "cursor",
-    targetScopeId: state.projectRoot,
-    conflictPolicy: "replace",
+    sourceAssetIds,
+    targetToolKey: state.migration.targetToolKey,
+    targetScopeId,
+    conflictPolicy: state.migration.conflictPolicy,
   };
+}
+
+export function migrationPreviewBlockersForState(state: AppState): readonly string[] {
+  const blockers: string[] = [];
+  const availableAssets = new Map(state.assets.map((asset) => [asset.id, asset]));
+  const selectedAssets = state.migration.sourceAssetIds
+    .map((assetId) => availableAssets.get(assetId))
+    .filter((asset) => asset !== undefined);
+
+  if (state.projectRoot === undefined) {
+    blockers.push("Select a project before creating a migration preview.");
+  }
+  if (selectedAssets.length === 0) {
+    blockers.push("Select at least one source asset.");
+  }
+  if (new Set(selectedAssets.map((asset) => asset.resourceType)).size > 1) {
+    blockers.push("Select source assets from one resource type.");
+  }
+  return blockers;
+}
+
+export function migrationHashRowsForPreview(
+  preview: CommandResponse<"migration.preview">,
+): readonly MigrationHashRow[] {
+  const sourceRows = Object.entries(preview.sourceHashes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([label, hash]) => ({ kind: "source" as const, label, hash }));
+  const targetRows = Object.entries(preview.targetHashes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(
+      ([label, hash]): MigrationHashRow => ({
+        kind: "target" as const,
+        label,
+        hash: hash === null ? "absent" : hash,
+      }),
+    );
+  return [...sourceRows, ...targetRows];
+}
+
+export function migrationSourceDriftRowsForState(
+  state: AppState,
+): readonly MigrationSourceDriftRow[] {
+  if (state.preview === undefined) return [];
+  const currentHashes = new Map<string, CommandResponse<"migration.preview">["planHash"]>(
+    state.assets.map((asset) => [asset.id, asset.contentHash]),
+  );
+  return Object.entries(state.preview.sourceHashes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([assetId, expectedHash]) => {
+      const currentHash = currentHashes.get(assetId) ?? null;
+      return {
+        assetId,
+        status:
+          currentHash === null ? "missing" : currentHash === expectedHash ? "current" : "changed",
+        expectedHash,
+        currentHash,
+      };
+    });
+}
+
+export function deploymentBlockersForState(
+  state: AppState,
+  now = new Date().toISOString(),
+): readonly string[] {
+  const blockers: string[] = [];
+  if (state.preview === undefined) {
+    blockers.push("Create a migration preview before deploying.");
+  } else if (Date.parse(now) > Date.parse(state.preview.expiresAt)) {
+    blockers.push("Create a fresh migration preview; the current plan has expired.");
+  }
+  if (migrationSourceDriftRowsForState(state).some((row) => row.status !== "current")) {
+    blockers.push("Refresh the scan and create a fresh migration preview before deploying.");
+  }
+  const missingConfirmations = missingDeploymentConfirmationsForState(state);
+  if (missingConfirmations.length > 0) {
+    blockers.push(`Confirm required migration actions: ${missingConfirmations.join(", ")}.`);
+  }
+  if (!state.deploymentConfirmed) {
+    blockers.push("Confirm that this writes verified config files.");
+  }
+  return blockers;
+}
+
+export function deploymentConfirmationsForState(
+  state: AppState,
+): CommandRequest<"deployment.execute">["confirmations"] {
+  if (state.preview === undefined) return [];
+  const granted = new Set(state.deploymentConfirmationGrants);
+  return state.preview.requiredConfirmations.filter((confirmation) => granted.has(confirmation));
+}
+
+function missingDeploymentConfirmationsForState(
+  state: AppState,
+): readonly DeploymentConfirmation[] {
+  if (state.preview === undefined) return [];
+  const granted = new Set(state.deploymentConfirmationGrants);
+  return state.preview.requiredConfirmations.filter((confirmation) => !granted.has(confirmation));
 }
 
 export function rollbackRequestForState(

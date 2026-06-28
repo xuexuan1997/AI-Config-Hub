@@ -55,6 +55,19 @@ describe("command schemas", () => {
     ).toBe(false);
   });
 
+  it("requires deployment execution to confirm the exact preview hash and confirmation set", () => {
+    expect(
+      CommandRequestSchemas["deployment.execute"].safeParse({ planId: "plan-1" }).success,
+    ).toBe(false);
+    expect(
+      CommandRequestSchemas["deployment.execute"].safeParse({
+        planId: "plan-1",
+        confirmedPlanHash: hash,
+        confirmations: ["overwrite"],
+      }).success,
+    ).toBe(true);
+  });
+
   it("uses stable, versioned IPC channels", () => {
     expect(commandChannel("scan.start")).toBe("ai-config-hub:v1:scan.start");
   });
@@ -78,7 +91,11 @@ describe("command schemas", () => {
         targetScopeId: "scope-1",
         conflictPolicy: "fail",
       },
-      "deployment.execute": { planId: "plan-1" },
+      "deployment.execute": {
+        planId: "plan-1",
+        confirmedPlanHash: hash,
+        confirmations: ["overwrite"],
+      },
       "deployment.rollback": { deploymentId: "deployment-1" },
       "history.list": {},
       "settings.get": {},
@@ -155,6 +172,7 @@ describe("command schemas", () => {
             diff: "+ content",
           },
         ],
+        requiredConfirmations: ["overwrite"],
         warnings: [],
         sourceHashes: { "asset-1": hash },
         targetHashes: { ".cursor/rules/repository-policy.mdc": null },

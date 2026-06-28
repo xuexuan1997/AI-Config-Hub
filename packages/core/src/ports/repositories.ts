@@ -69,6 +69,10 @@ export interface DeploymentRepository {
     readonly record: DeploymentRecord;
   }): Promise<boolean>;
   listRecords(input: {
+    readonly kinds?: readonly ("deployment" | "rollback")[];
+    readonly statuses?: readonly DeploymentRecord["status"][];
+    readonly from?: DeploymentRecord["createdAt"];
+    readonly to?: DeploymentRecord["createdAt"];
     readonly cursor?: PaginationCursor;
     readonly limit: number;
   }): Promise<Page<DeploymentRecord>>;
@@ -77,6 +81,8 @@ export interface DeploymentRepository {
 export interface PublicSettings {
   readonly readOnlyMode: boolean;
   readonly customScanRoots: readonly AbsolutePath[];
+  readonly theme: "system" | "light" | "dark";
+  readonly scanHints: boolean;
   readonly fileWatching: boolean;
   readonly pathDisplay: "full" | "abbreviated";
 }

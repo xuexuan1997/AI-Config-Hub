@@ -118,6 +118,8 @@ describe("storage repositories", () => {
       settings: {
         readOnlyMode: false,
         customScanRoots: [AbsolutePathSchema.parse("/project")],
+        theme: "system",
+        scanHints: true,
         fileWatching: true,
         pathDisplay: "abbreviated",
       },
@@ -210,9 +212,155 @@ describe("storage repositories", () => {
     });
     recovery.database.close();
   });
+
+  it("lists deployment history newest-first with cursor pagination", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const older = deploymentFixture({
+      deploymentRecordId: "deployment-a",
+      deploymentPlanId: "plan-a",
+      createdAt: "2026-06-21T08:00:00.000Z",
+      hashSeed: "a",
+    });
+    const newer = deploymentFixture({
+      deploymentRecordId: "deployment-z",
+      deploymentPlanId: "plan-z",
+      createdAt: "2026-06-21T09:00:00.000Z",
+      hashSeed: "b",
+    });
+    await repositories.deployments.savePlanAndRecord(older);
+    await repositories.deployments.savePlanAndRecord(newer);
+
+    const firstPage = await repositories.deployments.listRecords({ limit: 1 });
+    expect(firstPage.items.map((record) => record.deploymentRecordId)).toEqual(["deployment-z"]);
+    expect(firstPage.nextCursor).toBe("deployment-z");
+    const cursor = firstPage.nextCursor;
+    if (cursor === undefined) throw new Error("Expected first page cursor");
+
+    const secondPage = await repositories.deployments.listRecords({
+      cursor,
+      limit: 1,
+    });
+    expect(secondPage.items.map((record) => record.deploymentRecordId)).toEqual(["deployment-a"]);
+    expect(secondPage.nextCursor).toBeUndefined();
+    opened.database.close();
+  });
+
+  it("filters deployment history by kind, status, and creation window", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const deployment = deploymentFixture({
+      deploymentRecordId: "deployment-succeeded",
+      deploymentPlanId: "plan-deployment",
+      createdAt: "2026-06-21T08:00:00.000Z",
+      hashSeed: "a",
+      status: "succeeded",
+    });
+    const rollback = deploymentFixture({
+      deploymentRecordId: "rollback-succeeded",
+      deploymentPlanId: "plan-rollback",
+      createdAt: "2026-06-21T09:00:00.000Z",
+      hashSeed: "b",
+      rollbackOfRecordId: "deployment-succeeded",
+      status: "succeeded",
+    });
+    const plannedRollback = deploymentFixture({
+      deploymentRecordId: "rollback-planned",
+      deploymentPlanId: "plan-failed",
+      createdAt: "2026-06-21T10:00:00.000Z",
+      hashSeed: "c",
+      rollbackOfRecordId: "deployment-succeeded",
+    });
+    await repositories.deployments.savePlanAndRecord(deployment);
+    await repositories.deployments.savePlanAndRecord(rollback);
+    await repositories.deployments.savePlanAndRecord(plannedRollback);
+
+    const page = await repositories.deployments.listRecords({
+      kinds: ["rollback"],
+      statuses: ["succeeded"],
+      from: "2026-06-21T08:30:00.000Z",
+      to: "2026-06-21T09:30:00.000Z",
+      limit: 10,
+    });
+
+    expect(page.items.map((record) => record.deploymentRecordId)).toEqual(["rollback-succeeded"]);
+    opened.database.close();
+  });
 });
 
 function initialMigrationForDrift() {
   // Loaded lazily to keep the test fixture focused on repository behavior.
   return { version: 1, name: "initial", sql: "" } as const;
+}
+
+function deploymentFixture(input: {
+  readonly deploymentRecordId: string;
+  readonly deploymentPlanId: string;
+  readonly createdAt: string;
+  readonly hashSeed: string;
+  readonly rollbackOfRecordId?: string;
+  readonly status?: "planned" | "succeeded" | "failed";
+}) {
+  const operation = {
+    kind: "create" as const,
+    targetPath: `/project/${input.deploymentRecordId}.md`,
+    nextText: "Use tests.",
+    expectedTargetHash: "absent" as const,
+  };
+  const plan = DeploymentPlanSchema.parse({
+    deploymentPlanId: input.deploymentPlanId,
+    conversionResultIds: [`conversion-${input.hashSeed}`],
+    operations: [operation],
+    diffs: [],
+    expectedSourceHashes: { [`asset-${input.hashSeed}`]: `sha256:${input.hashSeed.repeat(64)}` },
+    expectedTargetHashes: { [operation.targetPath]: "absent" },
+    backupPolicy: { mode: "required", backupRoot: "/backups" },
+    verificationStrategy: { kind: "adapter", description: "Parse target" },
+    requiredConfirmations: [],
+    warnings: [],
+    planHash: `sha256:${input.hashSeed.repeat(64)}`,
+    adapterId: "builtin-codex",
+    adapterVersion: "0.1.0",
+    createdAt: input.createdAt,
+  });
+  const record = DeploymentRecordSchema.parse({
+    deploymentRecordId: input.deploymentRecordId,
+    deploymentPlanId: plan.deploymentPlanId,
+    ...(input.rollbackOfRecordId === undefined
+      ? {}
+      : { rollbackOfRecordId: input.rollbackOfRecordId }),
+    status: input.status ?? "planned",
+    operations: [operation],
+    backupLocations:
+      input.status === "succeeded" ? { [operation.targetPath]: "previously-absent" } : {},
+    resultingHashes: input.status === "succeeded" ? { [operation.targetPath]: plan.planHash } : {},
+    verificationResult:
+      input.status === "succeeded"
+        ? {
+            status: "passed",
+            verifiedHashes: { [operation.targetPath]: plan.planHash },
+            diagnostics: [],
+          }
+        : input.status === "failed"
+          ? { status: "failed", verifiedHashes: {}, diagnostics: [] }
+          : { status: "not_started", diagnostics: [] },
+    rollbackResults: [],
+    adapterId: "builtin-codex",
+    adapterVersion: "0.1.0",
+    normalizedSchemaVersion: "1.0.0",
+    createdAt: input.createdAt,
+    ...(input.status === "succeeded" || input.status === "failed"
+      ? {
+          confirmedAt: input.createdAt,
+          confirmedPlanHash: plan.planHash,
+          startedAt: input.createdAt,
+          finishedAt: input.createdAt,
+        }
+      : {}),
+    correlationId: `correlation-${input.hashSeed}`,
+    diagnostics: [],
+  });
+  return { plan, record };
 }

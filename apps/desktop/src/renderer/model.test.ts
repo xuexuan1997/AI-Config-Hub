@@ -9,8 +9,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  deploymentBlockersForState,
+  deploymentConfirmationsForState,
   formatUiError,
   initialState,
+  migrationHashRowsForPreview,
+  migrationSourceDriftRowsForState,
   previewRequestForState,
   reducer,
   rollbackRequestForState,
@@ -71,6 +75,62 @@ describe("renderer project selection state", () => {
       targetToolKey: "cursor",
       targetScopeId: "/home/user/workspace",
       conflictPolicy: "replace",
+    });
+  });
+
+  it("builds migration previews from explicit migration selections", () => {
+    const withProject = reducer(initialState, {
+      type: "project",
+      root: "/home/user/workspace",
+    });
+    const withAssets = reducer(withProject, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+        {
+          id: AssetIdSchema.parse("asset-2"),
+          toolKey: "claude-code",
+          resourceType: "skill",
+          scopeKind: "project",
+          logicalKey: "review/SKILL.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const withSource = reducer(withAssets, {
+      type: "migrationSource",
+      assetId: AssetIdSchema.parse("asset-2"),
+      selected: true,
+    });
+    const withoutDefaultSource = reducer(withSource, {
+      type: "migrationSource",
+      assetId: AssetIdSchema.parse("asset-1"),
+      selected: false,
+    });
+    const withTarget = reducer(withoutDefaultSource, {
+      type: "migrationTarget",
+      targetToolKey: "opencode",
+    });
+    const withConflictPolicy = reducer(withTarget, {
+      type: "migrationConflictPolicy",
+      conflictPolicy: "fail",
+    });
+
+    expect(withAssets.migration.sourceAssetIds).toEqual(["asset-1"]);
+    expect(previewRequestForState(withConflictPolicy)).toEqual({
+      sourceAssetIds: ["asset-2"],
+      targetToolKey: "opencode",
+      targetScopeId: "/home/user/workspace",
+      conflictPolicy: "fail",
     });
   });
 
@@ -170,6 +230,7 @@ describe("renderer project selection state", () => {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      requiredConfirmations: [],
       changes: [
         {
           operation: "create" as const,
@@ -192,5 +253,267 @@ describe("renderer project selection state", () => {
     expect(
       reducer(withPreview, { type: "deploymentConfirmation", confirmed: true }).deploymentConfirmed,
     ).toBe(true);
+  });
+
+  it("requires every migration confirmation grant before deployment", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "partial" as const,
+      requiredConfirmations: ["overwrite", "partial_conversion"] as const,
+      changes: [
+        {
+          operation: "replace" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {},
+      targetHashes: {},
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const withPreview = reducer(initialState, { type: "preview", preview });
+    const acknowledged = reducer(withPreview, {
+      type: "deploymentConfirmation",
+      confirmed: true,
+    });
+    const overwriteGranted = reducer(acknowledged, {
+      type: "deploymentConfirmationGrant",
+      confirmation: "overwrite",
+      granted: true,
+    });
+    const allGranted = reducer(overwriteGranted, {
+      type: "deploymentConfirmationGrant",
+      confirmation: "partial_conversion",
+      granted: true,
+    });
+
+    expect(deploymentBlockersForState(acknowledged, "2026-06-28T08:00:00.000Z")).toEqual([
+      "Confirm required migration actions: overwrite, partial_conversion.",
+    ]);
+    expect(deploymentBlockersForState(overwriteGranted, "2026-06-28T08:00:00.000Z")).toEqual([
+      "Confirm required migration actions: partial_conversion.",
+    ]);
+    expect(deploymentBlockersForState(allGranted, "2026-06-28T08:00:00.000Z")).toEqual([]);
+    expect(deploymentConfirmationsForState(allGranted)).toEqual([
+      "overwrite",
+      "partial_conversion",
+    ]);
+    expect(reducer(allGranted, { type: "preview", preview }).deploymentConfirmationGrants).toEqual(
+      [],
+    );
+  });
+
+  it("blocks deployment without a confirmed fresh preview and when sources drift", () => {
+    expect(deploymentBlockersForState(initialState)).toEqual([
+      "Create a migration preview before deploying.",
+      "Confirm that this writes verified config files.",
+    ]);
+
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "full" as const,
+      requiredConfirmations: [],
+      changes: [
+        {
+          operation: "create" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: null,
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {
+        "asset-1": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      },
+      targetHashes: {},
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const withAssets = reducer(initialState, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const withPreview = reducer(withAssets, { type: "preview", preview });
+    const confirmed = reducer(withPreview, { type: "deploymentConfirmation", confirmed: true });
+
+    expect(deploymentBlockersForState(withPreview, "2026-06-28T08:00:00.000Z")).toEqual([
+      "Refresh the scan and create a fresh migration preview before deploying.",
+      "Confirm that this writes verified config files.",
+    ]);
+    expect(deploymentBlockersForState(confirmed, "2026-06-28T08:00:00.000Z")).toEqual([
+      "Refresh the scan and create a fresh migration preview before deploying.",
+    ]);
+  });
+
+  it("blocks deployment after a migration preview expires", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "full" as const,
+      requiredConfirmations: [],
+      changes: [
+        {
+          operation: "create" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: null,
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {},
+      targetHashes: {},
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const confirmed = reducer(reducer(initialState, { type: "preview", preview }), {
+      type: "deploymentConfirmation",
+      confirmed: true,
+    });
+
+    expect(deploymentBlockersForState(confirmed, "2026-06-28T08:10:00.000Z")).toEqual([]);
+    expect(deploymentBlockersForState(confirmed, "2026-06-28T08:10:00.001Z")).toEqual([
+      "Create a fresh migration preview; the current plan has expired.",
+    ]);
+  });
+
+  it("summarizes migration preview hashes in stable source and target order", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "full" as const,
+      requiredConfirmations: [],
+      changes: [
+        {
+          operation: "replace" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          afterHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {
+        "asset-z": ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+        "asset-a": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      },
+      targetHashes: {
+        "/workspace/.cursor/rules/generated.mdc": ContentHashSchema.parse(
+          `sha256:${"d".repeat(64)}`,
+        ),
+        "/workspace/.cursor/rules/new.mdc": null,
+      },
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+
+    expect(migrationHashRowsForPreview(preview)).toEqual([
+      {
+        kind: "source",
+        label: "asset-a",
+        hash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      },
+      {
+        kind: "source",
+        label: "asset-z",
+        hash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+      },
+      {
+        kind: "target",
+        label: "/workspace/.cursor/rules/generated.mdc",
+        hash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+      },
+      {
+        kind: "target",
+        label: "/workspace/.cursor/rules/new.mdc",
+        hash: "absent",
+      },
+    ]);
+  });
+
+  it("detects source asset drift against the current indexed asset hashes", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "full" as const,
+      requiredConfirmations: [],
+      changes: [
+        {
+          operation: "create" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: null,
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {
+        "asset-current": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        "asset-changed": ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        "asset-missing": ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      },
+      targetHashes: {},
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const state = reducer(
+      reducer(initialState, {
+        type: "assets",
+        assets: [
+          {
+            id: AssetIdSchema.parse("asset-current"),
+            toolKey: "codex",
+            resourceType: "rule",
+            scopeKind: "project",
+            logicalKey: "AGENTS.md",
+            contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+            diagnosticCounts: { info: 0, warning: 0, error: 0 },
+          },
+          {
+            id: AssetIdSchema.parse("asset-changed"),
+            toolKey: "codex",
+            resourceType: "rule",
+            scopeKind: "project",
+            logicalKey: "STALE.md",
+            contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+            diagnosticCounts: { info: 0, warning: 0, error: 0 },
+          },
+        ],
+      }),
+      { type: "preview", preview },
+    );
+
+    expect(migrationSourceDriftRowsForState(state)).toEqual([
+      {
+        assetId: "asset-changed",
+        status: "changed",
+        expectedHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        currentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+      },
+      {
+        assetId: "asset-current",
+        status: "current",
+        expectedHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        currentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      },
+      {
+        assetId: "asset-missing",
+        status: "missing",
+        expectedHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        currentHash: null,
+      },
+    ]);
   });
 });

@@ -95,6 +95,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         planId: "deployment-plan-1",
         planHash: hash,
         compatibility: "full",
+        requiredConfirmations: [],
         changes: [
           {
             operation: "create",
@@ -193,9 +194,19 @@ describe("CLI program", () => {
       ["effective", "resolve", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
       ["diagnose", "--severity", "warning"],
       ["migrate", "--dry-run", "--source", "asset-1", "--target", "cursor", "--scope", "scope-1"],
-      ["deploy", "deployment-plan-1"],
+      ["deploy", "deployment-plan-1", "--plan-hash", hash, "--confirm", "overwrite"],
       ["rollback", "deployment-1"],
-      ["history"],
+      [
+        "history",
+        "--kind",
+        "deployment",
+        "--status",
+        "succeeded",
+        "--from",
+        "2026-06-24T00:00:00.000Z",
+        "--to",
+        "2026-06-25T00:00:00.000Z",
+      ],
     ]) {
       const result = await runCli(
         createCliProgram({
@@ -218,6 +229,22 @@ describe("CLI program", () => {
       "deployment.rollback",
       "history.list",
     ]);
+    expect(calls).toContain(
+      `deployment.execute:${JSON.stringify({
+        planId: "deployment-plan-1",
+        confirmedPlanHash: hash,
+        confirmations: ["overwrite"],
+      })}`,
+    );
+    const historyCall = calls.find((call) => call.startsWith("history.list:"));
+    if (historyCall === undefined) throw new Error("Expected history.list call");
+    expect(JSON.parse(historyCall.slice("history.list:".length))).toEqual({
+      kinds: ["deployment"],
+      statuses: ["succeeded"],
+      from: "2026-06-24T00:00:00.000Z",
+      to: "2026-06-25T00:00:00.000Z",
+      limit: 50,
+    });
   });
 
   it("returns a failed JSON envelope and non-zero exit code for invalid command payloads", async () => {

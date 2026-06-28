@@ -31,7 +31,9 @@ import {
 } from "@ai-config-hub/shared";
 
 const MAX_DIFF_BYTES = 200 * 1024;
+const PLAN_TTL_MS = 10 * 60 * 1_000;
 const DIFF_TRUNCATION_MARKER = "# AI Config Hub: diff truncated at a complete UTF-8 line boundary";
+export type PreviewConflictPolicy = "fail" | "replace" | "merge";
 
 export interface PreviewRequest {
   readonly assets: readonly Asset[];
@@ -39,6 +41,7 @@ export interface PreviewRequest {
   readonly targetRoot: AbsolutePath;
   readonly backupRoot: AbsolutePath;
   readonly allowedRoots: readonly AbsolutePath[];
+  readonly conflictPolicy?: PreviewConflictPolicy;
   readonly now: IsoDateTime;
   readonly correlationId: CorrelationId;
   readonly signal: AbortSignal;
@@ -204,6 +207,10 @@ export class DeploymentPreviewService {
     if (request.assets.some(({ resource }) => hasRedactedValue(resource))) {
       throw error("UNSUPPORTED_CONVERSION", "Redacted MCP values are not deployable");
     }
+    const conflictPolicy = request.conflictPolicy ?? "replace";
+    if (conflictPolicy === "merge") {
+      throw error("UNSUPPORTED_CONVERSION", "Merge conflict policy is not supported yet");
+    }
 
     const canonicalRoot = await this.options.pathPolicy.canonicalize({
       path: request.targetRoot,
@@ -307,6 +314,9 @@ export class DeploymentPreviewService {
           unifiedText: unifiedDiff(output.targetPath, undefined, output.text),
         });
       } else {
+        if (conflictPolicy === "fail") {
+          throw error("TARGET_CONFLICT", `Target already exists: ${output.targetPath}`);
+        }
         operations.push({
           kind: "replace",
           targetPath: output.targetPath,
@@ -351,6 +361,7 @@ export class DeploymentPreviewService {
       adapterId: adapter.adapterId,
       adapterVersion: adapter.adapterVersion,
       createdAt: request.now,
+      expiresAt: new Date(Date.parse(request.now) + PLAN_TTL_MS).toISOString(),
     };
     const planHash = hash("ai-config-hub:deployment-plan:v1", stableJson(planPayload));
     const deploymentPlanId = DeploymentPlanIdSchema.parse(
