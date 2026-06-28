@@ -3,6 +3,12 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "ai-config-hub": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -16,6 +22,7 @@
     "@ai-config-hub/git": "workspace:*",
     "@ai-config-hub/scanner": "workspace:*",
     "@ai-config-hub/shared": "workspace:*",
-    "@ai-config-hub/storage": "workspace:*"
+    "@ai-config-hub/storage": "workspace:*",
+    "commander": "14.0.3"
   }
 }

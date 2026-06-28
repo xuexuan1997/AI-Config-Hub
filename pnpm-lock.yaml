@@ -83,6 +83,9 @@ importers:
       '@ai-config-hub/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      commander:
+        specifier: 14.0.3
+        version: 14.0.3
 
   apps/desktop:
     dependencies:
