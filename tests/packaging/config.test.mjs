@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
-describe("desktop AppImage packaging config", () => {
-  it("pins deterministic Linux x86_64 AppImage settings", async () => {
+describe("desktop installer packaging config", () => {
+  it("pins deterministic Linux, Windows, and macOS installer settings", async () => {
     const config = await readFile("apps/desktop/electron-builder.yml", "utf8");
     const manifest = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
 
@@ -14,10 +14,18 @@ describe("desktop AppImage packaging config", () => {
     assert.match(config, /^asar: true$/m);
     assert.match(config, /^npmRebuild: false$/m);
     assert.match(config, /^buildDependenciesFromSource: false$/m);
-    assert.match(config, /target: AppImage/);
-    assert.match(config, /arch:\n\s+- x64/);
+    assert.match(config, /directories:\n\s+output: \.\.\/\.\.\/release\/linux-x64/);
+    assert.match(config, /linux:[\s\S]*target: AppImage/);
+    assert.match(config, /linux:[\s\S]*arch:\n\s+- x64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-x86_64\.\$\{ext\}/);
     assert.match(config, /category: Development/);
+    assert.match(config, /win:[\s\S]*target: nsis/);
+    assert.match(config, /win:[\s\S]*arch:\n\s+- x64/);
+    assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-windows-x64\.\$\{ext\}/);
+    assert.match(config, /nsis:[\s\S]*allowToChangeInstallationDirectory: true/);
+    assert.match(config, /mac:[\s\S]*target: dmg/);
+    assert.match(config, /mac:[\s\S]*arch:\n\s+- x64\n\s+- arm64/);
+    assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-macos-\$\{arch\}\.\$\{ext\}/);
     assert.match(config, /dist\/main\/\*\*\/\*/);
     assert.match(config, /dist\/renderer\/\*\*\/\*/);
     assert.match(config, /!\*\*\/\*\.test\.\*/);

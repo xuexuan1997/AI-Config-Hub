@@ -13,7 +13,11 @@
     "test": "vitest run --root ../.. apps/desktop/src",
     "test:e2e": "playwright test --config ../../playwright.config.ts --project desktop",
     "package": "pnpm run build",
-    "package:linux": "pnpm run build && electron-builder --linux AppImage --x64"
+    "package:linux": "pnpm run package:linux:x64",
+    "package:linux:x64": "pnpm run build && electron-builder --linux AppImage --x64 --config.directories.output=../../release/linux-x64",
+    "package:windows:x64": "pnpm run build && electron-builder --win nsis --x64 --config.directories.output=../../release/windows-x64",
+    "package:macos:x64": "pnpm run build && electron-builder --mac dmg --x64 --config.directories.output=../../release/macos-x64",
+    "package:macos:arm64": "pnpm run build && electron-builder --mac dmg --arm64 --config.directories.output=../../release/macos-arm64"
   },
   "dependencies": {
     "@ai-config-hub/adapters": "workspace:*",

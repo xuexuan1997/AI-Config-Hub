@@ -13,8 +13,17 @@ describe("workspace contract", () => {
       "typecheck",
       "lint",
       "test",
+      "test:contracts",
       "test:integration",
       "test:e2e",
+      "package:linux",
+      "package:linux:x64",
+      "package:windows:x64",
+      "package:macos:x64",
+      "package:macos:arm64",
+      "release:sbom",
+      "release:evidence",
+      "release:verify",
       "package",
     ]) {
       assert.ok(script in manifest.scripts, `missing script: ${script}`);
@@ -63,6 +72,10 @@ describe("workspace contract", () => {
       "test",
       "test:e2e",
       "package:linux",
+      "package:linux:x64",
+      "package:windows:x64",
+      "package:macos:x64",
+      "package:macos:arm64",
     ]) {
       assert.ok(script in manifest.scripts, `missing desktop script: ${script}`);
     }
@@ -93,13 +106,19 @@ describe("workspace contract", () => {
     assert.match(workflow, /^\s+publish:\s*$/m);
     assert.match(workflow, /^\s+needs:\s*package$/m);
     assert.match(workflow, /^\s+contents:\s*write$/m);
-    assert.match(workflow, /pnpm release:verify/);
+    assert.match(
+      workflow,
+      /pnpm release:verify release\/linux-x64 release\/windows-x64 release\/macos-x64 release\/macos-arm64/,
+    );
     assert.match(workflow, /gh release create "\$GITHUB_REF_NAME"/);
     assert.match(workflow, /AI-Config-Hub-\*-x86_64\.AppImage/);
-    assert.match(workflow, /SHA256SUMS/);
-    assert.match(workflow, /version-manifest\.json/);
-    assert.match(workflow, /sbom\.cdx\.json/);
-    assert.match(workflow, /elf-compatibility\.json/);
+    assert.match(workflow, /AI-Config-Hub-\*-windows-x64\.exe/);
+    assert.match(workflow, /AI-Config-Hub-\*-macos-x64\.dmg/);
+    assert.match(workflow, /AI-Config-Hub-\*-macos-arm64\.dmg/);
+    assert.match(workflow, /release\/linux-x64\/elf-compatibility\.json/);
+    assert.match(workflow, /release\/windows-x64\/version-manifest\.json/);
+    assert.match(workflow, /release\/macos-x64\/version-manifest\.json/);
+    assert.match(workflow, /release\/macos-arm64\/version-manifest\.json/);
     assert.match(workflow, /--repo "\$GITHUB_REPOSITORY"/);
     assert.match(workflow, /--verify-tag/);
   });
@@ -115,7 +134,12 @@ describe("workspace contract", () => {
     assert.match(workflow, /uses: actions\/setup-node@v4/);
     assert.match(workflow, /node-version-file: \.node-version/);
     assert.doesNotMatch(workflow, /dnf install .*nodejs npm/);
-    assert.match(workflow, /pnpm package:linux/);
+    assert.match(workflow, /pnpm package:linux:x64/);
+    assert.match(workflow, /windows-latest/);
+    assert.match(workflow, /macos-latest/);
+    assert.match(workflow, /package:windows:x64/);
+    assert.match(workflow, /package:macos:x64/);
+    assert.match(workflow, /package:macos:arm64/);
     assert.match(auditScript, /JSON\.stringify/);
     assert.doesNotMatch(auditScript, /%q/);
   });

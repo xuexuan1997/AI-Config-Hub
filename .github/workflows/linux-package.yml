@@ -1,4 +1,4 @@
-name: Linux AppImage
+name: Desktop Packages
 
 on:
   push:
@@ -32,14 +32,60 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm package:linux
-      - run: pnpm release:sbom
+      - run: pnpm package:linux:x64
+      - run: pnpm release:sbom release/linux-x64/sbom.cdx.json
       - run: scripts/release/audit-linux-elf.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage release/linux-x64/elf-compatibility.json
       - run: scripts/release/smoke-appimage.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage
-      - run: pnpm release:evidence
-      - run: pnpm release:verify
+      - run: pnpm release:evidence release/linux-x64 linux x64
+      - run: pnpm release:verify release/linux-x64
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64-release-candidate
           path: release/linux-x64
+          if-no-files-found: error
+
+  native-installers:
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-x64
+            package_script: package:windows:x64
+            platform: windows
+            arch: x64
+            release_dir: release/windows-x64
+          - os: macos-latest
+            artifact: macos-x64
+            package_script: package:macos:x64
+            platform: macos
+            arch: x64
+            release_dir: release/macos-x64
+          - os: macos-latest
+            artifact: macos-arm64
+            package_script: package:macos:arm64
+            platform: macos
+            arch: arm64
+            release_dir: release/macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: node --version && pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @ai-config-hub/desktop test
+      - run: pnpm ${{ matrix.package_script }}
+      - run: pnpm release:sbom ${{ matrix.release_dir }}/sbom.cdx.json
+      - run: pnpm release:evidence ${{ matrix.release_dir }} ${{ matrix.platform }} ${{ matrix.arch }}
+      - run: pnpm release:verify ${{ matrix.release_dir }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-release-candidate
+          path: ${{ matrix.release_dir }}
           if-no-files-found: error
