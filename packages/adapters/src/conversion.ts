@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   ConversionResultSchema,
+  type ConvertedOutput,
   ConvertedOutputSchema,
   type ConversionContext,
   type ConversionResult,
@@ -11,6 +12,7 @@ import {
 import {
   ContentHashSchema,
   ConversionResultIdSchema,
+  type JsonPointer,
   type AdapterId,
   type SemVer,
   type ToolId,
@@ -23,6 +25,31 @@ export const conversionCapabilities = (["rule", "agent", "skill", "mcp"] as cons
     targets: ["claude-code", "cursor", "codex", "opencode"] as const,
   }),
 );
+
+type RuleResource = Extract<NormalizedResource, { kind: "rule" }>;
+type AgentResource = Extract<NormalizedResource, { kind: "agent" }>;
+type SkillResource = Extract<NormalizedResource, { kind: "skill" }>;
+type McpResource = Extract<NormalizedResource, { kind: "mcp" }>;
+type RemoteMcpTransport = Extract<McpResource["data"]["transport"], { kind: "http" | "sse" }>;
+
+const agentDirectories = {
+  "claude-code": ".claude/agents",
+  cursor: ".cursor/agents",
+  opencode: ".opencode/agents",
+} as const satisfies Record<Exclude<ToolId, "codex">, string>;
+
+const skillDirectories = {
+  "claude-code": ".claude/skills",
+  cursor: ".cursor/skills",
+  codex: ".agents/skills",
+  opencode: ".opencode/skills",
+} as const satisfies Record<ToolId, string>;
+
+const jsonMcpPaths = {
+  "claude-code": ".mcp.json",
+  cursor: ".cursor/mcp.json",
+  opencode: "opencode.json",
+} as const satisfies Record<Exclude<ToolId, "codex">, string>;
 
 function hash(text: string) {
   return ContentHashSchema.parse(
@@ -54,7 +81,7 @@ function value(item: SecretAwareString): string {
   return item.kind === "literal" ? item.value : item.expression;
 }
 
-function hasRedacted(resource: NormalizedResource): boolean {
+function hasNonDeployableSecret(resource: NormalizedResource): boolean {
   if (resource.kind !== "mcp") return false;
   const transport = resource.data.transport;
   if (transport.kind === "stdio") {
@@ -75,78 +102,78 @@ function hasRedacted(resource: NormalizedResource): boolean {
   );
 }
 
-function renderMarkdownResource(target: ToolId, resource: NormalizedResource) {
-  if (resource.kind === "rule") {
-    if (target === "cursor") {
-      return output(
-        `.cursor/rules/${slug(resource.data.name ?? "rule")}.mdc`,
-        "text/markdown",
-        frontmatter(
-          {
-            description: resource.data.name ?? "AI Config Hub rule",
-            ...(resource.data.globs.length === 0 ? {} : { globs: resource.data.globs }),
-          },
-          resource.data.instructions,
-        ),
-      );
-    }
-    return output(
-      target === "claude-code" ? "CLAUDE.md" : "AGENTS.md",
-      "text/markdown",
-      `${resource.data.instructions.trim()}\n`,
-    );
+function renderResource(target: ToolId, resource: NormalizedResource): ConvertedOutput {
+  switch (resource.kind) {
+    case "rule":
+      return renderRule(target, resource);
+    case "agent":
+      return renderAgent(target, resource);
+    case "skill":
+      return renderSkill(target, resource);
+    case "mcp":
+      return renderMcp(target, resource);
   }
-  if (resource.kind === "agent") {
-    if (target === "codex") return renderCodexAgent(resource);
-    const directory =
-      target === "claude-code"
-        ? ".claude/agents"
-        : target === "cursor"
-          ? ".cursor/agents"
-          : ".opencode/agents";
+}
+
+function renderRule(target: ToolId, resource: RuleResource): ConvertedOutput {
+  if (target === "cursor") {
     return output(
-      `${directory}/${slug(resource.data.name)}.md`,
+      `.cursor/rules/${slug(resource.data.name ?? "rule")}.mdc`,
       "text/markdown",
       frontmatter(
         {
-          name: resource.data.name,
-          ...(resource.data.model === undefined ? {} : { model: resource.data.model }),
-          ...(resource.data.allowedTools.length === 0 ? {} : { tools: resource.data.allowedTools }),
+          description: resource.data.name ?? "AI Config Hub rule",
+          ...(resource.data.globs.length === 0 ? {} : { globs: resource.data.globs }),
         },
         resource.data.instructions,
       ),
     );
   }
-  if (resource.kind === "skill") {
-    const directory =
-      target === "claude-code"
-        ? ".claude/skills"
-        : target === "cursor"
-          ? ".cursor/skills"
-          : target === "codex"
-            ? ".agents/skills"
-            : ".opencode/skills";
-    return output(
-      `${directory}/${slug(resource.data.name)}/SKILL.md`,
-      "text/markdown",
-      frontmatter(
-        {
-          name: resource.data.name,
-          ...(resource.data.description === undefined
-            ? {}
-            : { description: resource.data.description }),
-          ...(resource.data.references.length === 0
-            ? {}
-            : { references: resource.data.references }),
-        },
-        resource.data.instructions,
-      ),
-    );
-  }
+  return output(
+    target === "claude-code" ? "CLAUDE.md" : "AGENTS.md",
+    "text/markdown",
+    `${resource.data.instructions.trim()}\n`,
+  );
+}
+
+function renderAgent(target: ToolId, resource: AgentResource): ConvertedOutput {
+  if (target === "codex") return renderCodexAgent(resource);
+  return output(
+    `${agentDirectories[target]}/${slug(resource.data.name)}.md`,
+    "text/markdown",
+    frontmatter(
+      {
+        name: resource.data.name,
+        ...(resource.data.model === undefined ? {} : { model: resource.data.model }),
+        ...(resource.data.allowedTools.length === 0 ? {} : { tools: resource.data.allowedTools }),
+      },
+      resource.data.instructions,
+    ),
+  );
+}
+
+function renderSkill(target: ToolId, resource: SkillResource): ConvertedOutput {
+  return output(
+    `${skillDirectories[target]}/${slug(resource.data.name)}/SKILL.md`,
+    "text/markdown",
+    frontmatter(
+      {
+        name: resource.data.name,
+        ...(resource.data.description === undefined
+          ? {}
+          : { description: resource.data.description }),
+        ...(resource.data.references.length === 0 ? {} : { references: resource.data.references }),
+      },
+      resource.data.instructions,
+    ),
+  );
+}
+
+function renderMcp(target: ToolId, resource: McpResource): ConvertedOutput {
   return target === "codex" ? renderCodexMcp(resource) : renderJsonMcp(target, resource);
 }
 
-function renderCodexAgent(resource: Extract<NormalizedResource, { kind: "agent" }>) {
+function renderCodexAgent(resource: AgentResource): ConvertedOutput {
   const lines = [
     `name = ${JSON.stringify(resource.data.name)}`,
     `description = ${JSON.stringify(resource.data.name)}`,
@@ -161,7 +188,7 @@ function renderCodexAgent(resource: Extract<NormalizedResource, { kind: "agent" 
   );
 }
 
-function jsonMcpConfig(resource: Extract<NormalizedResource, { kind: "mcp" }>, target: ToolId) {
+function jsonMcpConfig(resource: McpResource, target: ToolId) {
   const transport = resource.data.transport;
   if (transport.kind === "stdio") {
     if (target === "opencode") {
@@ -190,12 +217,7 @@ function jsonMcpConfig(resource: Extract<NormalizedResource, { kind: "mcp" }>, t
   };
 }
 
-function remoteUrl(
-  transport: Extract<
-    Extract<NormalizedResource, { kind: "mcp" }>["data"]["transport"],
-    { kind: "http" | "sse" }
-  >,
-) {
+function remoteUrl(transport: RemoteMcpTransport) {
   const base = value(transport.endpoint.baseUrl);
   const url = new URL(base);
   for (const [key, items] of Object.entries(transport.endpoint.query)) {
@@ -209,21 +231,15 @@ function remoteUrl(
   return url.toString();
 }
 
-function renderJsonMcp(target: ToolId, resource: Extract<NormalizedResource, { kind: "mcp" }>) {
+function renderJsonMcp(target: Exclude<ToolId, "codex">, resource: McpResource): ConvertedOutput {
   const document =
     target === "opencode"
       ? { mcp: { [resource.data.name]: jsonMcpConfig(resource, target) } }
       : { mcpServers: { [resource.data.name]: jsonMcpConfig(resource, target) } };
-  const path =
-    target === "claude-code"
-      ? ".mcp.json"
-      : target === "cursor"
-        ? ".cursor/mcp.json"
-        : "opencode.json";
-  return output(path, "application/json", `${JSON.stringify(document, null, 2)}\n`);
+  return output(jsonMcpPaths[target], "application/json", `${JSON.stringify(document, null, 2)}\n`);
 }
 
-function renderCodexMcp(resource: Extract<NormalizedResource, { kind: "mcp" }>) {
+function renderCodexMcp(resource: McpResource): ConvertedOutput {
   const transport = resource.data.transport;
   const section = `mcp_servers.${JSON.stringify(resource.data.name)}`;
   const lines = [`[${section}]`];
@@ -257,6 +273,51 @@ function renderCodexMcp(resource: Extract<NormalizedResource, { kind: "mcp" }>) 
     }
   }
   return output(".codex/config.toml", "application/toml", `${lines.join("\n")}\n`);
+}
+
+function droppedFields(target: ToolId, resource: NormalizedResource): JsonPointer[] {
+  const fields: JsonPointer[] = [];
+  if (Object.keys(resource.data.extensions).length > 0) fields.push("/data/extensions");
+
+  if (resource.kind === "rule" && target !== "cursor" && resource.data.globs.length > 0) {
+    fields.push("/data/globs");
+  }
+  if (resource.kind === "agent" && target === "codex" && resource.data.allowedTools.length > 0) {
+    fields.push("/data/allowedTools");
+  }
+
+  return fields;
+}
+
+function retainedFields(target: ToolId, resource: NormalizedResource): JsonPointer[] {
+  switch (resource.kind) {
+    case "rule":
+      return target === "cursor" && resource.data.globs.length > 0
+        ? ["/data/instructions", "/data/globs"]
+        : ["/data/instructions"];
+    case "agent":
+      return [
+        "/data/name",
+        "/data/instructions",
+        ...(resource.data.model === undefined ? [] : ["/data/model"]),
+        ...(target === "codex" || resource.data.allowedTools.length === 0
+          ? []
+          : ["/data/allowedTools"]),
+      ];
+    case "skill":
+      return [
+        "/data/name",
+        "/data/instructions",
+        ...(resource.data.description === undefined ? [] : ["/data/description"]),
+        ...(resource.data.references.length === 0 ? [] : ["/data/references"]),
+      ];
+    case "mcp":
+      return ["/data/name", "/data/transport"];
+  }
+}
+
+function conversionWarning(fields: readonly JsonPointer[]): string {
+  return `Some source fields are not expressible in the target format: ${fields.join(", ")}`;
 }
 
 function conversionId(context: ConversionContext, adapterId: AdapterId, adapterVersion: SemVer) {
@@ -293,7 +354,7 @@ export function convertAsset(
       reasons: ["The requested target does not match this adapter or resource kind"],
     });
   }
-  if (hasRedacted(context.asset.resource)) {
+  if (hasNonDeployableSecret(context.asset.resource)) {
     return ConversionResultSchema.parse({
       ...base,
       level: "unsupported",
@@ -302,7 +363,7 @@ export function convertAsset(
   }
   let rendered;
   try {
-    rendered = renderMarkdownResource(targetToolId, context.asset.resource);
+    rendered = renderResource(targetToolId, context.asset.resource);
   } catch {
     return ConversionResultSchema.parse({
       ...base,
@@ -310,15 +371,7 @@ export function convertAsset(
       reasons: ["The normalized resource cannot be rendered safely for the target"],
     });
   }
-  const losses: string[] = [];
-  if (Object.keys(context.asset.resource.data.extensions).length > 0)
-    losses.push("/data/extensions");
-  if (
-    context.asset.resource.kind === "rule" &&
-    targetToolId !== "cursor" &&
-    context.asset.resource.data.globs.length > 0
-  )
-    losses.push("/data/globs");
+  const losses = droppedFields(targetToolId, context.asset.resource);
   return ConversionResultSchema.parse(
     losses.length === 0
       ? { ...base, level: "full", outputs: [rendered] }
@@ -326,10 +379,10 @@ export function convertAsset(
           ...base,
           level: "partial",
           outputs: [rendered],
-          retainedFields: ["/data/instructions"],
+          retainedFields: retainedFields(targetToolId, context.asset.resource),
           droppedFields: losses,
           transformedFields: [],
-          warnings: ["Some source fields are not expressible in the target format"],
+          warnings: [conversionWarning(losses)],
         },
   );
 }

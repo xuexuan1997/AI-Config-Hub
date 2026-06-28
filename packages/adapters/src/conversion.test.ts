@@ -99,8 +99,8 @@ describe("built-in conversion matrix", () => {
           },
           signal: neverCancelled,
         });
-        expect(result.level, `${registration.toolId}/${resource.kind}`).toBe("full");
-        if (result.level !== "full") continue;
+        expect(result.level, `${registration.toolId}/${resource.kind}`).not.toBe("unsupported");
+        if (result.level === "unsupported") continue;
         expect(result.outputs).toHaveLength(1);
         expect(ConvertedOutputSchema.safeParse(result.outputs[0]).success).toBe(true);
         expect(result.outputs[0]?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -125,6 +125,39 @@ describe("built-in conversion matrix", () => {
     expect(result).toMatchObject({
       level: "partial",
       droppedFields: ["/data/extensions"],
+      warnings: [expect.any(String)],
+    });
+  });
+
+  it("reports all retained fields when a partial conversion drops extensions", async () => {
+    const adapter = cursorRegistration.create({ logger: { debug() {}, warn() {} } });
+    const result = await adapter.convert({
+      asset: asset(resources[1], { vendorFlag: true }),
+      target: { toolId: "cursor", resourceKind: "agent", targetSchemaVersion: "1.0.0" },
+      signal: neverCancelled,
+    });
+
+    expect(result).toMatchObject({
+      level: "partial",
+      retainedFields: ["/data/name", "/data/instructions", "/data/model", "/data/allowedTools"],
+      droppedFields: ["/data/extensions"],
+      transformedFields: [],
+      warnings: [expect.any(String)],
+    });
+  });
+
+  it("reports Codex agent tool restrictions as partial because they are not expressible", async () => {
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const result = await adapter.convert({
+      asset: asset(resources[1]),
+      target: { toolId: "codex", resourceKind: "agent", targetSchemaVersion: "1.0.0" },
+      signal: neverCancelled,
+    });
+
+    expect(result).toMatchObject({
+      level: "partial",
+      retainedFields: ["/data/name", "/data/instructions", "/data/model"],
+      droppedFields: ["/data/allowedTools"],
       warnings: [expect.any(String)],
     });
   });
