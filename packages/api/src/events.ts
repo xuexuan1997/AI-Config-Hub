@@ -231,16 +231,16 @@ const phaseTransitions = {
   },
   deployment: {
     queued: ["preflight"],
-    preflight: ["backing_up"],
-    backing_up: ["writing"],
+    preflight: ["backing_up", "completed"],
+    backing_up: ["writing", "completed"],
     writing: ["verifying", "rolling_back"],
     verifying: ["completed", "rolling_back"],
     rolling_back: ["completed"],
   },
   rollback: {
     queued: ["preflight"],
-    preflight: ["restoring"],
-    restoring: ["verifying"],
+    preflight: ["restoring", "completed"],
+    restoring: ["verifying", "completed"],
     verifying: ["completed"],
   },
 } as const;

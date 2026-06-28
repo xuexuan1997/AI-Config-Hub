@@ -1,4 +1,4 @@
-import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/api";
+import type { CommandRequest, CommandResponse, TaskEvent, TaskPhase } from "@ai-config-hub/api";
 
 import type { DesktopApi } from "../preload/api.js";
 
@@ -40,6 +40,35 @@ export interface MigrationSourceDriftRow {
   readonly currentHash: CommandResponse<"migration.preview">["planHash"] | null;
 }
 
+export interface ActiveTaskState {
+  readonly taskId: string;
+  readonly taskKind: "scan" | "deployment" | "rollback";
+  readonly phase: TaskPhase;
+  readonly status:
+    | "running"
+    | "succeeded"
+    | "partially_succeeded"
+    | "cancelled"
+    | "failed"
+    | "rolled_back";
+  readonly progress?: {
+    readonly phase: string;
+    readonly completed: number;
+    readonly total: number | null;
+    readonly unit: "files" | "operations" | "items";
+  };
+  readonly message?: string;
+  readonly recoveryLock: boolean;
+  readonly failure?: {
+    readonly itemRef: string;
+    readonly errorCode: string;
+    readonly retryable: boolean;
+  };
+}
+
+export type ActiveTaskUpdate = Partial<ActiveTaskState> &
+  Pick<ActiveTaskState, "taskId" | "taskKind">;
+
 export interface AppState {
   readonly route: Route;
   readonly projectRoot?: string;
@@ -53,6 +82,7 @@ export interface AppState {
   readonly deploymentConfirmed: boolean;
   readonly deploymentConfirmationGrants: readonly DeploymentConfirmation[];
   readonly history: CommandResponse<"history.list">["items"];
+  readonly activeTask?: ActiveTaskState;
   readonly message?: string;
 }
 
@@ -85,7 +115,8 @@ export type AppAction =
       readonly confirmation: DeploymentConfirmation;
       readonly granted: boolean;
     }
-  | { readonly type: "history"; readonly history: AppState["history"] };
+  | { readonly type: "history"; readonly history: AppState["history"] }
+  | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate };
 
 export const initialState: AppState = {
   route: "overview",
@@ -133,6 +164,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
           ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
+          ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           ...(state.message === undefined ? {} : { message: state.message }),
         });
       }
@@ -148,6 +180,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         history: state.history,
         projectRoot: action.root,
         ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
+        ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
       });
     case "message":
       return action.message === undefined
@@ -164,6 +197,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
             ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
             ...(state.preview === undefined ? {} : { preview: state.preview }),
+            ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           }
         : { ...state, message: action.message };
     case "scan":
@@ -227,6 +261,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "history":
       return { ...state, history: action.history };
+    case "taskEvent":
+      return { ...state, activeTask: mergeActiveTask(state.activeTask, action.action) };
   }
 }
 
@@ -397,6 +433,116 @@ export function scanActionForTaskEvent(event: TaskEvent): AppAction | undefined 
     status,
     message: `Task ${event.taskId} ${event.payload.status}: ${event.payload.succeededCount} succeeded, ${event.payload.failedCount} failed, ${event.payload.skippedCount} skipped.`,
   };
+}
+
+export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | undefined {
+  if (event.type === "cursor.reset") return undefined;
+  if (event.type === "snapshot") {
+    return {
+      taskId: event.taskId,
+      taskKind: event.payload.taskKind,
+      phase: event.payload.phase,
+      status: event.payload.status,
+      progress: event.payload.progress,
+      recoveryLock: event.payload.status === "failed",
+      message: `${event.payload.taskKind} ${event.payload.status}: restored from event snapshot.`,
+    };
+  }
+  const taskKind =
+    event.type === "accepted" ? event.payload.taskKind : taskKindForTaskId(event.taskId);
+  if (taskKind === undefined) return undefined;
+  if (event.type === "accepted") {
+    return {
+      taskId: event.taskId,
+      taskKind,
+      phase: "queued",
+      status: "running",
+      recoveryLock: false,
+      message: `Queued ${taskKind} ${event.taskId}`,
+    };
+  }
+  if (event.type === "phase.changed") {
+    return {
+      taskId: event.taskId,
+      taskKind,
+      phase: event.payload.to,
+      ...(event.payload.to === "completed" ? {} : { status: "running" }),
+    };
+  }
+  if (event.type === "progress") {
+    const total = event.payload.total;
+    const progress = {
+      phase: event.payload.phase,
+      completed: event.payload.completed,
+      total,
+      unit: event.payload.unit,
+    };
+    return {
+      taskId: event.taskId,
+      taskKind,
+      phase: event.payload.phase,
+      progress,
+      status: "running",
+      message: `${taskKind} ${event.payload.phase}: ${event.payload.completed}/${total ?? "?"} ${event.payload.unit}`,
+    };
+  }
+  if (event.type === "item.failed") {
+    return {
+      taskId: event.taskId,
+      taskKind,
+      failure: {
+        itemRef: event.payload.itemRef,
+        errorCode: event.payload.errorCode,
+        retryable: event.payload.retryable,
+      },
+      message: `${taskKind} failed: ${event.payload.errorCode}`,
+    };
+  }
+  if (event.type === "completed") {
+    return {
+      taskId: event.taskId,
+      taskKind,
+      phase: "completed",
+      status: event.payload.status,
+      recoveryLock: event.payload.systemRecoveryLock,
+      message: `${taskKind} ${event.payload.status}: ${event.payload.succeededCount} succeeded, ${event.payload.failedCount} failed, ${event.payload.skippedCount} skipped.`,
+    };
+  }
+  return undefined;
+}
+
+function mergeActiveTask(
+  current: ActiveTaskState | undefined,
+  update: ActiveTaskUpdate,
+): ActiveTaskState {
+  const base: ActiveTaskState =
+    current?.taskId === update.taskId
+      ? current
+      : {
+          taskId: update.taskId,
+          taskKind: update.taskKind,
+          phase: "queued",
+          status: "running",
+          recoveryLock: false,
+        };
+  const merged = { ...base, ...update };
+  return {
+    taskId: merged.taskId,
+    taskKind: merged.taskKind,
+    phase: merged.phase ?? base.phase,
+    status: merged.status ?? base.status,
+    recoveryLock: merged.recoveryLock ?? base.recoveryLock,
+    ...(merged.progress === undefined ? {} : { progress: merged.progress }),
+    ...(merged.message === undefined ? {} : { message: merged.message }),
+    ...(merged.failure === undefined ? {} : { failure: merged.failure }),
+  };
+}
+
+function taskKindForTaskId(taskId: string): ActiveTaskState["taskKind"] | undefined {
+  if (taskId.startsWith("task:scan:") || taskId === "task-scan") return "scan";
+  if (taskId.startsWith("task:deployment:")) return "deployment";
+  if (taskId.startsWith("task:rollback:")) return "rollback";
+  return undefined;
 }
 
 export function formatUiError(error: unknown, action: string): string {

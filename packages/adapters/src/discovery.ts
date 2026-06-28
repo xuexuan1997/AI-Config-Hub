@@ -5,6 +5,7 @@ import {
   AbsolutePathSchema,
   type AbsolutePath,
   type ResourceKind,
+  type ScopeKind,
   type ToolId,
 } from "@ai-config-hub/shared";
 
@@ -15,6 +16,10 @@ export async function walkFiles(
   root: AbsolutePath,
   signal: CancellationSignal,
 ): Promise<readonly AbsolutePath[]> {
+  const rootStat = await read.stat(root);
+  if (rootStat.kind === "file") return [root];
+  if (rootStat.kind === "missing") return [];
+
   const files: AbsolutePath[] = [];
   const queue: AbsolutePath[] = [root];
   let visited = 0;
@@ -37,7 +42,17 @@ export async function walkFiles(
 export function scopeFor(
   root: AbsolutePath,
   scopeRoot: AbsolutePath = root,
+  scopeKind?: ScopeKind,
 ): DiscoveredResource["scope"] {
+  if (scopeKind === "user") {
+    return {
+      kind: "user",
+      canonicalRootPath: root,
+      depth: 0,
+      precedence: 0,
+    };
+  }
+
   const pathFromRoot = relative(root, scopeRoot);
   const depth = pathFromRoot === "" ? 0 : pathFromRoot.split(sep).length;
   return {
@@ -57,16 +72,23 @@ export function candidate(input: {
   readonly sourceFormat: string;
   readonly resourceKind: ResourceKind;
   readonly scopeRoot?: AbsolutePath;
+  readonly scopeKind?: ScopeKind | undefined;
 }): DiscoveredResource {
   return {
     toolId: input.toolId,
     sourcePath: input.sourcePath,
     sourceFormat: input.sourceFormat,
     resourceKindHint: input.resourceKind,
-    scope: scopeFor(input.root, input.scopeRoot),
+    scope: scopeFor(input.root, input.scopeRoot, input.scopeKind),
   };
 }
 
 export function markerPath(root: AbsolutePath, ...segments: string[]): AbsolutePath {
   return AbsolutePathSchema.parse(join(root, ...segments));
+}
+
+export function scopeKindFromEvidence(
+  evidence: Readonly<Record<string, unknown>>,
+): ScopeKind | undefined {
+  return evidence["scope"] === "user" ? "user" : undefined;
 }

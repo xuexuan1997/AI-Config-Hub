@@ -217,18 +217,25 @@ describe("DeploymentRollbackService", () => {
     const rollbackPlan = await service.preview(ORIGINAL_RECORD_ID);
 
     expect(rollbackPlan.operations).toEqual([
-      { kind: "delete", targetPath: "/target/created.md", expectedTargetHash: hash("created") },
+      {
+        kind: "delete",
+        targetPath: "/target/created.md",
+        expectedTargetHash: hash("created"),
+        deploymentType: "generated_file",
+      },
       {
         kind: "replace",
         targetPath: "/target/replaced.md",
         nextText: "old",
         expectedTargetHash: hash("new"),
+        deploymentType: "generated_file",
       },
       {
         kind: "create",
         targetPath: "/target/deleted.md",
         nextText: "deleted",
         expectedTargetHash: "absent",
+        deploymentType: "generated_file",
       },
     ]);
     expect(rollbackPlan.planHash).toMatch(/^sha256:/);

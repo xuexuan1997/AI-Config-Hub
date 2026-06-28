@@ -191,6 +191,7 @@ function deploymentRecord(): DeploymentRecord {
         targetPath: "/Users/xuexuan/project/.cursor/rules/project.mdc",
         nextText: "Use strict TypeScript",
         expectedTargetHash: hashB,
+        deploymentType: "generated_file",
       },
     ],
     backupLocations: {

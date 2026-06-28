@@ -22,7 +22,7 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, walkFiles } from "./discovery.js";
+import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
 import {
   parseMarkdownAsset,
   rejectedParse,
@@ -165,6 +165,24 @@ class OpenCodeAdapter extends BaseToolAdapter {
   async detect(context: DetectionContext): Promise<DetectionResult> {
     const installations = [];
     for (const root of [...context.candidateRoots].sort()) {
+      if (root === context.homeDirectory) {
+        const userRoots = await existingUserRoots(context, [
+          markerPath(root, ".opencode"),
+          markerPath(root, "opencode.json"),
+          markerPath(root, "opencode.jsonc"),
+          markerPath(root, "AGENTS.md"),
+          markerPath(root, "CLAUDE.md"),
+        ]);
+        if (userRoots.length > 0) {
+          installations.push({
+            toolId: this.toolId,
+            installationId: ToolInstallationIdSchema.parse(`opencode:user:${root}`),
+            configRoots: userRoots,
+            evidence: { scope: "user", markers: userRoots.map(String) },
+          });
+        }
+        continue;
+      }
       const markers = [
         markerPath(root, "opencode.json"),
         markerPath(root, "opencode.jsonc"),
@@ -189,6 +207,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
 
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
+    const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
       const files = await walkFiles(context.read, root, context.signal);
       const fileSet = new Set(files);
@@ -203,6 +222,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
               sourceFormat: "markdown",
               resourceKind: "rule",
               scopeRoot: dirname(sourcePath),
+              scopeKind,
             }),
           );
         } else if (
@@ -216,6 +236,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "agent",
+              scopeKind,
             }),
           );
         } else if (
@@ -231,6 +252,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "skill",
+              scopeKind,
             }),
           );
         } else if (leaf === "opencode.json" || leaf === "opencode.jsonc") {
@@ -243,6 +265,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
                 sourcePath,
                 sourceFormat: "jsonc",
                 resourceKind: "agent",
+                scopeKind,
               }),
             );
           if (document["mcp"] !== undefined)
@@ -253,6 +276,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
                 sourcePath,
                 sourceFormat: "jsonc",
                 resourceKind: "mcp",
+                scopeKind,
               }),
             );
           for (const instruction of stringList(document["instructions"])) {
@@ -267,6 +291,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
                   sourceFormat: "markdown",
                   resourceKind: "rule",
                   scopeRoot: dirname(instructionPath.data),
+                  scopeKind,
                 }),
               );
             }
@@ -299,6 +324,19 @@ class OpenCodeAdapter extends BaseToolAdapter {
             );
     return Promise.resolve(result);
   }
+}
+
+async function existingUserRoots(
+  context: DetectionContext,
+  roots: readonly ReturnType<typeof markerPath>[],
+) {
+  const existing = await Promise.all(
+    roots.map(async (root) => ({
+      root,
+      stat: await context.read.stat(root),
+    })),
+  );
+  return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
 export const opencodeRegistration: AdapterRegistration = {

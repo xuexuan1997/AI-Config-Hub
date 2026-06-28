@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -8,10 +8,12 @@ import { createDefaultAdapterRegistry } from "@ai-config-hub/adapters";
 import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
 import type {
   AdapterRegistration,
+  Asset,
   DeploymentPlan,
   DeploymentRecord,
   Diagnostic,
   EffectiveConfig,
+  GitCommitSummary,
   Page,
   PublicSettings,
 } from "@ai-config-hub/core";
@@ -27,6 +29,7 @@ import {
   createNodeFileAccess,
   ScanService,
 } from "@ai-config-hub/scanner";
+import { LocalHistoryService, SystemLocalGitPort } from "@ai-config-hub/git";
 import {
   AbsolutePathSchema,
   AppError,
@@ -42,10 +45,12 @@ import {
   ResourceKindSchema,
   ScanRunIdSchema,
   SemVerSchema,
+  ScopeKindSchema,
   TaskIdSchema,
   ToolIdSchema,
   type AbsolutePath,
   type ContentHash,
+  type ScopeKind,
 } from "@ai-config-hub/shared";
 import { createStorageRepositories, openDatabase } from "@ai-config-hub/storage";
 import type { ApiCommandName, CommandServiceMap } from "@ai-config-hub/api";
@@ -55,6 +60,7 @@ const APP_VERSION = "0.2.0";
 export interface CliServiceOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly homeDirectory?: string;
   readonly now?: () => string;
 }
 
@@ -62,9 +68,24 @@ interface CliRuntime {
   readonly repositories: ReturnType<typeof createStorageRepositories>;
   readonly databaseRecovery: boolean;
   readonly backupRoot: AbsolutePath;
+  readonly historyRoot: AbsolutePath;
+  readonly history: LocalHistoryService;
   readonly now: () => string;
   close(): void;
 }
+
+type SnapshotMetadata =
+  | {
+      readonly status: "recorded";
+      readonly commitId: string;
+      readonly authoredAt: string;
+      readonly message: string;
+    }
+  | { readonly status: "missing" }
+  | {
+      readonly status: "failed" | "unavailable";
+      readonly error: { readonly code: string; readonly message: string };
+    };
 
 export async function createCliCommandServices(
   options: CliServiceOptions = {},
@@ -79,7 +100,9 @@ export async function createCliCommandServices(
 async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
   const env = options.env ?? process.env;
   const userData = dataRoot(env);
-  await mkdir(userData, { recursive: true, mode: 0o700 });
+  await ensurePrivateDirectory(userData);
+  const backupRoot = await ensurePrivateDirectory(join(userData, "backups", "deployments"));
+  const historyRoot = await ensurePrivateDirectory(join(userData, "history", "local-git"));
   const opened = await openDatabase({
     path: join(userData, "ai-config-hub.sqlite"),
     appVersion: APP_VERSION,
@@ -88,7 +111,12 @@ async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
   return {
     repositories,
     databaseRecovery: opened.mode === "read_only_recovery",
-    backupRoot: AbsolutePathSchema.parse(join(userData, "backups", "deployments")),
+    backupRoot,
+    historyRoot,
+    history: new LocalHistoryService({
+      git: new SystemLocalGitPort(),
+      now: () => IsoDateTimeSchema.parse(options.now?.() ?? new Date().toISOString()),
+    }),
     now: options.now ?? (() => new Date().toISOString()),
     close() {
       repositories.database.close();
@@ -98,6 +126,7 @@ async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
 
 function createServices(runtime: CliRuntime, options: CliServiceOptions): CommandServiceMap {
   const cwd = AbsolutePathSchema.parse(resolve(options.cwd ?? process.cwd()));
+  const homeDirectory = AbsolutePathSchema.parse(resolve(options.homeDirectory ?? homedir()));
   const registry = createDefaultAdapterRegistry();
 
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
@@ -106,8 +135,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
         readonly roots?: readonly string[];
         readonly toolKeys?: readonly string[];
       };
-      const roots = (request.roots?.length ?? 0) > 0 ? (request.roots ?? []) : [cwd];
-      const allowedRoots = roots.map((root) => AbsolutePathSchema.parse(resolve(root)));
+      const allowedRoots = scanRoots(request.roots, cwd, homeDirectory);
       const taskId = TaskIdSchema.parse(`task:scan:${randomUUID()}`);
       const scanRunId = ScanRunIdSchema.parse(`scan:${randomUUID()}`);
       const acceptedAt = now(runtime);
@@ -125,7 +153,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
       const summary = await scanner.scan({
         scanRunId,
         candidateRoots: allowedRoots,
-        homeDirectory: AbsolutePathSchema.parse(homedir()),
+        homeDirectory,
         platform: scannerPlatform(),
         signal: cancellation.signal,
         onPhase: (phase) => {
@@ -207,12 +235,13 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
         limit: request.limit ?? 50,
       });
+      const scopeKinds = scopeKindsForAssets(runtime, page.items);
       return {
         items: page.items.map((asset) => ({
           id: asset.assetId,
           toolKey: asset.toolId,
           resourceType: asset.resource.kind,
-          scopeKind: "project" as const,
+          scopeKind: scopeKinds.get(asset.scopeId) ?? "project",
           logicalKey: asset.locator,
           contentHash: asset.contentHash,
           diagnosticCounts: asset.diagnosticSummary,
@@ -403,16 +432,19 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           ],
         });
       }
+      const snapshot = await recordDeploymentSnapshot(runtime, record, plan);
       return {
         taskId: TaskIdSchema.parse(`task:deployment:${record.deploymentRecordId}`),
         status: "queued",
         acceptedAt: record.createdAt,
         deploymentId: record.deploymentRecordId,
+        snapshot,
       };
     },
     "deployment.rollback": async (payload) => {
       const request = payload as { readonly deploymentId: string };
       const originalId = DeploymentRecordIdSchema.parse(request.deploymentId);
+      const original = deploymentRecordById(runtime, originalId);
       const roots = rollbackRoots(runtime, originalId);
       const access = await createNodeFileAccess({
         allowedRoots: [...roots, runtime.backupRoot],
@@ -441,11 +473,17 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           suggestedActions: ["Review rollback diagnostics before retrying"],
         });
       }
+      const originalPlan =
+        original === undefined
+          ? undefined
+          : await runtime.repositories.deployments.getPlan(original.deploymentPlanId);
+      const snapshot = await recordDeploymentSnapshot(runtime, record, originalPlan);
       return {
         taskId: TaskIdSchema.parse(`task:rollback:${record.deploymentRecordId}`),
         status: "queued",
         acceptedAt: record.createdAt,
         rollbackId: record.deploymentRecordId,
+        snapshot,
       };
     },
     "history.list": async (payload) => {
@@ -469,8 +507,11 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
         limit: request.limit ?? 50,
       });
+      const snapshots = await snapshotMetadataForRecords(runtime, page.items);
       return {
-        items: page.items.map(historyEntry),
+        items: page.items.map((record) =>
+          historyEntry(record, snapshots.get(record.deploymentRecordId)),
+        ),
         nextCursor: page.nextCursor ?? null,
       };
     },
@@ -539,6 +580,12 @@ function dataRoot(env: NodeJS.ProcessEnv): string {
     return join(env["APPDATA"] ?? join(homedir(), "AppData", "Roaming"), "AI Config Hub");
   }
   return join(env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "share"), "ai-config-hub");
+}
+
+async function ensurePrivateDirectory(path: string): Promise<AbsolutePath> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  if (platform() !== "win32") await chmod(path, 0o700);
+  return AbsolutePathSchema.parse(path);
 }
 
 function now(runtime: CliRuntime): string {
@@ -638,6 +685,40 @@ function databaseRevision(runtime: CliRuntime): string {
   );
 }
 
+function scanRoots(
+  requestRoots: readonly string[] | undefined,
+  cwd: AbsolutePath,
+  homeDirectory: AbsolutePath,
+): readonly AbsolutePath[] {
+  if ((requestRoots?.length ?? 0) > 0) {
+    return uniquePaths((requestRoots ?? []).map((root) => AbsolutePathSchema.parse(resolve(root))));
+  }
+  return uniquePaths([cwd, homeDirectory]);
+}
+
+function uniquePaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {
+  return [...new Set(paths)].sort();
+}
+
+function scopeKindsForAssets(
+  runtime: CliRuntime,
+  assets: readonly { readonly scopeId: string }[],
+): ReadonlyMap<string, ScopeKind> {
+  if (assets.length === 0) return new Map();
+  const scopeIds = new Set(assets.map(({ scopeId }) => scopeId));
+  const rows = runtime.repositories.database
+    .prepare("SELECT domain_id, scope_kind FROM scopes")
+    .all() as {
+    domain_id: string;
+    scope_kind: string;
+  }[];
+  return new Map(
+    rows
+      .filter(({ domain_id }) => scopeIds.has(domain_id))
+      .map(({ domain_id, scope_kind }) => [domain_id, ScopeKindSchema.parse(scope_kind)]),
+  );
+}
+
 function reasonCode(reason: string): string {
   return reason
     .toUpperCase()
@@ -685,7 +766,95 @@ function migrationPreviewResponse(plan: DeploymentPlan, generatedAt: string) {
   };
 }
 
-function historyEntry(record: DeploymentRecord) {
+async function assetsForPlan(runtime: CliRuntime, plan: DeploymentPlan): Promise<readonly Asset[]> {
+  const assets = await Promise.all(
+    Object.keys(plan.expectedSourceHashes)
+      .sort()
+      .map(async (id) => runtime.repositories.index.getAsset(AssetIdSchema.parse(id))),
+  );
+  return assets.filter((asset): asset is Asset => asset !== undefined);
+}
+
+async function recordDeploymentSnapshot(
+  runtime: CliRuntime,
+  record: DeploymentRecord,
+  plan: DeploymentPlan | undefined,
+): Promise<SnapshotMetadata> {
+  try {
+    const assets = plan === undefined ? [] : await assetsForPlan(runtime, plan);
+    const summary = await runtime.history.recordDeployment({
+      root: runtime.historyRoot,
+      deployment: record,
+      assets,
+    });
+    return snapshotRecorded(summary);
+  } catch (error) {
+    return { status: "failed", error: snapshotError(error, "Local Git snapshot failed") };
+  }
+}
+
+async function snapshotMetadataForRecords(
+  runtime: CliRuntime,
+  records: readonly DeploymentRecord[],
+): Promise<ReadonlyMap<string, SnapshotMetadata>> {
+  const succeeded = records.filter((record) => record.status === "succeeded");
+  if (succeeded.length === 0) return new Map();
+
+  if (!existsSync(join(runtime.historyRoot, ".git"))) {
+    return new Map(
+      succeeded.map((record) => [record.deploymentRecordId, { status: "missing" as const }]),
+    );
+  }
+
+  try {
+    const commits = await runtime.history.list(runtime.historyRoot, 200);
+    const byRecordId = new Map<string, SnapshotMetadata>();
+    for (const commit of commits) {
+      const recordId = recordIdFromSnapshotSubject(commit.subject);
+      if (recordId !== undefined && !byRecordId.has(recordId)) {
+        byRecordId.set(recordId, snapshotRecorded(commit));
+      }
+    }
+    return new Map(
+      succeeded.map((record) => [
+        record.deploymentRecordId,
+        byRecordId.get(record.deploymentRecordId) ?? { status: "missing" as const },
+      ]),
+    );
+  } catch (error) {
+    const unavailable = {
+      status: "unavailable" as const,
+      error: snapshotError(error, "Local Git history could not be read"),
+    };
+    return new Map(succeeded.map((record) => [record.deploymentRecordId, unavailable]));
+  }
+}
+
+function snapshotRecorded(summary: GitCommitSummary): SnapshotMetadata {
+  return {
+    status: "recorded",
+    commitId: summary.commitId,
+    authoredAt: summary.authoredAt,
+    message: summary.subject,
+  };
+}
+
+function recordIdFromSnapshotSubject(subject: string): string | undefined {
+  const prefix = "record deployment ";
+  return subject.startsWith(prefix) ? subject.slice(prefix.length) : undefined;
+}
+
+function snapshotError(
+  error: unknown,
+  fallbackMessage: string,
+): { readonly code: string; readonly message: string } {
+  if (error instanceof AppError) {
+    return { code: error.code, message: error.message };
+  }
+  return { code: "INTERNAL_ERROR", message: fallbackMessage };
+}
+
+function historyEntry(record: DeploymentRecord, snapshot: SnapshotMetadata | undefined) {
   return {
     id: record.deploymentRecordId,
     kind: record.rollbackOfRecordId === undefined ? ("deployment" as const) : ("rollback" as const),
@@ -703,6 +872,7 @@ function historyEntry(record: DeploymentRecord) {
       unit: "operations" as const,
     },
     cancellable: false,
+    ...(snapshot === undefined ? {} : { snapshot }),
   };
 }
 
@@ -719,14 +889,22 @@ function deploymentRecordForPlan(
   return JSON.parse(row.verification_json) as DeploymentRecord;
 }
 
-function rollbackRoots(runtime: CliRuntime, deploymentRecordId: string): readonly AbsolutePath[] {
-  const record = runtime.repositories.database
+function deploymentRecordById(
+  runtime: CliRuntime,
+  deploymentRecordId: string,
+): DeploymentRecord | undefined {
+  const row = runtime.repositories.database
     .prepare("SELECT verification_json FROM deployments WHERE domain_id = ?")
     .get(DeploymentRecordIdSchema.parse(deploymentRecordId)) as
     | { verification_json: string }
     | undefined;
+  return row === undefined ? undefined : (JSON.parse(row.verification_json) as DeploymentRecord);
+}
+
+function rollbackRoots(runtime: CliRuntime, deploymentRecordId: string): readonly AbsolutePath[] {
+  const record = deploymentRecordById(runtime, deploymentRecordId);
   if (record === undefined) throw notFound("Deployment record not found");
-  return deploymentRoots(JSON.parse(record.verification_json) as DeploymentRecord);
+  return deploymentRoots(record);
 }
 
 function deploymentRoots(record: DeploymentRecord): readonly AbsolutePath[] {
