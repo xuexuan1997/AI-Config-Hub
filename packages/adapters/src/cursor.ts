@@ -19,7 +19,7 @@ import {
 
 import { adapterDiagnostic, BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, walkFiles } from "./discovery.js";
+import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
 const capabilities: AdapterCapabilities = {
@@ -43,6 +43,22 @@ class CursorAdapter extends BaseToolAdapter {
     const installations = [];
     for (const root of [...context.candidateRoots].sort()) {
       context.signal.throwIfAborted();
+      if (root === context.homeDirectory) {
+        const userRoots = await existingUserRoots(context, [
+          markerPath(root, ".cursor"),
+          markerPath(root, ".cursorrules"),
+          markerPath(root, "AGENTS.md"),
+        ]);
+        if (userRoots.length > 0) {
+          installations.push({
+            toolId: this.toolId,
+            installationId: ToolInstallationIdSchema.parse(`cursor:user:${root}`),
+            configRoots: userRoots,
+            evidence: { scope: "user", markers: userRoots.map(String) },
+          });
+        }
+        continue;
+      }
       const markers = [
         markerPath(root, ".cursor"),
         markerPath(root, ".cursorrules"),
@@ -67,6 +83,7 @@ class CursorAdapter extends BaseToolAdapter {
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
     const diagnostics = [];
+    const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
       for (const sourcePath of await walkFiles(context.read, root, context.signal)) {
         const leaf = basename(sourcePath);
@@ -80,6 +97,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourceFormat: "mdc",
               resourceKind: "rule",
               scopeRoot: cursorDirectory,
+              scopeKind,
             }),
           );
         } else if (leaf === "AGENTS.md") {
@@ -91,6 +109,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourceFormat: "markdown",
               resourceKind: "rule",
               scopeRoot: dirname(sourcePath),
+              scopeKind,
             }),
           );
         } else if (leaf === ".cursorrules") {
@@ -102,6 +121,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourceFormat: "markdown",
               resourceKind: "rule",
               scopeRoot: dirname(sourcePath),
+              scopeKind,
             }),
           );
           diagnostics.push(
@@ -121,6 +141,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "agent",
+              scopeKind,
             }),
           );
         } else if (
@@ -135,6 +156,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "skill",
+              scopeKind,
             }),
           );
         } else if (sourcePath.endsWith(`${sep}.cursor${sep}mcp.json`)) {
@@ -145,6 +167,7 @@ class CursorAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "jsonc",
               resourceKind: "mcp",
+              scopeKind,
             }),
           );
         }
@@ -168,6 +191,19 @@ class CursorAdapter extends BaseToolAdapter {
           ),
     );
   }
+}
+
+async function existingUserRoots(
+  context: DetectionContext,
+  roots: readonly ReturnType<typeof markerPath>[],
+) {
+  const existing = await Promise.all(
+    roots.map(async (root) => ({
+      root,
+      stat: await context.read.stat(root),
+    })),
+  );
+  return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
 export const cursorRegistration: AdapterRegistration = {

@@ -21,7 +21,7 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, walkFiles } from "./discovery.js";
+import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
 import {
   parseMarkdownAsset,
   rejectedParse,
@@ -177,6 +177,22 @@ class CodexAdapter extends BaseToolAdapter {
   async detect(context: DetectionContext): Promise<DetectionResult> {
     const installations = [];
     for (const root of [...context.candidateRoots].sort()) {
+      if (root === context.homeDirectory) {
+        const userRoots = await existingUserRoots(context, [
+          markerPath(root, ".codex"),
+          markerPath(root, ".agents"),
+          markerPath(root, "AGENTS.md"),
+        ]);
+        if (userRoots.length > 0) {
+          installations.push({
+            toolId: this.toolId,
+            installationId: ToolInstallationIdSchema.parse(`codex:user:${root}`),
+            configRoots: userRoots,
+            evidence: { scope: "user", markers: userRoots.map(String) },
+          });
+        }
+        continue;
+      }
       const markers = [markerPath(root, "AGENTS.md"), markerPath(root, ".codex")];
       if (
         (await Promise.all(markers.map((path) => context.read.stat(path)))).some(
@@ -196,6 +212,7 @@ class CodexAdapter extends BaseToolAdapter {
 
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
+    const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
       const files = await walkFiles(context.read, root, context.signal);
       const overrides = new Set(
@@ -217,6 +234,7 @@ class CodexAdapter extends BaseToolAdapter {
               sourceFormat: "markdown",
               resourceKind: "rule",
               scopeRoot: dirname(sourcePath),
+              scopeKind,
             }),
           );
         } else if (
@@ -230,6 +248,7 @@ class CodexAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "toml",
               resourceKind: "agent",
+              scopeKind,
             }),
           );
         } else if (sourcePath.includes(`${sep}.agents${sep}skills${sep}`) && leaf === "SKILL.md") {
@@ -240,6 +259,7 @@ class CodexAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "skill",
+              scopeKind,
             }),
           );
         } else if (sourcePath.endsWith(`${sep}.codex${sep}config.toml`)) {
@@ -250,6 +270,7 @@ class CodexAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "toml",
               resourceKind: "mcp",
+              scopeKind,
             }),
           );
         }
@@ -275,6 +296,19 @@ class CodexAdapter extends BaseToolAdapter {
             );
     return Promise.resolve(result);
   }
+}
+
+async function existingUserRoots(
+  context: DetectionContext,
+  roots: readonly ReturnType<typeof markerPath>[],
+) {
+  const existing = await Promise.all(
+    roots.map(async (root) => ({
+      root,
+      stat: await context.read.stat(root),
+    })),
+  );
+  return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
 export const codexRegistration: AdapterRegistration = {

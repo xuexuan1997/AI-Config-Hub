@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
 
 import type {
   AdapterCapabilities,
   AdapterDiagnostic,
   AdapterLogger,
+  DiscoveredResource,
   ConversionContext,
   ConversionResult,
   DeploymentPlanningContext,
@@ -17,6 +19,7 @@ import type {
   VerificationResult,
 } from "@ai-config-hub/core";
 import {
+  AbsolutePathSchema,
   ContentHashSchema,
   type AbsolutePath,
   type AdapterId,
@@ -27,6 +30,9 @@ import {
 
 import { convertAsset } from "./conversion.js";
 import { resolveAssetsByScope } from "./resolution.js";
+
+const MAX_DIFF_BYTES = 200 * 1024;
+const DIFF_TRUNCATION_MARKER = "# AI Config Hub: diff truncated at a complete UTF-8 line boundary";
 
 export abstract class BaseToolAdapter implements ToolAdapter {
   abstract readonly adapterId: AdapterId;
@@ -54,7 +60,68 @@ export abstract class BaseToolAdapter implements ToolAdapter {
 
   diagnose(context: DiagnosticContext): Promise<DiagnosticResult> {
     context.signal.throwIfAborted();
-    return Promise.resolve({ diagnostics: [] });
+    const diagnostics: AdapterDiagnostic[] = [];
+    const firstByLocator = new Map<string, (typeof context.assets)[number]>();
+    const assetPaths = new Set(
+      context.assets.map(({ canonicalSourcePath }) => canonicalSourcePath),
+    );
+
+    for (const asset of [...context.assets].sort((left, right) =>
+      `${left.locator}:${left.canonicalSourcePath}`.localeCompare(
+        `${right.locator}:${right.canonicalSourcePath}`,
+      ),
+    )) {
+      context.signal.throwIfAborted();
+      const first = firstByLocator.get(asset.locator);
+      if (first === undefined) {
+        firstByLocator.set(asset.locator, asset);
+      } else {
+        diagnostics.push(
+          adapterDiagnostic(
+            "DUPLICATE_RESOURCE_LOCATOR",
+            "warning",
+            `Multiple ${this.toolId} resources use locator ${asset.locator}`,
+            false,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
+
+      if (asset.resource.kind === "skill") {
+        for (const reference of [...asset.resource.data.references].sort()) {
+          if (URL.canParse(reference)) continue;
+          const referencePath = AbsolutePathSchema.safeParse(
+            isAbsolute(reference)
+              ? reference
+              : resolve(dirname(asset.canonicalSourcePath), reference),
+          );
+          if (referencePath.success && assetPaths.has(referencePath.data)) continue;
+          diagnostics.push(
+            adapterDiagnostic(
+              "UNRESOLVED_SKILL_REFERENCE",
+              "warning",
+              `Skill reference could not be resolved from ${asset.locator}`,
+              false,
+              { path: asset.canonicalSourcePath },
+            ),
+          );
+        }
+      }
+
+      if (hasNonDeployableMcpSecret(asset.resource)) {
+        diagnostics.push(
+          adapterDiagnostic(
+            "MCP_NON_DEPLOYABLE_SECRET",
+            "error",
+            "MCP configuration contains non-deployable secret values",
+            true,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
+    }
+
+    return Promise.resolve({ diagnostics });
   }
 
   convert(context: ConversionContext): Promise<ConversionResult> {
@@ -63,23 +130,70 @@ export abstract class BaseToolAdapter implements ToolAdapter {
 
   planDeployment(context: DeploymentPlanningContext): Promise<DeploymentPlanningResult> {
     context.signal.throwIfAborted();
+    const operations: DeploymentPlanningResult["draft"]["operations"][number][] = [];
+    const diffs: DeploymentPlanningResult["draft"]["diffs"][number][] = [];
+
+    for (const output of [...context.conversion.outputs].sort((left, right) =>
+      left.relativePath.localeCompare(right.relativePath),
+    )) {
+      context.signal.throwIfAborted();
+      const targetPath = AbsolutePathSchema.parse(
+        resolve(context.target.canonicalRootPath, output.relativePath),
+      );
+      const current = context.currentTargetSnapshots.get(targetPath);
+      if (current?.contentHash === output.contentHash && current.text === output.text) continue;
+
+      if (current === undefined) {
+        operations.push({
+          kind: "create",
+          targetPath,
+          nextText: output.text,
+          expectedTargetHash: "absent",
+          deploymentType: "generated_file",
+          targetResourceKind: context.conversion.targetResourceKind,
+        });
+        diffs.push({
+          targetPath,
+          summary: `Create ${targetPath}`,
+          unifiedText: unifiedDiff(targetPath, undefined, output.text),
+        });
+      } else {
+        operations.push({
+          kind: "replace",
+          targetPath,
+          nextText: output.text,
+          expectedTargetHash: current.contentHash,
+          deploymentType: "generated_file",
+          targetResourceKind: context.conversion.targetResourceKind,
+        });
+        diffs.push({
+          targetPath,
+          summary: `Replace ${targetPath}`,
+          unifiedText: unifiedDiff(targetPath, current.text, output.text),
+        });
+      }
+    }
+
     return Promise.resolve({
       draft: {
         targetToolId: this.toolId,
-        operations: [],
-        diffs: [],
-        verificationStrategy: "Read-only adapter validation",
+        operations,
+        diffs,
+        verificationStrategy: `Verify generated ${this.toolId} files with hash and semantic parsing checks`,
         adapterId: this.adapterId,
         adapterVersion: this.adapterVersion,
       },
-      diagnostics: [
-        adapterDiagnostic(
-          "ADAPTER_WRITE_CAPABILITY_UNAVAILABLE",
-          "error",
-          "This adapter does not yet declare a deployable write path",
-          true,
-        ),
-      ],
+      diagnostics:
+        operations.length === 0
+          ? [
+              adapterDiagnostic(
+                "DEPLOYMENT_TARGETS_ALREADY_IDENTICAL",
+                "info",
+                "All generated outputs are already byte-identical to their targets",
+                false,
+              ),
+            ]
+          : [],
     });
   }
 
@@ -116,9 +230,11 @@ export abstract class BaseToolAdapter implements ToolAdapter {
           );
           continue;
         }
-        const actualHash = hash(await context.read.readText(operation.targetPath));
+        const actualText = await context.read.readText(operation.targetPath);
+        const actualHash = hash(actualText);
         verifiedHashes[operation.targetPath] = actualHash;
         const expectedHash = context.deployment.resultingHashes[operation.targetPath];
+        let hashMatches = false;
         if (expectedHash === undefined) {
           diagnostics.push(
             verificationDiagnostic(
@@ -135,6 +251,52 @@ export abstract class BaseToolAdapter implements ToolAdapter {
               operation.targetPath,
             ),
           );
+        } else {
+          hashMatches = true;
+        }
+        if (
+          hashMatches &&
+          (operation.deploymentType ?? "generated_file") === "generated_file" &&
+          operation.targetResourceKind !== undefined
+        ) {
+          const parseResult = await this.parse({
+            tool: context.target.tool,
+            candidate: parseCandidate({
+              toolId: this.toolId,
+              targetPath: operation.targetPath,
+              targetResourceKind: operation.targetResourceKind,
+              scope: context.target.scope,
+            }),
+            snapshot: {
+              canonicalPath: operation.targetPath,
+              text: actualText,
+              contentHash: actualHash,
+              modifiedAt: stat.modifiedAt,
+              size: stat.size,
+            },
+            signal: context.signal,
+          });
+          if (parseResult.status === "rejected") {
+            diagnostics.push(
+              verificationDiagnostic(
+                "DEPLOYMENT_TARGET_SEMANTIC_INVALID",
+                `Deployment target could not be parsed as ${operation.targetResourceKind}: ${operation.targetPath}`,
+                operation.targetPath,
+              ),
+            );
+          } else if (
+            !parseResult.assets.some(
+              ({ resource }) => resource.kind === operation.targetResourceKind,
+            )
+          ) {
+            diagnostics.push(
+              verificationDiagnostic(
+                "DEPLOYMENT_TARGET_SEMANTIC_KIND_MISMATCH",
+                `Deployment target did not produce a ${operation.targetResourceKind} resource: ${operation.targetPath}`,
+                operation.targetPath,
+              ),
+            );
+          }
         }
       } catch (error) {
         diagnostics.push(
@@ -153,6 +315,120 @@ export abstract class BaseToolAdapter implements ToolAdapter {
       diagnostics,
     };
   }
+}
+
+interface DiffLineGroup {
+  readonly text: string;
+  readonly side: "old" | "new";
+}
+
+function lineGroups(text: string, side: DiffLineGroup["side"]): readonly DiffLineGroup[] {
+  if (text === "") return [];
+  const hasTrailingNewline = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (hasTrailingNewline) lines.pop();
+  return lines.map((line, index) => ({
+    side,
+    text:
+      `${side === "old" ? "-" : "+"}${line}` +
+      (index === lines.length - 1 && !hasTrailingNewline ? "\n\\ No newline at end of file" : ""),
+  }));
+}
+
+function diffHeader(
+  path: AbsolutePath,
+  previousExists: boolean,
+  oldCount: number,
+  newCount: number,
+): string {
+  return (
+    `--- ${previousExists ? path : "/dev/null"}\n` +
+    `+++ ${path}\n` +
+    `@@ -${oldCount === 0 ? "0" : "1"},${String(oldCount)} ` +
+    `+${newCount === 0 ? "0" : "1"},${String(newCount)} @@`
+  );
+}
+
+function renderDiff(
+  path: AbsolutePath,
+  previousExists: boolean,
+  groups: readonly DiffLineGroup[],
+  truncated: boolean,
+): string {
+  const oldCount = groups.filter(({ side }) => side === "old").length;
+  const newCount = groups.length - oldCount;
+  const body = [...groups.map(({ text }) => text)].join("\n");
+  const header = diffHeader(path, previousExists, oldCount, newCount);
+  return `${truncated ? `${DIFF_TRUNCATION_MARKER}\n` : ""}${header}${body === "" ? "" : `\n${body}`}`;
+}
+
+function unifiedDiff(path: AbsolutePath, previous: string | undefined, next: string): string {
+  const groups = [...lineGroups(previous ?? "", "old"), ...lineGroups(next, "new")];
+  const full = renderDiff(path, previous !== undefined, groups, false);
+  if (Buffer.byteLength(full, "utf8") <= MAX_DIFF_BYTES) return full;
+
+  const oldCount = groups.filter(({ side }) => side === "old").length;
+  const newCount = groups.length - oldCount;
+  let usedBytes = Buffer.byteLength(
+    `${DIFF_TRUNCATION_MARKER}\n${diffHeader(path, previous !== undefined, oldCount, newCount)}`,
+    "utf8",
+  );
+  const included: DiffLineGroup[] = [];
+  for (const group of groups) {
+    const groupBytes = Buffer.byteLength(`\n${group.text}`, "utf8");
+    if (usedBytes + groupBytes > MAX_DIFF_BYTES) break;
+    included.push(group);
+    usedBytes += groupBytes;
+  }
+  return renderDiff(path, previous !== undefined, included, true);
+}
+
+function parseCandidate(input: {
+  readonly toolId: ToolId;
+  readonly targetPath: AbsolutePath;
+  readonly targetResourceKind: NonNullable<DiscoveredResource["resourceKindHint"]>;
+  readonly scope: DiscoveredResource["scope"];
+}): DiscoveredResource {
+  return {
+    toolId: input.toolId,
+    sourcePath: input.targetPath,
+    sourceFormat: sourceFormat(input.targetPath),
+    resourceKindHint: input.targetResourceKind,
+    locatorHint: `${input.targetResourceKind}:${basename(input.targetPath, extname(input.targetPath))}`,
+    scope: input.scope,
+  };
+}
+
+function sourceFormat(path: AbsolutePath): string {
+  const leaf = basename(path);
+  if (leaf.endsWith(".toml")) return "toml";
+  if (leaf.endsWith(".json") || leaf.endsWith(".jsonc")) return "jsonc";
+  if (leaf.endsWith(".mdc")) return "mdc";
+  if (leaf.endsWith(".md")) return "yaml-frontmatter-markdown";
+  return "text";
+}
+
+function hasNonDeployableMcpSecret(
+  resource: Parameters<typeof resolveAssetsByScope>[0]["assets"][number]["resource"],
+): boolean {
+  if (resource.kind !== "mcp") return false;
+  const transport = resource.data.transport;
+  if (transport.kind === "stdio") {
+    return (
+      transport.args.some((item) => !item.deployable) ||
+      Object.values(transport.env).some((item) => !item.deployable)
+    );
+  }
+  return (
+    !transport.endpoint.baseUrl.deployable ||
+    Object.values(transport.endpoint.query)
+      .flat()
+      .some((item) => !item.deployable) ||
+    (transport.endpoint.userInfo !== undefined &&
+      (!transport.endpoint.userInfo.username.deployable ||
+        transport.endpoint.userInfo.password?.deployable === false)) ||
+    Object.values(transport.headers).some((item) => !item.deployable)
+  );
 }
 
 export function adapterDiagnostic(

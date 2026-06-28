@@ -19,7 +19,7 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, walkFiles } from "./discovery.js";
+import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
 const capabilities: AdapterCapabilities = {
@@ -43,6 +43,22 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
     const installations = [];
     for (const root of [...context.candidateRoots].sort()) {
       context.signal.throwIfAborted();
+      if (root === context.homeDirectory) {
+        const userRoots = await existingUserRoots(context, [
+          markerPath(root, ".claude"),
+          markerPath(root, ".mcp.json"),
+          markerPath(root, "CLAUDE.md"),
+        ]);
+        if (userRoots.length > 0) {
+          installations.push({
+            toolId: this.toolId,
+            installationId: ToolInstallationIdSchema.parse(`claude-code:user:${root}`),
+            configRoots: userRoots,
+            evidence: { scope: "user", markers: userRoots.map(String) },
+          });
+        }
+        continue;
+      }
       const markers = [
         markerPath(root, "CLAUDE.md"),
         markerPath(root, ".claude"),
@@ -66,6 +82,7 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
 
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
+    const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
       for (const sourcePath of await walkFiles(context.read, root, context.signal)) {
         const leaf = basename(sourcePath);
@@ -78,6 +95,7 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
               sourceFormat: "markdown",
               resourceKind: "rule",
               scopeRoot: dirname(sourcePath),
+              scopeKind,
             }),
           );
         } else if (sourcePath.includes(`${sep}.claude${sep}agents${sep}`) && leaf.endsWith(".md")) {
@@ -88,6 +106,7 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "agent",
+              scopeKind,
             }),
           );
         } else if (sourcePath.includes(`${sep}.claude${sep}skills${sep}`) && leaf === "SKILL.md") {
@@ -98,6 +117,7 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "yaml-frontmatter-markdown",
               resourceKind: "skill",
+              scopeKind,
             }),
           );
         } else if (leaf === ".mcp.json") {
@@ -108,6 +128,7 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
               sourcePath,
               sourceFormat: "jsonc",
               resourceKind: "mcp",
+              scopeKind,
             }),
           );
         }
@@ -131,6 +152,19 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
           ),
     );
   }
+}
+
+async function existingUserRoots(
+  context: DetectionContext,
+  roots: readonly ReturnType<typeof markerPath>[],
+) {
+  const existing = await Promise.all(
+    roots.map(async (root) => ({
+      root,
+      stat: await context.read.stat(root),
+    })),
+  );
+  return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
 export const claudeCodeRegistration: AdapterRegistration = {

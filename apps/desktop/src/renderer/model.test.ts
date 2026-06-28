@@ -18,6 +18,7 @@ import {
   previewRequestForState,
   reducer,
   rollbackRequestForState,
+  taskActionForTaskEvent,
   scanActionForTaskEvent,
 } from "./model.js";
 
@@ -179,6 +180,127 @@ describe("renderer project selection state", () => {
       type: "scan",
       status: "complete",
       message: "Task task-scan succeeded: 2 succeeded, 0 failed, 1 skipped.",
+    });
+  });
+
+  it("maps deployment task events to active task progress and recovery state", () => {
+    const accepted = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:deployment-1"),
+        sequence: 1,
+        emittedAt: "2026-06-28T08:00:00.000Z",
+        type: "accepted",
+        payload: {
+          taskKind: "deployment",
+          phase: "queued",
+          acceptedAt: "2026-06-28T08:00:00.000Z",
+        },
+      })!,
+    });
+    const writing = reducer(accepted, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:deployment-1"),
+        sequence: 4,
+        emittedAt: "2026-06-28T08:00:01.000Z",
+        type: "progress",
+        payload: { phase: "writing", completed: 2, total: 3, unit: "operations" },
+      })!,
+    });
+    const failed = reducer(writing, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:deployment-1"),
+        sequence: 5,
+        emittedAt: "2026-06-28T08:00:02.000Z",
+        type: "item.failed",
+        payload: {
+          itemRef: "deployment-1",
+          diagnosticId: "diagnostic:deployment:deployment-1",
+          errorCode: "VALIDATION_FAILED",
+          retryable: false,
+        },
+      })!,
+    });
+    const completed = reducer(failed, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:deployment-1"),
+        sequence: 7,
+        emittedAt: "2026-06-28T08:00:03.000Z",
+        type: "completed",
+        payload: {
+          status: "failed",
+          succeededCount: 0,
+          failedCount: 1,
+          skippedCount: 0,
+          resultRef: "deployment-1",
+          systemRecoveryLock: true,
+        },
+      })!,
+    });
+
+    expect(accepted.activeTask).toMatchObject({
+      taskId: "task:deployment:deployment-1",
+      taskKind: "deployment",
+      phase: "queued",
+      status: "running",
+      recoveryLock: false,
+    });
+    expect(writing.activeTask).toMatchObject({
+      phase: "writing",
+      progress: { phase: "writing", completed: 2, total: 3, unit: "operations" },
+      message: "deployment writing: 2/3 operations",
+    });
+    expect(failed.activeTask).toMatchObject({
+      failure: { itemRef: "deployment-1", errorCode: "VALIDATION_FAILED", retryable: false },
+      message: "deployment failed: VALIDATION_FAILED",
+    });
+    expect(completed.activeTask).toMatchObject({
+      phase: "completed",
+      status: "failed",
+      recoveryLock: true,
+      message: "deployment failed: 0 succeeded, 1 failed, 0 skipped.",
+    });
+  });
+
+  it("restores active task state from replay snapshots", () => {
+    const restored = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:rollback:replay"),
+        sequence: null,
+        emittedAt: "2026-06-28T08:00:03.000Z",
+        type: "snapshot",
+        payload: {
+          taskKind: "rollback",
+          phase: "verifying",
+          status: "running",
+          progress: { phase: "verifying", completed: 1, total: 2, unit: "operations" },
+          lastSequence: 12,
+          cancellable: true,
+        },
+      })!,
+    });
+
+    expect(restored.activeTask).toMatchObject({
+      taskId: "task:rollback:replay",
+      taskKind: "rollback",
+      phase: "verifying",
+      status: "running",
+      progress: { phase: "verifying", completed: 1, total: 2, unit: "operations" },
+      recoveryLock: false,
     });
   });
 

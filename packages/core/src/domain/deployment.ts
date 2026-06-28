@@ -7,6 +7,7 @@ import {
   DeploymentPlanIdSchema,
   DeploymentRecordIdSchema,
   IsoDateTimeSchema,
+  ResourceKindSchema,
   SemVerSchema,
 } from "@ai-config-hub/shared";
 import { z } from "zod";
@@ -14,8 +15,21 @@ import { z } from "zod";
 import { DiagnosticSchema } from "./diagnostic.js";
 import { DeploymentStatusSchema } from "./task.js";
 
+export const DeploymentOperationTypeSchema = z.enum(["copy", "symlink", "generated_file"]);
+export type DeploymentOperationType = z.infer<typeof DeploymentOperationTypeSchema>;
+
+const operationMetadataShape = {
+  deploymentType: DeploymentOperationTypeSchema.default("generated_file"),
+} as const;
+
+const generatedTargetMetadataShape = {
+  ...operationMetadataShape,
+  targetResourceKind: ResourceKindSchema.optional(),
+} as const;
+
 const CreateOperationSchema = z
   .object({
+    ...generatedTargetMetadataShape,
     kind: z.literal("create"),
     targetPath: AbsolutePathSchema,
     nextText: z.string(),
@@ -25,6 +39,7 @@ const CreateOperationSchema = z
   .readonly();
 const ReplaceOperationSchema = z
   .object({
+    ...generatedTargetMetadataShape,
     kind: z.literal("replace"),
     targetPath: AbsolutePathSchema,
     nextText: z.string(),
@@ -34,6 +49,7 @@ const ReplaceOperationSchema = z
   .readonly();
 const DeleteOperationSchema = z
   .object({
+    ...operationMetadataShape,
     kind: z.literal("delete"),
     targetPath: AbsolutePathSchema,
     expectedTargetHash: ContentHashSchema,
@@ -46,7 +62,17 @@ export const DeploymentOperationSchema = z.discriminatedUnion("kind", [
   ReplaceOperationSchema,
   DeleteOperationSchema,
 ]);
-export type DeploymentOperation = z.infer<typeof DeploymentOperationSchema>;
+type ParsedDeploymentOperation = z.output<typeof DeploymentOperationSchema>;
+export type DeploymentOperation =
+  | (Omit<Extract<ParsedDeploymentOperation, { readonly kind: "create" }>, "deploymentType"> & {
+      readonly deploymentType?: DeploymentOperationType;
+    })
+  | (Omit<Extract<ParsedDeploymentOperation, { readonly kind: "replace" }>, "deploymentType"> & {
+      readonly deploymentType?: DeploymentOperationType;
+    })
+  | (Omit<Extract<ParsedDeploymentOperation, { readonly kind: "delete" }>, "deploymentType"> & {
+      readonly deploymentType?: DeploymentOperationType;
+    });
 
 export const DeploymentDiffSchema = z
   .object({

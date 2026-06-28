@@ -1,5 +1,7 @@
 import { useReducer } from "react";
 
+import type { TaskEvent } from "@ai-config-hub/api";
+
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
 import {
@@ -16,6 +18,7 @@ import {
   refreshHistory,
   rollbackRequestForState,
   scanActionForTaskEvent,
+  taskActionForTaskEvent,
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { DeploymentView } from "./views/deployment.js";
@@ -61,9 +64,11 @@ export function App(props: { readonly api: DesktopApi }) {
         message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
       });
       if (response.ok) {
-        props.api.subscribeTask(response.data.taskId, 0, (event) => {
+        subscribeTask(response.data.taskId, (event) => {
           const action = scanActionForTaskEvent(event);
           if (action !== undefined) dispatch(action);
+          const taskAction = taskActionForTaskEvent(event);
+          if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
             void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
             void refreshDiagnostics(props.api).then(({ diagnostics, diagnosticCounts }) =>
@@ -121,13 +126,9 @@ export function App(props: { readonly api: DesktopApi }) {
         confirmedPlanHash: previewPlan.planHash,
         confirmations: deploymentConfirmationsForState(state),
       });
-      dispatch({
-        type: "scan",
-        status: response.ok ? "complete" : "error",
-        message: response.ok
-          ? `Deployment queued: ${response.data.deploymentId}`
-          : response.error.message,
-      });
+      const taskId = response.ok ? response.data.taskId : response.error.taskId;
+      if (taskId !== undefined) subscribeOperationTask(taskId);
+      dispatch({ type: "message", message: response.ok ? undefined : response.error.message });
       dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
@@ -143,14 +144,24 @@ export function App(props: { readonly api: DesktopApi }) {
         return;
       }
       const response = await props.api.invoke("deployment.rollback", request);
-      dispatch({
-        type: "scan",
-        status: response.ok ? "complete" : "error",
-        message: response.ok
-          ? `Rollback queued: ${response.data.rollbackId}`
-          : response.error.message,
-      });
+      const taskId = response.ok ? response.data.taskId : response.error.taskId;
+      if (taskId !== undefined) subscribeOperationTask(taskId);
+      dispatch({ type: "message", message: response.ok ? undefined : response.error.message });
       dispatch({ type: "history", history: await refreshHistory(props.api) });
+    });
+  }
+
+  function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void): void {
+    props.api.subscribeTask(taskId, 0, onEvent);
+  }
+
+  function subscribeOperationTask(taskId: string): void {
+    subscribeTask(taskId, (event) => {
+      const action = taskActionForTaskEvent(event);
+      if (action !== undefined) dispatch({ type: "taskEvent", action });
+      if (event.type === "completed") {
+        void refreshHistory(props.api).then((history) => dispatch({ type: "history", history }));
+      }
     });
   }
 

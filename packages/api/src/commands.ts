@@ -376,12 +376,52 @@ const MigrationPreviewResponseSchema = z
   })
   .strict()
   .readonly();
+const SnapshotErrorSchema = z
+  .object({
+    code: DiagnosticCodeSchema,
+    message: z.string().trim().min(1).max(500),
+  })
+  .strict()
+  .readonly();
+const SnapshotMetadataSchema = z
+  .discriminatedUnion("status", [
+    z
+      .object({
+        status: z.literal("recorded"),
+        commitId: z.string().trim().min(1).max(200),
+        authoredAt: IsoDateTimeSchema,
+        message: z.string().trim().min(1).max(500),
+      })
+      .strict()
+      .readonly(),
+    z
+      .object({ status: z.literal("missing") })
+      .strict()
+      .readonly(),
+    z
+      .object({ status: z.literal("failed"), error: SnapshotErrorSchema })
+      .strict()
+      .readonly(),
+    z
+      .object({ status: z.literal("unavailable"), error: SnapshotErrorSchema })
+      .strict()
+      .readonly(),
+  ])
+  .readonly();
 const DeploymentAcceptedSchema = z
-  .object({ ...acceptedTaskShape, deploymentId: DeploymentRecordIdSchema })
+  .object({
+    ...acceptedTaskShape,
+    deploymentId: DeploymentRecordIdSchema,
+    snapshot: SnapshotMetadataSchema.optional(),
+  })
   .strict()
   .readonly();
 const RollbackAcceptedSchema = z
-  .object({ ...acceptedTaskShape, rollbackId: DeploymentRecordIdSchema })
+  .object({
+    ...acceptedTaskShape,
+    rollbackId: DeploymentRecordIdSchema,
+    snapshot: SnapshotMetadataSchema.optional(),
+  })
   .strict()
   .readonly();
 const HistoryEntrySchema = z
@@ -397,6 +437,7 @@ const HistoryEntrySchema = z
     progress: TaskProgressPayloadSchema.optional(),
     lastSequence: z.number().int().nonnegative().optional(),
     cancellable: z.boolean().optional(),
+    snapshot: SnapshotMetadataSchema.optional(),
   })
   .strict()
   .readonly();

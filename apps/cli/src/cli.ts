@@ -352,6 +352,9 @@ function renderText<Name extends ApiCommandName>(
 ): string {
   if (!response.ok) return `Error ${response.error.code}: ${response.error.message}\n`;
   const data = response.data as Record<string, unknown>;
+  if (name === "history.list" && "items" in data && Array.isArray(data.items)) {
+    return renderHistory(data.items);
+  }
   if ("items" in data && Array.isArray(data.items)) return `${data.items.length} item(s)\n`;
   if ("taskId" in data) return `Task ${String(data.taskId)} queued\n`;
   if (name === "assets.get" && typeof data.asset === "object" && data.asset !== null) {
@@ -361,4 +364,49 @@ function renderText<Name extends ApiCommandName>(
     return `${id} ${logicalKey}\n`;
   }
   return `${JSON.stringify(data, null, 2)}\n`;
+}
+
+function renderHistory(items: readonly unknown[]): string {
+  if (items.length === 0) return "0 item(s)\n";
+  return items
+    .map((item) => {
+      if (typeof item !== "object" || item === null) return "";
+      const entry = item as {
+        readonly id?: unknown;
+        readonly kind?: unknown;
+        readonly status?: unknown;
+        readonly createdAt?: unknown;
+        readonly snapshot?: unknown;
+      };
+      const kind = typeof entry.kind === "string" ? entry.kind : "history";
+      const id = typeof entry.id === "string" ? entry.id : "unknown";
+      const status = typeof entry.status === "string" ? entry.status : "unknown";
+      const createdAt = typeof entry.createdAt === "string" ? entry.createdAt : "";
+      return [kind, id, status, createdAt, renderSnapshot(entry.snapshot)]
+        .filter((part) => part.length > 0)
+        .join(" ");
+    })
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .concat("\n");
+}
+
+function renderSnapshot(snapshot: unknown): string {
+  if (typeof snapshot !== "object" || snapshot === null || !("status" in snapshot)) return "";
+  const metadata = snapshot as {
+    readonly status?: unknown;
+    readonly commitId?: unknown;
+    readonly error?: { readonly code?: unknown };
+  };
+  if (metadata.status === "recorded" && typeof metadata.commitId === "string") {
+    return `snapshot ${metadata.commitId}`;
+  }
+  if (metadata.status === "missing") return "snapshot missing";
+  if (
+    (metadata.status === "failed" || metadata.status === "unavailable") &&
+    typeof metadata.error?.code === "string"
+  ) {
+    return `snapshot ${metadata.status} ${metadata.error.code}`;
+  }
+  return "";
 }

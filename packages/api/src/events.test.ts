@@ -110,4 +110,71 @@ describe("task event cursor", () => {
       }).kind,
     ).toBe("accepted");
   });
+
+  it("accepts deployment failure streams that route writing through rolling_back", () => {
+    const accepted = vi.fn();
+    const cursor = createTaskEventCursor("task-1", 0, accepted);
+
+    for (const event of [
+      {
+        ...base,
+        sequence: 1,
+        type: "accepted",
+        payload: { taskKind: "deployment", phase: "queued", acceptedAt: base.emittedAt },
+      },
+      { ...base, sequence: 2, type: "phase.changed", payload: { from: "queued", to: "preflight" } },
+      {
+        ...base,
+        sequence: 3,
+        type: "phase.changed",
+        payload: { from: "preflight", to: "backing_up" },
+      },
+      {
+        ...base,
+        sequence: 4,
+        type: "phase.changed",
+        payload: { from: "backing_up", to: "writing" },
+      },
+      {
+        ...base,
+        sequence: 5,
+        type: "item.failed",
+        payload: {
+          itemRef: "deployment-1",
+          diagnosticId: "diagnostic:deployment:failure",
+          errorCode: "VALIDATION_FAILED",
+          retryable: false,
+        },
+      },
+      {
+        ...base,
+        sequence: 6,
+        type: "phase.changed",
+        payload: { from: "writing", to: "rolling_back" },
+      },
+      {
+        ...base,
+        sequence: 7,
+        type: "phase.changed",
+        payload: { from: "rolling_back", to: "completed" },
+      },
+      {
+        ...base,
+        sequence: 8,
+        type: "completed",
+        payload: {
+          status: "failed",
+          succeededCount: 0,
+          failedCount: 1,
+          skippedCount: 0,
+          resultRef: "deployment-1",
+          systemRecoveryLock: true,
+        },
+      },
+    ] as const) {
+      expect(cursor.push(event).kind, `${event.sequence}:${event.type}`).toBe("accepted");
+    }
+
+    expect(accepted).toHaveBeenCalledTimes(8);
+  });
 });

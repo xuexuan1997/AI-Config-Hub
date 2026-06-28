@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,244 @@ afterEach(async () => {
   );
 });
 
+async function writeUserConfigFixtures(home: string): Promise<void> {
+  await mkdir(join(home, ".claude", "agents"), { recursive: true });
+  await mkdir(join(home, ".claude", "skills", "release"), { recursive: true });
+  await mkdir(join(home, ".cursor", "rules"), { recursive: true });
+  await mkdir(join(home, ".cursor", "agents"), { recursive: true });
+  await mkdir(join(home, ".cursor", "skills", "release"), { recursive: true });
+  await mkdir(join(home, ".codex", "agents"), { recursive: true });
+  await mkdir(join(home, ".agents", "skills", "release"), { recursive: true });
+  await mkdir(join(home, ".opencode", "agents"), { recursive: true });
+  await mkdir(join(home, ".opencode", "skills", "release"), { recursive: true });
+
+  await writeFile(join(home, "CLAUDE.md"), "# User Claude guidance\nUse tests.\n", "utf8");
+  await writeFile(join(home, "AGENTS.md"), "# User agent guidance\nUse tests.\n", "utf8");
+  await writeFile(
+    join(home, ".claude", "agents", "reviewer.md"),
+    "---\nname: reviewer\ndescription: Reviews code\n---\nReview carefully.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".claude", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".mcp.json"),
+    JSON.stringify({ mcpServers: { docs: { command: "npx", args: ["docs"] } } }),
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".cursor", "rules", "user.mdc"),
+    "---\ndescription: User Cursor rule\n---\nUse strict TypeScript.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".cursor", "agents", "reviewer.md"),
+    "---\nname: reviewer\ndescription: Review code\n---\nReview only.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".cursor", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".cursor", "mcp.json"),
+    JSON.stringify({ mcpServers: { docs: { url: "https://example.test/mcp" } } }),
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".codex", "agents", "reviewer.toml"),
+    'name = "reviewer"\ndeveloper_instructions = "Review carefully."\n',
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".agents", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".codex", "config.toml"),
+    '[mcp_servers.docs]\ncommand = "npx"\nargs = ["docs"]\n',
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".opencode", "agents", "reviewer.md"),
+    "---\nname: reviewer\ndescription: Review code\n---\nReview only.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".opencode", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, "opencode.jsonc"),
+    '{"mcp":{"docs":{"type":"remote","url":"https://example.test/mcp"}}}',
+    "utf8",
+  );
+}
+
 describe("CLI command service composition", () => {
+  it("defaults scans to project plus standard user-level tool configuration roots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-home-scan-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await mkdir(home);
+    await writeUserConfigFixtures(home);
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      homeDirectory: home,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+      const assets = await runtime.services["assets.list"]({ limit: 200 });
+
+      expect(new Set(assets.items.map(({ toolKey }) => toolKey))).toEqual(
+        new Set(["claude-code", "codex", "cursor", "opencode"]),
+      );
+      expect(new Set(assets.items.map(({ resourceType }) => resourceType))).toEqual(
+        new Set(["rule", "agent", "skill", "mcp"]),
+      );
+      expect(new Set(assets.items.map(({ scopeKind }) => scopeKind))).toEqual(new Set(["user"]));
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("records local Git snapshots for successful deployments and rollbacks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-history-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+      const deployment = await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: preview.requiredConfirmations,
+      });
+      expect(deployment.snapshot).toMatchObject({
+        status: "recorded",
+        message: `record deployment ${deployment.deploymentId}`,
+      });
+
+      const rollback = await runtime.services["deployment.rollback"]({
+        deploymentId: deployment.deploymentId,
+      });
+      expect(rollback.snapshot).toMatchObject({
+        status: "recorded",
+        message: `record deployment ${rollback.rollbackId}`,
+      });
+
+      const history = await runtime.services["history.list"]({ limit: 10 });
+      expect(history.items.find((entry) => entry.id === deployment.deploymentId)).toMatchObject({
+        snapshot: {
+          status: "recorded",
+          commitId: deployment.snapshot?.status === "recorded" ? deployment.snapshot.commitId : "",
+          authoredAt:
+            deployment.snapshot?.status === "recorded" ? deployment.snapshot.authoredAt : "",
+          message: `record deployment ${deployment.deploymentId}`,
+        },
+      });
+      expect(history.items.find((entry) => entry.id === rollback.rollbackId)).toMatchObject({
+        kind: "rollback",
+        snapshot: {
+          status: "recorded",
+          commitId: rollback.snapshot?.status === "recorded" ? rollback.snapshot.commitId : "",
+          message: `record deployment ${rollback.rollbackId}`,
+        },
+      });
+
+      const historyRoot = join(userData, "history", "local-git");
+      expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+      expect(await readdir(join(historyRoot, "assets"))).toHaveLength(1);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("does not fail a successful deployment when the local Git snapshot fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-history-failure-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    const historyRoot = join(userData, "history", "local-git");
+    await mkdir(project);
+    await mkdir(historyRoot, { recursive: true });
+    await writeFile(join(historyRoot, "stray.txt"), "not managed by snapshots\n", "utf8");
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+
+      const deployment = await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: preview.requiredConfirmations,
+      });
+
+      expect(deployment.deploymentId).toMatch(/^deployment-record:/);
+      expect(deployment.snapshot).toMatchObject({
+        status: "failed",
+        error: { code: "CONFLICT" },
+      });
+      const history = await runtime.services["history.list"]({ kinds: ["deployment"], limit: 10 });
+      const historyItem = history.items.find((item) => item.id === deployment.deploymentId);
+      expect(historyItem).toMatchObject({ id: deployment.deploymentId, status: "succeeded" });
+      expect(historyItem?.snapshot).toMatchObject({ status: "unavailable" });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("persists all public settings exposed by the API", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-settings-"));
     temporaryDirectories.push(root);

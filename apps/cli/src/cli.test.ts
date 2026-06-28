@@ -126,7 +126,20 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
       }),
     "history.list": () =>
       Promise.resolve({
-        items: [{ id: "deployment-1", kind: "deployment", status: "succeeded", createdAt: now }],
+        items: [
+          {
+            id: "deployment-1",
+            kind: "deployment",
+            status: "succeeded",
+            createdAt: now,
+            snapshot: {
+              status: "recorded",
+              commitId: "abc123def456",
+              authoredAt: now,
+              message: "record deployment deployment-1",
+            },
+          },
+        ],
         nextCursor: null,
       }),
     "settings.get": () =>
@@ -264,5 +277,21 @@ describe("CLI program", () => {
       ok: false,
       error: { code: "VALIDATION_FAILED" },
     });
+  });
+
+  it("prints snapshot commit metadata in history text output", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services(),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["history"],
+    );
+
+    expect(result).toEqual({ exitCode: 0 });
+    expect(output.join("")).toContain("deployment deployment-1 succeeded");
+    expect(output.join("")).toContain("snapshot abc123def456");
   });
 });

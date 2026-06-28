@@ -183,14 +183,60 @@ describe("command schemas", () => {
         deploymentId: "deployment-1",
         status: "queued",
         acceptedAt: now,
+        snapshot: {
+          status: "recorded",
+          commitId: "abc123",
+          authoredAt: now,
+          message: "record deployment deployment-1",
+        },
       },
       "deployment.rollback": {
         taskId: "task-1",
         rollbackId: "rollback-1",
         status: "queued",
         acceptedAt: now,
+        snapshot: {
+          status: "failed",
+          error: {
+            code: "CONFLICT",
+            message: "Local history snapshot contains unlisted working-tree changes",
+          },
+        },
       },
-      "history.list": { items: [], nextCursor: null },
+      "history.list": {
+        items: [
+          {
+            id: "deployment-1",
+            kind: "deployment",
+            status: "succeeded",
+            createdAt: now,
+            snapshot: {
+              status: "recorded",
+              commitId: "abc123",
+              authoredAt: now,
+              message: "record deployment deployment-1",
+            },
+          },
+          {
+            id: "deployment-2",
+            kind: "deployment",
+            status: "succeeded",
+            createdAt: now,
+            snapshot: { status: "missing" },
+          },
+          {
+            id: "rollback-1",
+            kind: "rollback",
+            status: "succeeded",
+            createdAt: now,
+            snapshot: {
+              status: "unavailable",
+              error: { code: "INTERNAL_ERROR", message: "Git history could not be read" },
+            },
+          },
+        ],
+        nextCursor: null,
+      },
       "settings.get": {
         values: { theme: "system" },
         revision: 1,

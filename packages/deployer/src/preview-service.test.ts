@@ -144,6 +144,27 @@ function registryWithConversion(
   };
 }
 
+type PlanningResult = Awaited<ReturnType<ToolAdapter["planDeployment"]>>;
+
+function registryWithPlanningMutation(
+  mutate: (result: PlanningResult) => PlanningResult,
+  toolId: "codex" | "cursor" = "codex",
+): AdapterRegistry {
+  const base = createAdapterRegistry([toolId === "codex" ? codexRegistration : cursorRegistration]);
+  return {
+    ...base,
+    create(requestedToolId, logger) {
+      const adapter = base.create(requestedToolId, logger);
+      const originalPlanDeployment = adapter.planDeployment.bind(adapter);
+      Object.defineProperty(adapter, "planDeployment", {
+        value: async (context: Parameters<ToolAdapter["planDeployment"]>[0]) =>
+          mutate(await originalPlanDeployment(context)),
+      });
+      return adapter;
+    },
+  };
+}
+
 function request(assets: readonly ReturnType<typeof asset>[], targetRoot = ROOT): PreviewRequest {
   return {
     assets,
@@ -158,6 +179,46 @@ function request(assets: readonly ReturnType<typeof asset>[], targetRoot = ROOT)
 }
 
 describe("DeploymentPreviewService", () => {
+  it("uses adapter planning for Codex rule to Cursor previews and emits generated-file metadata", async () => {
+    const base = createAdapterRegistry([cursorRegistration]);
+    const planDeployment = vi.fn<ToolAdapter["planDeployment"]>();
+    const registry: AdapterRegistry = {
+      ...base,
+      create(requestedToolId, logger) {
+        const adapter = base.create(requestedToolId, logger);
+        const originalPlanDeployment = adapter.planDeployment.bind(adapter);
+        planDeployment.mockImplementation((context) => originalPlanDeployment(context));
+        Object.defineProperty(adapter, "planDeployment", { value: planDeployment });
+        return adapter;
+      },
+    };
+    const source = AssetSchema.parse({
+      ...asset("codex-rule"),
+      toolId: "codex",
+      adapterId: codexRegistration.adapterId,
+      adapterVersion: codexRegistration.adapterVersion,
+      canonicalSourcePath: "/source/AGENTS.md",
+      locator: "rule:AGENTS.md",
+    });
+    const context = fixture({}, { registry });
+
+    const result = await context.service.preview({
+      ...request([source]),
+      target: { toolId: "cursor", resourceKind: "rule", targetSchemaVersion: "1.0.0" },
+    });
+
+    expect(planDeployment).toHaveBeenCalledTimes(1);
+    expect(result.plan.operations).toEqual([
+      expect.objectContaining({
+        kind: "create",
+        targetPath: "/target/.cursor/rules/codex-rule.mdc",
+        deploymentType: "generated_file",
+        targetResourceKind: "rule",
+      }),
+    ]);
+    expect(result.record.operations).toEqual(result.plan.operations);
+  });
+
   it("creates an immutable plan with deterministic identities and exact source/target hashes", async () => {
     const first = fixture();
     const source = asset("asset-create");
@@ -202,6 +263,8 @@ describe("DeploymentPreviewService", () => {
       expect.objectContaining({
         kind: "replace",
         targetPath: "/target/AGENTS.md",
+        deploymentType: "generated_file",
+        targetResourceKind: "rule",
         expectedTargetHash: hash(existing),
         nextText: conversions[0]?.level === "unsupported" ? "" : conversions[0]?.outputs[0]?.text,
       }),
@@ -211,6 +274,290 @@ describe("DeploymentPreviewService", () => {
     expect(Buffer.byteLength(plan.diffs[0]?.unifiedText ?? "", "utf8")).toBeLessThanOrEqual(
       200 * 1024,
     );
+  });
+
+  it("rejects adapter-planned operations whose nextText does not match the converted output hash", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            operations: planning.draft.operations.map((operation) =>
+              operation.kind === "create" || operation.kind === "replace"
+                ? { ...operation, nextText: "tampered text\n" }
+                : operation,
+            ),
+          },
+        })),
+      },
+    );
+
+    await expect(context.service.preview(request([asset("bad-next-text")]))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-planned operations with stale expected target hashes", async () => {
+    const existing = "Old instruction.\n";
+    const context = fixture(
+      { "/target/AGENTS.md": existing },
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            operations: planning.draft.operations.map((operation) =>
+              operation.kind === "replace"
+                ? { ...operation, expectedTargetHash: hash("stale target\n") }
+                : operation,
+            ),
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-expected-hash")])),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter planning that omits a changed converted output", async () => {
+    const twoOutputText = {
+      first: "First generated output.\n",
+      second: "Second generated output.\n",
+    };
+    const base = createAdapterRegistry([codexRegistration]);
+    const context = fixture(
+      {},
+      {
+        registry: {
+          ...base,
+          create(requestedToolId, logger) {
+            const adapter = base.create(requestedToolId, logger);
+            const originalPlanDeployment = adapter.planDeployment.bind(adapter);
+            Object.defineProperty(adapter, "convert", {
+              value: (input: Parameters<ToolAdapter["convert"]>[0]) =>
+                Promise.resolve({
+                  conversionResultId: ConversionResultIdSchema.parse("conversion:two-outputs"),
+                  sourceAssetId: input.asset.assetId,
+                  sourceContentHash: input.asset.contentHash,
+                  targetToolId: input.target.toolId,
+                  targetResourceKind: input.target.resourceKind,
+                  targetSchemaVersion: input.target.targetSchemaVersion,
+                  adapterId: adapter.adapterId,
+                  adapterVersion: adapter.adapterVersion,
+                  level: "full" as const,
+                  outputs: [
+                    {
+                      relativePath: "first.md",
+                      mediaType: "text/markdown",
+                      text: twoOutputText.first,
+                      contentHash: hash(twoOutputText.first),
+                    },
+                    {
+                      relativePath: "second.md",
+                      mediaType: "text/markdown",
+                      text: twoOutputText.second,
+                      contentHash: hash(twoOutputText.second),
+                    },
+                  ],
+                  diagnostics: [],
+                }),
+            });
+            Object.defineProperty(adapter, "planDeployment", {
+              value: async (planningInput: Parameters<ToolAdapter["planDeployment"]>[0]) => {
+                const planning = await originalPlanDeployment(planningInput);
+                return {
+                  ...planning,
+                  draft: {
+                    ...planning.draft,
+                    operations: planning.draft.operations.slice(0, 1),
+                    diffs: planning.draft.diffs.slice(0, 1),
+                  },
+                };
+              },
+            });
+            return adapter;
+          },
+        },
+      },
+    );
+
+    await expect(context.service.preview(request([asset("multi-output")]))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-planned operations for targets not produced by the conversion", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            operations: [
+              ...planning.draft.operations,
+              {
+                kind: "delete",
+                targetPath: AbsolutePathSchema.parse("/target/extra.md"),
+                expectedTargetHash: hash("extra\n"),
+                deploymentType: "generated_file",
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-extra-target")])),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-planned generated operations with mismatched target resource kind", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            operations: planning.draft.operations.map((operation) =>
+              operation.kind === "create" || operation.kind === "replace"
+                ? { ...operation, targetResourceKind: "agent" as const }
+                : operation,
+            ),
+          },
+        })),
+      },
+    );
+
+    await expect(context.service.preview(request([asset("bad-kind")]))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-provided diffs for unknown targets", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            diffs: [
+              ...planning.draft.diffs,
+              {
+                targetPath: AbsolutePathSchema.parse("/target/unknown.md"),
+                summary: "Unknown target",
+                unifiedText: "--- /dev/null\n+++ /target/unknown.md",
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-unknown-diff")])),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-provided diffs outside the target root", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            diffs: [
+              {
+                targetPath: AbsolutePathSchema.parse("/outside/evil.md"),
+                summary: "Outside target",
+                unifiedText: "--- /dev/null\n+++ /outside/evil.md",
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-outside-diff")])),
+    ).rejects.toMatchObject({
+      code: "PATH_OUTSIDE_ALLOWED_ROOT",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects adapter-provided diffs larger than the preview limit", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            diffs: planning.draft.diffs.map((diff) => ({
+              ...diff,
+              unifiedText: "x".repeat(200 * 1024 + 1),
+            })),
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-oversized-diff")])),
+    ).rejects.toMatchObject({
+      code: "PREVIEW_TOO_LARGE",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("surfaces non-blocking adapter planning diagnostics as plan warnings", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          diagnostics: [
+            ...planning.diagnostics,
+            {
+              code: "PLANNING_NOTE",
+              severity: "warning",
+              message: "Adapter planned with a conservative fallback",
+              evidence: {},
+              suggestedActions: ["Review the preview"],
+              blocking: false,
+            },
+          ],
+        })),
+      },
+    );
+
+    const result = await context.service.preview(request([asset("planning-warning")]));
+
+    expect(result.plan.warnings).toEqual(
+      expect.arrayContaining(["Adapter planned with a conservative fallback"]),
+    );
+    expect(context.repository.savePlanAndRecord).toHaveBeenCalledTimes(1);
   });
 
   it("applies conflict policies before persistence", async () => {

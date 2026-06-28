@@ -6,6 +6,7 @@ import {
   DeploymentPlanSchema,
   DeploymentRecordSchema,
   ConversionResultSchema,
+  type AdapterDiagnostic,
   type Asset,
   type ConversionResult,
   type ConversionTarget,
@@ -24,15 +25,15 @@ import {
   ContentHashSchema,
   DeploymentPlanIdSchema,
   DeploymentRecordIdSchema,
+  ToolInstallationIdSchema,
   type AbsolutePath,
   type ContentHash,
   type CorrelationId,
   type IsoDateTime,
 } from "@ai-config-hub/shared";
 
-const MAX_DIFF_BYTES = 200 * 1024;
 const PLAN_TTL_MS = 10 * 60 * 1_000;
-const DIFF_TRUNCATION_MARKER = "# AI Config Hub: diff truncated at a complete UTF-8 line boundary";
+const MAX_DIFF_BYTES = 200 * 1024;
 export type PreviewConflictPolicy = "fail" | "replace" | "merge";
 
 export interface PreviewRequest {
@@ -55,6 +56,7 @@ export interface DeploymentPreviewServiceOptions {
 }
 
 interface PlannedOutput {
+  readonly conversionResultId: ConversionResult["conversionResultId"];
   readonly targetPath: AbsolutePath;
   readonly text: string;
   readonly contentHash: ContentHash;
@@ -114,76 +116,6 @@ function hasRedactedValue(resource: NormalizedResource): boolean {
   );
 }
 
-interface DiffLineGroup {
-  readonly text: string;
-  readonly side: "old" | "new";
-}
-
-function lineGroups(text: string, side: DiffLineGroup["side"]): readonly DiffLineGroup[] {
-  if (text === "") return [];
-  const hasTrailingNewline = text.endsWith("\n");
-  const lines = text.split("\n");
-  if (hasTrailingNewline) lines.pop();
-  return lines.map((line, index) => ({
-    side,
-    text:
-      `${side === "old" ? "-" : "+"}${line}` +
-      (index === lines.length - 1 && !hasTrailingNewline ? "\n\\ No newline at end of file" : ""),
-  }));
-}
-
-function diffHeader(
-  path: AbsolutePath,
-  previousExists: boolean,
-  oldCount: number,
-  newCount: number,
-): string {
-  return (
-    `--- ${previousExists ? path : "/dev/null"}\n` +
-    `+++ ${path}\n` +
-    `@@ -${oldCount === 0 ? "0" : "1"},${String(oldCount)} ` +
-    `+${newCount === 0 ? "0" : "1"},${String(newCount)} @@`
-  );
-}
-
-function renderDiff(
-  path: AbsolutePath,
-  previousExists: boolean,
-  groups: readonly DiffLineGroup[],
-  truncated: boolean,
-): string {
-  const oldCount = groups.filter(({ side }) => side === "old").length;
-  const newCount = groups.length - oldCount;
-  const body = [...groups.map(({ text }) => text)].join("\n");
-  const header = diffHeader(path, previousExists, oldCount, newCount);
-  return `${truncated ? `${DIFF_TRUNCATION_MARKER}\n` : ""}${header}${body === "" ? "" : `\n${body}`}`;
-}
-
-function unifiedDiff(path: AbsolutePath, previous: string | undefined, next: string): string {
-  const groups = [...lineGroups(previous ?? "", "old"), ...lineGroups(next, "new")];
-  const full = renderDiff(path, previous !== undefined, groups, false);
-  if (Buffer.byteLength(full, "utf8") <= MAX_DIFF_BYTES) return full;
-
-  const oldCount = groups.filter(({ side }) => side === "old").length;
-  const newCount = groups.length - oldCount;
-  let usedBytes = Buffer.byteLength(
-    `${DIFF_TRUNCATION_MARKER}\n${diffHeader(path, previous !== undefined, oldCount, newCount)}`,
-    "utf8",
-  );
-  const included: DiffLineGroup[] = [];
-  for (const group of groups) {
-    const groupBytes = Buffer.byteLength(`\n${group.text}`, "utf8");
-    if (usedBytes + groupBytes > MAX_DIFF_BYTES) break;
-    included.push(group);
-    usedBytes += groupBytes;
-  }
-  const truncated = renderDiff(path, previous !== undefined, included, true);
-  if (Buffer.byteLength(truncated, "utf8") > MAX_DIFF_BYTES) {
-    throw error("PREVIEW_TOO_LARGE", "Diff headers exceed the preview byte limit");
-  }
-  return truncated;
-}
-
 function outputHash(text: string): ContentHash {
   return ContentHashSchema.parse(
     `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`,
@@ -227,6 +159,10 @@ export class DeploymentPreviewService {
     const conversions: ConversionResult[] = [];
     const conversionResultIds = new Set<string>();
     const outputs: PlannedOutput[] = [];
+    const outputsByConversion = new Map<
+      ConversionResult["conversionResultId"],
+      Map<AbsolutePath, PlannedOutput>
+    >();
     const targetKeys = new Set<string>();
 
     for (const asset of assets) {
@@ -280,17 +216,23 @@ export class DeploymentPreviewService {
           throw error("TARGET_CONFLICT", `Multiple outputs target ${canonicalTarget.path}`);
         }
         targetKeys.add(canonicalTarget.comparisonKey);
-        outputs.push({
+        const plannedOutput = {
+          conversionResultId: conversion.conversionResultId,
           targetPath: canonicalTarget.path,
           text: output.text,
           contentHash: output.contentHash,
-        });
+        };
+        outputs.push(plannedOutput);
+        const conversionOutputs =
+          outputsByConversion.get(conversion.conversionResultId) ??
+          new Map<AbsolutePath, PlannedOutput>();
+        conversionOutputs.set(canonicalTarget.path, plannedOutput);
+        outputsByConversion.set(conversion.conversionResultId, conversionOutputs);
       }
     }
 
     outputs.sort((left, right) => compareText(left.targetPath, right.targetPath));
-    const operations: DeploymentOperation[] = [];
-    const diffs: DeploymentPlan["diffs"][number][] = [];
+    const currentTargetSnapshots = new Map<AbsolutePath, FileSnapshot>();
     const expectedTargetHashes: Record<AbsolutePath, ContentHash | "absent"> = {};
     for (const output of outputs) {
       request.signal.throwIfAborted();
@@ -300,36 +242,167 @@ export class DeploymentPreviewService {
       });
       request.signal.throwIfAborted();
       expectedTargetHashes[output.targetPath] = current?.contentHash ?? "absent";
-      if (current?.contentHash === output.contentHash && current.text === output.text) continue;
-      if (current === undefined) {
-        operations.push({
-          kind: "create",
-          targetPath: output.targetPath,
-          nextText: output.text,
-          expectedTargetHash: "absent",
+      if (current !== undefined) currentTargetSnapshots.set(output.targetPath, current);
+    }
+
+    const planningDiagnostics = [];
+    const plannedOperations: DeploymentOperation[] = [];
+    const plannedDiffs: DeploymentPlan["diffs"][number][] = [];
+    const plannedTargetKeys = new Set<string>();
+    const verificationStrategies = new Set<string>();
+    for (const conversion of conversions) {
+      if (conversion.level === "unsupported") continue;
+      const planning = await adapter.planDeployment({
+        conversion,
+        target: {
+          tool: {
+            toolId: request.target.toolId,
+            installationId: ToolInstallationIdSchema.parse(
+              `${request.target.toolId}:${canonicalRoot.path}`,
+            ),
+            configRoots: [canonicalRoot.path],
+            evidence: {},
+          },
+          scope: {
+            kind: "project",
+            canonicalRootPath: canonicalRoot.path,
+            depth: 0,
+            precedence: 0,
+          },
+          canonicalRootPath: canonicalRoot.path,
+        },
+        currentTargetSnapshots,
+        signal: request.signal,
+      });
+      if (
+        planning.draft.targetToolId !== request.target.toolId ||
+        planning.draft.adapterId !== adapter.adapterId ||
+        planning.draft.adapterVersion !== adapter.adapterVersion
+      ) {
+        throw error("VALIDATION_FAILED", "Adapter deployment planning is not bound to its request");
+      }
+      verificationStrategies.add(planning.draft.verificationStrategy);
+      planningDiagnostics.push(...planning.diagnostics);
+      if (planning.diagnostics.some(({ blocking }) => blocking)) {
+        throw error(
+          "VALIDATION_FAILED",
+          "Adapter deployment planning returned blocking diagnostics",
+        );
+      }
+      const conversionOutputs = outputsByConversion.get(conversion.conversionResultId);
+      if (conversionOutputs === undefined) {
+        throw error("VALIDATION_FAILED", "Adapter deployment planning has no converted outputs");
+      }
+      const conversionOperationTargets = new Set<string>();
+      for (const operation of planning.draft.operations) {
+        const canonicalTarget = await this.options.pathPolicy.canonicalize({
+          path: operation.targetPath,
+          allowedRoots: [canonicalRoot.path],
+          intent: "read",
         });
-        diffs.push({
-          targetPath: output.targetPath,
-          summary: `Create ${output.targetPath}`,
-          unifiedText: unifiedDiff(output.targetPath, undefined, output.text),
-        });
-      } else {
-        if (conflictPolicy === "fail") {
-          throw error("TARGET_CONFLICT", `Target already exists: ${output.targetPath}`);
+        if (canonicalTarget.path !== operation.targetPath) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned a non-canonical target",
+          );
         }
-        operations.push({
-          kind: "replace",
-          targetPath: output.targetPath,
-          nextText: output.text,
-          expectedTargetHash: current.contentHash,
+        if (plannedTargetKeys.has(canonicalTarget.comparisonKey)) {
+          throw error("TARGET_CONFLICT", `Multiple operations target ${canonicalTarget.path}`);
+        }
+        if (conversionOperationTargets.has(canonicalTarget.comparisonKey)) {
+          throw error("TARGET_CONFLICT", `Multiple operations target ${canonicalTarget.path}`);
+        }
+        conversionOperationTargets.add(canonicalTarget.comparisonKey);
+        const convertedOutput = conversionOutputs.get(operation.targetPath);
+        if (convertedOutput === undefined) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned a target not produced by the conversion",
+          );
+        }
+        if (operation.kind !== "create" && operation.kind !== "replace") {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned an unsupported operation kind",
+          );
+        }
+        if ((operation.deploymentType ?? "generated_file") !== "generated_file") {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned an unsupported deployment operation type",
+          );
+        }
+        if (outputHash(operation.nextText) !== convertedOutput.contentHash) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned content that does not match conversion output",
+          );
+        }
+        if (operation.expectedTargetHash !== expectedTargetHashes[operation.targetPath]) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned a stale expected target hash",
+          );
+        }
+        if (operation.targetResourceKind !== conversion.targetResourceKind) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned mismatched target resource metadata",
+          );
+        }
+        plannedTargetKeys.add(canonicalTarget.comparisonKey);
+        if (operation.kind === "replace" && conflictPolicy === "fail") {
+          throw error("TARGET_CONFLICT", `Target already exists: ${operation.targetPath}`);
+        }
+        plannedOperations.push(operation);
+      }
+      const operationTargets = new Set(
+        planning.draft.operations.map(({ targetPath }) => targetPath),
+      );
+      for (const convertedOutput of conversionOutputs.values()) {
+        if (
+          expectedTargetHashes[convertedOutput.targetPath] !== convertedOutput.contentHash &&
+          !operationTargets.has(convertedOutput.targetPath)
+        ) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning omitted a changed conversion output",
+          );
+        }
+      }
+      for (const diff of planning.draft.diffs) {
+        const canonicalDiffTarget = await this.options.pathPolicy.canonicalize({
+          path: diff.targetPath,
+          allowedRoots: [canonicalRoot.path],
+          intent: "read",
         });
-        diffs.push({
-          targetPath: output.targetPath,
-          summary: `Replace ${output.targetPath}`,
-          unifiedText: unifiedDiff(output.targetPath, current.text, output.text),
-        });
+        if (canonicalDiffTarget.path !== diff.targetPath) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned a non-canonical diff target",
+          );
+        }
+        if (!operationTargets.has(diff.targetPath)) {
+          throw error(
+            "VALIDATION_FAILED",
+            "Adapter deployment planning returned a diff without a matching operation",
+          );
+        }
+        if (Buffer.byteLength(diff.unifiedText, "utf8") > MAX_DIFF_BYTES) {
+          throw error(
+            "PREVIEW_TOO_LARGE",
+            "Adapter deployment planning returned an oversized diff",
+          );
+        }
+        plannedDiffs.push(diff);
       }
     }
+    const operations = plannedOperations.sort((left, right) =>
+      compareText(left.targetPath, right.targetPath),
+    );
+    const diffs = plannedDiffs.sort((left, right) =>
+      compareText(left.targetPath, right.targetPath),
+    );
     if (operations.length === 0) {
       throw error("TARGET_CONFLICT", "All converted outputs are already byte-identical");
     }
@@ -354,10 +427,15 @@ export class DeploymentPreviewService {
       backupPolicy: { mode: "required" as const, backupRoot: request.backupRoot },
       verificationStrategy: {
         kind: "adapter" as const,
-        description: `Verify resulting files with ${adapter.adapterId}@${adapter.adapterVersion}`,
+        description:
+          [...verificationStrategies].sort(compareText).join("; ") ||
+          `Verify resulting files with ${adapter.adapterId}@${adapter.adapterVersion}`,
       },
       requiredConfirmations: confirmations,
-      warnings: partials.flatMap(({ warnings }) => warnings),
+      warnings: [
+        ...partials.flatMap(({ warnings }) => warnings),
+        ...planningWarnings(planningDiagnostics),
+      ],
       adapterId: adapter.adapterId,
       adapterVersion: adapter.adapterVersion,
       createdAt: request.now,
@@ -398,4 +476,12 @@ export class DeploymentPreviewService {
     await this.options.deploymentRepository.savePlanAndRecord({ plan, record });
     return Object.freeze({ plan, record, conversions: Object.freeze(conversions) });
   }
+}
+
+function planningWarnings(diagnostics: readonly AdapterDiagnostic[]): readonly string[] {
+  return diagnostics
+    .filter(({ blocking }) => !blocking)
+    .map(({ message }) => message.trim())
+    .filter((message, index, messages) => message !== "" && messages.indexOf(message) === index)
+    .sort(compareText);
 }

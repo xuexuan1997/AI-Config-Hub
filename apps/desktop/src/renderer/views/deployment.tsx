@@ -16,10 +16,28 @@ export function DeploymentView(props: {
   const rollbackUnavailable = rollbackRequestForState(props.state) === undefined;
   const requiredConfirmations = props.state.preview?.requiredConfirmations ?? [];
   const grantedConfirmations = new Set(props.state.deploymentConfirmationGrants);
+  const activeTask =
+    props.state.activeTask?.taskKind === "deployment" ||
+    props.state.activeTask?.taskKind === "rollback"
+      ? props.state.activeTask
+      : undefined;
   return (
     <>
       <h1>Deployment</h1>
       <p>Deploy only from a fresh preview plan hash with explicit confirmation.</p>
+      {activeTask === undefined ? null : (
+        <section className="task-status">
+          <h2>{activeTask.taskKind === "deployment" ? "Deployment status" : "Rollback status"}</h2>
+          <p>
+            {activeTask.phase}{" "}
+            {activeTask.progress === undefined ? null : progressLabel(activeTask)}
+          </p>
+          {activeTask.message === undefined ? null : <p>{activeTask.message}</p>}
+          {activeTask.recoveryLock ? (
+            <p className="recovery-lock">Recovery lock active. Review history before retrying.</p>
+          ) : null}
+        </section>
+      )}
       <label className="confirm">
         <input
           checked={props.state.deploymentConfirmed}
@@ -64,6 +82,14 @@ export function DeploymentView(props: {
       ) : null}
     </>
   );
+}
+
+function progressLabel(task: NonNullable<AppState["activeTask"]>): string {
+  const progress = task.progress;
+  if (progress === undefined) return "";
+  return progress.total === null
+    ? `${progress.completed} ${progress.unit}`
+    : `${progress.completed}/${progress.total} ${progress.unit}`;
 }
 
 function confirmationLabel(confirmation: DeploymentConfirmation): string {

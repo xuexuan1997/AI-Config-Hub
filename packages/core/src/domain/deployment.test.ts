@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { DeploymentPlanSchema, DeploymentRecordSchema } from "./deployment.js";
+import {
+  DeploymentOperationSchema,
+  DeploymentPlanSchema,
+  DeploymentRecordSchema,
+} from "./deployment.js";
 
 const operation = {
   kind: "replace",
@@ -65,6 +69,28 @@ describe("DeploymentPlanSchema", () => {
   it("rejects duplicate target operations", () => {
     expect(
       DeploymentPlanSchema.safeParse({ ...validPlan, operations: [operation, operation] }).success,
+    ).toBe(false);
+  });
+});
+
+describe("DeploymentOperationSchema", () => {
+  it("accepts explicit PRD deployment operation types", () => {
+    for (const deploymentType of ["copy", "symlink", "generated_file"] as const) {
+      expect(DeploymentOperationSchema.parse({ ...operation, deploymentType })).toMatchObject({
+        deploymentType,
+      });
+    }
+  });
+
+  it("defaults legacy operations to generated_file metadata", () => {
+    expect(DeploymentOperationSchema.parse(operation)).toMatchObject({
+      deploymentType: "generated_file",
+    });
+  });
+
+  it("rejects unknown deployment operation types", () => {
+    expect(
+      DeploymentOperationSchema.safeParse({ ...operation, deploymentType: "hardlink" }).success,
     ).toBe(false);
   });
 });

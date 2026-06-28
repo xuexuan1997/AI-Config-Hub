@@ -383,12 +383,14 @@ describe("DeploymentExecutionService", () => {
           targetPath: AbsolutePathSchema.parse("/target/a.md"),
           nextText: "next a",
           expectedTargetHash: hash("old a"),
+          deploymentType: "generated_file",
         },
         {
           kind: "replace",
           targetPath: AbsolutePathSchema.parse("/target/b.md"),
           nextText: "next b",
           expectedTargetHash: hash("old b"),
+          deploymentType: "generated_file",
         },
       ],
       expectedTargetHashes: {
@@ -437,12 +439,14 @@ describe("DeploymentExecutionService", () => {
           targetPath: AbsolutePathSchema.parse("/target/a.md"),
           nextText: "next a",
           expectedTargetHash: hash("old a"),
+          deploymentType: "generated_file",
         },
         {
           kind: "replace",
           targetPath: AbsolutePathSchema.parse("/target/b.md"),
           nextText: "next b",
           expectedTargetHash: hash("old b"),
+          deploymentType: "generated_file",
         },
       ],
       expectedTargetHashes: {
@@ -480,18 +484,21 @@ describe("DeploymentExecutionService", () => {
           targetPath: AbsolutePathSchema.parse("/target/a.md"),
           nextText: "next a",
           expectedTargetHash: hash("old a"),
+          deploymentType: "generated_file",
         },
         {
           kind: "replace",
           targetPath: AbsolutePathSchema.parse("/target/b.md"),
           nextText: "next b",
           expectedTargetHash: hash("old b"),
+          deploymentType: "generated_file",
         },
         {
           kind: "replace",
           targetPath: AbsolutePathSchema.parse("/target/c.md"),
           nextText: "next c",
           expectedTargetHash: hash("old c"),
+          deploymentType: "generated_file",
         },
       ],
       expectedTargetHashes: {
@@ -573,7 +580,14 @@ describe("DeploymentExecutionService", () => {
   it("persists delete completion before verification and restores it on rollback", async () => {
     const target = AbsolutePathSchema.parse("/target/delete.md");
     const plan = basePlan({
-      operations: [{ kind: "delete", targetPath: target, expectedTargetHash: hash("old delete") }],
+      operations: [
+        {
+          kind: "delete",
+          targetPath: target,
+          expectedTargetHash: hash("old delete"),
+          deploymentType: "generated_file",
+        },
+      ],
       expectedTargetHashes: { "/target/delete.md": hash("old delete") },
       requiredConfirmations: ["delete"],
     });

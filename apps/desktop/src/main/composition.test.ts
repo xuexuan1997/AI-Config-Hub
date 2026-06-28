@@ -1,12 +1,22 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { TaskEvent } from "@ai-config-hub/api";
+import { createTaskEventCursor, type TaskEvent } from "@ai-config-hub/api";
 import { ContentHashSchema } from "@ai-config-hub/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createDesktopCommandServices } from "./composition.js";
+import { createDesktopCommandServices, DesktopTaskEvents } from "./composition.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -18,7 +28,179 @@ afterEach(async () => {
   );
 });
 
+async function writeCodexUserConfigFixtures(home: string): Promise<void> {
+  await mkdir(join(home, ".codex", "agents"), { recursive: true });
+  await mkdir(join(home, ".agents", "skills", "release"), { recursive: true });
+  await writeFile(join(home, "AGENTS.md"), "# User Codex guidance\nUse tests.\n", "utf8");
+  await writeFile(
+    join(home, ".codex", "agents", "reviewer.toml"),
+    'name = "reviewer"\ndeveloper_instructions = "Review carefully."\n',
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".agents", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun checks.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(home, ".codex", "config.toml"),
+    '[mcp_servers.docs]\ncommand = "npx"\nargs = ["docs"]\n',
+    "utf8",
+  );
+}
+
 describe("desktop command service composition", () => {
+  it("defaults scans to standard user-level configuration roots and surfaces user scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-home-scan-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await mkdir(home);
+    await writeCodexUserConfigFixtures(home);
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      homeDirectory: home,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+      const assets = await runtime.services["assets.list"]({ toolKeys: ["codex"], limit: 50 });
+
+      expect(new Set(assets.items.map(({ resourceType }) => resourceType))).toEqual(
+        new Set(["rule", "agent", "skill", "mcp"]),
+      );
+      expect(new Set(assets.items.map(({ scopeKind }) => scopeKind))).toEqual(new Set(["user"]));
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("replays cursor reset and task snapshot when retained events no longer cover the cursor", () => {
+    const taskEvents = new DesktopTaskEvents();
+    const taskId = "task:deployment:replay";
+    taskEvents.record({
+      taskId,
+      emittedAt: "2026-06-28T08:00:00.000Z",
+      type: "accepted",
+      payload: {
+        taskKind: "deployment",
+        phase: "queued",
+        acceptedAt: "2026-06-28T08:00:00.000Z",
+      },
+    });
+    for (let index = 1; index <= 205; index += 1) {
+      taskEvents.record({
+        taskId,
+        emittedAt: "2026-06-28T08:00:01.000Z",
+        type: "progress",
+        payload: { phase: "preflight", completed: index, total: 205, unit: "operations" },
+      });
+    }
+
+    const replayed: TaskEvent[] = [];
+    taskEvents.subscribe(taskId, 1, (event) => replayed.push(event));
+
+    expect(replayed.map((event) => event.type)).toEqual(["cursor.reset", "snapshot"]);
+    expect(replayed[0]).toMatchObject({
+      sequence: null,
+      payload: {
+        requestedAfterSequence: 1,
+        earliestAvailableSequence: 7,
+        latestSequence: 206,
+      },
+    });
+    expect(replayed[1]).toMatchObject({
+      sequence: null,
+      payload: {
+        taskKind: "deployment",
+        phase: "preflight",
+        status: "running",
+        progress: { phase: "preflight", completed: 205, total: 205, unit: "operations" },
+        lastSequence: 206,
+        cancellable: true,
+      },
+    });
+  });
+
+  it("records local Git snapshots for successful deployments and rollbacks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-history-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+
+      const deployment = await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: preview.requiredConfirmations,
+      });
+      const rollback = await runtime.services["deployment.rollback"]({
+        deploymentId: deployment.deploymentId,
+      });
+
+      expect(deployment.snapshot).toMatchObject({
+        status: "recorded",
+        message: `record deployment ${deployment.deploymentId}`,
+      });
+      expect(rollback.snapshot).toMatchObject({
+        status: "recorded",
+        message: `record deployment ${rollback.rollbackId}`,
+      });
+
+      const history = await runtime.services["history.list"]({ limit: 10 });
+      expect(history.items.find((entry) => entry.id === deployment.deploymentId)).toMatchObject({
+        snapshot: {
+          status: "recorded",
+          commitId: deployment.snapshot?.status === "recorded" ? deployment.snapshot.commitId : "",
+          authoredAt:
+            deployment.snapshot?.status === "recorded" ? deployment.snapshot.authoredAt : "",
+          message: `record deployment ${deployment.deploymentId}`,
+        },
+      });
+      expect(history.items.find((entry) => entry.id === rollback.rollbackId)).toMatchObject({
+        kind: "rollback",
+        snapshot: {
+          status: "recorded",
+          commitId: rollback.snapshot?.status === "recorded" ? rollback.snapshot.commitId : "",
+          message: `record deployment ${rollback.rollbackId}`,
+        },
+      });
+      const historyRoot = join(userData, "history", "local-git");
+      expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+      expect(await readdir(join(historyRoot, "assets"))).toHaveLength(1);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("uses real scanner and storage services instead of demo assets", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-services-"));
     temporaryDirectories.push(root);
@@ -153,6 +335,45 @@ describe("desktop command service composition", () => {
         confirmedPlanHash: preview.planHash,
         confirmations: preview.requiredConfirmations,
       });
+      const deploymentEvents: TaskEvent[] = [];
+      runtime.taskEvents.subscribe(String(deployment.taskId), 0, (event) =>
+        deploymentEvents.push(event),
+      );
+      expect(deploymentEvents.map((event) => event.type)).toEqual([
+        "accepted",
+        "phase.changed",
+        "progress",
+        "phase.changed",
+        "progress",
+        "phase.changed",
+        "progress",
+        "phase.changed",
+        "progress",
+        "phase.changed",
+        "completed",
+      ]);
+      expect(
+        deploymentEvents
+          .filter((event) => event.type === "phase.changed")
+          .map((event) => event.payload.to),
+      ).toEqual(["preflight", "backing_up", "writing", "verifying", "completed"]);
+      expect(
+        deploymentEvents.filter((event) => event.type === "progress").map((event) => event.payload),
+      ).toEqual([
+        { phase: "preflight", completed: 0, total: 1, unit: "operations" },
+        { phase: "backing_up", completed: 1, total: 1, unit: "operations" },
+        { phase: "writing", completed: 1, total: 1, unit: "operations" },
+        { phase: "verifying", completed: 1, total: 1, unit: "operations" },
+      ]);
+      expect(deploymentEvents.at(-1)).toMatchObject({
+        type: "completed",
+        payload: {
+          status: "succeeded",
+          succeededCount: 1,
+          failedCount: 0,
+          systemRecoveryLock: false,
+        },
+      });
       await expect(
         readFile(join(project, ".cursor", "rules", "agents.mdc"), "utf8"),
       ).resolves.toContain("Use local TypeScript conventions.");
@@ -166,6 +387,155 @@ describe("desktop command service composition", () => {
       ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     } finally {
       await chmod(cursorRules, 0o700).catch(() => undefined);
+      runtime.close();
+    }
+  });
+
+  it("emits deployment failure events with a recovery lock and task id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-deploy-failure-events-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+      const history = await runtime.services["history.list"]({ kinds: ["deployment"], limit: 10 });
+      const planned = history.items.find((entry) => entry.status === "planned");
+      if (planned === undefined) throw new Error("Expected planned deployment history entry");
+      let taskId: string | undefined;
+
+      try {
+        await runtime.services["deployment.execute"]({
+          planId: preview.planId,
+          confirmedPlanHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+          confirmations: preview.requiredConfirmations,
+        });
+        throw new Error("Expected deployment execution to fail");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "VALIDATION_FAILED" });
+        taskId = error instanceof Error && "taskId" in error ? String(error.taskId) : undefined;
+        expect(taskId).toMatch(/^task:deployment:/);
+      }
+      if (taskId === undefined) throw new Error("Expected deployment failure task id");
+      const events: TaskEvent[] = [];
+      runtime.taskEvents.subscribe(taskId, 0, (event) => events.push(event));
+
+      expect(events.map((event) => event.type)).toEqual([
+        "accepted",
+        "phase.changed",
+        "progress",
+        "item.failed",
+        "phase.changed",
+        "completed",
+      ]);
+      expect(events.find((event) => event.type === "item.failed")).toMatchObject({
+        payload: {
+          itemRef: planned.id,
+          errorCode: "VALIDATION_FAILED",
+          retryable: false,
+        },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "completed",
+        payload: {
+          status: "failed",
+          failedCount: 1,
+          resultRef: planned.id,
+          systemRecoveryLock: true,
+        },
+      });
+      const acceptedByCursor: TaskEvent[] = [];
+      const cursor = createTaskEventCursor(taskId, 0, (event) => acceptedByCursor.push(event));
+      for (const event of events) {
+        expect(cursor.push(event).kind, `${event.sequence}:${event.type}`).toBe("accepted");
+      }
+      expect(acceptedByCursor).toHaveLength(events.length);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("emits rollback preflight failure events with a recovery lock and task id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-rollback-preflight-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      let taskId: string | undefined;
+      try {
+        await runtime.services["deployment.rollback"]({
+          deploymentId: "deployment-record-missing",
+        });
+        throw new Error("Expected rollback preflight to fail");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "NOT_FOUND" });
+        taskId = error instanceof Error && "taskId" in error ? String(error.taskId) : undefined;
+        expect(taskId).toMatch(/^task:rollback:/);
+      }
+      if (taskId === undefined) throw new Error("Expected rollback failure task id");
+
+      const events: TaskEvent[] = [];
+      runtime.taskEvents.subscribe(taskId, 0, (event) => events.push(event));
+      expect(events.map((event) => event.type)).toEqual([
+        "accepted",
+        "phase.changed",
+        "progress",
+        "item.failed",
+        "phase.changed",
+        "completed",
+      ]);
+      expect(events.find((event) => event.type === "item.failed")).toMatchObject({
+        payload: {
+          itemRef: "deployment-record-missing",
+          errorCode: "NOT_FOUND",
+          retryable: false,
+        },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "completed",
+        payload: {
+          status: "failed",
+          failedCount: 1,
+          resultRef: "deployment-record-missing",
+          systemRecoveryLock: true,
+        },
+      });
+      const acceptedByCursor: TaskEvent[] = [];
+      const cursor = createTaskEventCursor(taskId, 0, (event) => acceptedByCursor.push(event));
+      for (const event of events) {
+        expect(cursor.push(event).kind, `${event.sequence}:${event.type}`).toBe("accepted");
+      }
+      expect(acceptedByCursor).toHaveLength(events.length);
+    } finally {
       runtime.close();
     }
   });
