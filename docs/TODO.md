@@ -93,28 +93,44 @@
 
 ## P3：中央资产、Git 与 Preset
 
-- [ ] 实现个人中央资产库。
-- [ ] 扩展当前 Git port。
+- [x] 实现个人中央资产库。
+  - `@ai-config-hub/asset-library` 提供文件系统个人中央库，初始化 `manifest.json`、`rules/`、`agents/`、`skills/`、`mcp/`、`presets/`、`schemas/` 推荐结构。
+  - 支持从规范化资产导入中央资产、确定性文件路径、来源资产/工具/路径追踪、内容 hash、列表与详情读取。
+  - 覆盖证据：`packages/asset-library/src/asset-library.test.ts`。
+- [x] 扩展当前 Git port。
   - 当前只包含 `initialize`、`snapshot`、`diff`、`history`。
-  - 需要补充团队资产同步所需的远端仓库操作与安全约束。
-- [ ] 实现 Git 资产库工作流。
+  - 已保留 `LocalGitPort` 的本地快照安全边界，并新增独立的 `AssetRepositoryGitPort` 承载远端资产库操作。
+  - 远端 Git 实现使用 `execFile`、禁用 hook、禁用交互式凭据提示、限制 clone URL 协议、校验 clone 目标根、限制相对路径、拒绝 `.git`/路径穿越/符号链接逃逸。
+  - 覆盖证据：`packages/core/src/ports/contracts.test.ts`、`packages/git/src/asset-repository-git.test.ts`、`packages/git/src/local-git.test.ts`。
+- [x] 实现 Git 资产库工作流。
   - Clone。
   - Pull。
   - Commit。
   - Push。
   - Git 冲突提示与恢复引导。
-- [ ] 实现 Preset 基础能力。
+  - `SystemAssetRepositoryGitPort` 覆盖 clone、pull、status、diff、commit、push、tag、restore 和 history；status 输出 clean/dirty/ahead/behind/diverged/conflicted 分类和冲突恢复引导。
+  - 覆盖证据：`packages/git/src/asset-repository-git.test.ts`。
+- [x] 实现 Preset 基础能力。
   - Preset 定义、预览、应用、来源追踪和回滚记录。
-- [ ] 实现自定义工具声明式配置。
+  - `@ai-config-hub/asset-library` 支持 Preset 定义创建/更新、预览 create/update/delete/unchanged/incompatible、应用记录、来源 hash、目标回滚 hash 与部署记录关联。
+  - 覆盖证据：`packages/asset-library/src/asset-library.test.ts`。
+- [x] 实现自定义工具声明式配置。
   - 支持用户添加内部工具并扫描其 Rules、Agents、Skills 或 MCP 配置。
+  - `ToolIdSchema` 支持内置工具和安全的小写 kebab 自定义工具 ID；SQLite 迁移放宽 `tools.tool_key` 约束。
+  - `createDeclarativeToolRegistration()` 支持声明式 detect/path/resource 配置，发现并解析 Rules、Agents、Skills、MCP 文件，不执行脚本或远程内容；默认 registry 可接入自定义工具定义。
+  - 覆盖证据：`packages/shared/src/primitives.test.ts`、`packages/storage/src/database.test.ts`、`packages/adapters/src/declarative-tool.test.ts`。
 
 ## P4：扩展入口
 
-- [ ] 实现本地 Local API。
+- [x] 实现本地 Local API。
   - 仅监听本机地址。
   - 需要明确认证、来源限制和关闭策略。
-- [ ] 实现本地 Web UI。
+  - `@ai-config-hub/local-api` 通过现有 `CommandServiceMap` 和 `createCommandHandlers()` 暴露本地 HTTP API，默认仅允许 `127.0.0.1`、`::1`、`localhost`，需要 Bearer token，校验浏览器 Origin，API 响应设置 no-store，并在 shutdown 时关闭 SSE 订阅。
+  - 覆盖证据：`packages/local-api/src/server.test.ts`。
+- [x] 实现本地 Web UI。
   - 与桌面端共享同一业务 API 和核心用例，不复制业务逻辑。
+  - `@ai-config-hub/web` 提供 Vite/React 本地 Web UI，通过 browser-safe `@ai-config-hub/api/browser` 客户端、fetch 和 SSE 调用 Local API，不导入 filesystem/storage/git/core 等特权实现包。
+  - 覆盖证据：`apps/web/src/local-transport.test.ts`、`apps/web/src/import-boundary.test.ts`、`packages/api/src/browser.ts`、`dependency-cruiser.mjs`。
 
 ## 已完成归档
 

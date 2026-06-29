@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "./database.js";
-import { initialMigration, migration, type DatabaseMigration } from "./migrations.js";
+import {
+  databaseMigrations,
+  initialMigration,
+  migration,
+  rollbackLinksMigration,
+  type DatabaseMigration,
+} from "./migrations.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -73,14 +79,6 @@ describe("SQLite bootstrap", () => {
         )
         .run("s1", "theme", "{}", "public", 0, 1, 1),
     ).toThrow();
-    expect(() =>
-      database
-        .prepare(
-          "INSERT INTO tools(id, tool_installation_id, tool_key, canonical_config_root, display_name, adapter_version, capabilities_json, last_seen_at, is_detected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run("t1", "tool-1", "unknown", "/x", "Unknown", "0.1.0", "{}", 1, 1),
-    ).toThrow();
-
     database
       .prepare(
         "INSERT INTO tools(id, tool_installation_id, tool_key, canonical_config_root, display_name, adapter_version, capabilities_json, last_seen_at, is_detected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -100,6 +98,32 @@ describe("SQLite bootstrap", () => {
     expect(database.prepare("SELECT count(*) AS count FROM scopes").get()).toEqual({ count: 0 });
     expect(() => database.prepare("DELETE FROM tools WHERE id = ?").run("t1")).not.toThrow();
     database.close();
+  });
+
+  it("upgrades existing databases so tools can store custom declarative tool keys", async () => {
+    const path = databasePath();
+    const first = await openDatabase({
+      path,
+      appVersion: "0.1.0",
+      migrations: [initialMigration, rollbackLinksMigration],
+    });
+    first.database.close();
+
+    const upgraded = await openDatabase({
+      path,
+      appVersion: "0.2.1",
+      migrations: databaseMigrations,
+    });
+    expect(upgraded.mode).toBe("read_write");
+    if (upgraded.mode !== "read_write") return;
+    expect(() =>
+      upgraded.database
+        .prepare(
+          "INSERT INTO tools(id, tool_installation_id, tool_key, canonical_config_root, display_name, adapter_version, capabilities_json, last_seen_at, is_detected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("t-custom", "tool-custom", "acme-tool", "/x", "Acme", "0.1.0", "{}", 1, 1),
+    ).not.toThrow();
+    upgraded.database.close();
   });
 
   it("refuses checksum drift and returns a read-only recovery connection", async () => {

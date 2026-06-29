@@ -1,5 +1,6 @@
 export * from "./frontmatter.js";
 export * from "./registry.js";
+export * from "./declarative-tool.js";
 export * from "./secrets.js";
 export * from "./structured-config.js";
 export * from "./claude-code.js";

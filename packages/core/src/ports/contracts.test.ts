@@ -8,7 +8,7 @@ import {
   type UseCaseContractMap,
 } from "../use-cases/contracts.js";
 import type { AdapterReadApi, ToolAdapter } from "./adapter.js";
-import type { LocalGitPort } from "./git.js";
+import type { AssetRepositoryGitPort, LocalGitPort } from "./git.js";
 
 describe("ToolAdapter contract", () => {
   it("contains every approved semantic capability", () => {
@@ -33,7 +33,22 @@ describe("LocalGitPort", () => {
   });
 
   it("does not expose remote repository operations", () => {
-    expectTypeOf<keyof LocalGitPort>().not.toEqualTypeOf<"clone" | "pull" | "push">();
+    expectTypeOf<keyof LocalGitPort>().not.toEqualTypeOf<"clone" | "pull" | "push" | "tag">();
+  });
+});
+
+describe("AssetRepositoryGitPort", () => {
+  it("exposes remote asset-library workflow operations separately from LocalGitPort", () => {
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("clone");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("pull");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("status");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("diff");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("commit");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("push");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("tag");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("restore");
+    expectTypeOf<AssetRepositoryGitPort>().toHaveProperty("history");
+    expectTypeOf<keyof LocalGitPort>().not.toEqualTypeOf<keyof AssetRepositoryGitPort>();
   });
 });
 

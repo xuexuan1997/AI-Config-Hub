@@ -5,7 +5,7 @@ export default defineConfig({
   outputDir: "./test-results/playwright",
   reporter: [["html", { outputFolder: "playwright-report", open: "never" }], ["list"]],
   retries: process.env["CI"] === undefined ? 0 : 2,
-  ...(process.env["CI"] === undefined ? {} : { workers: 1 }),
+  workers: 1,
   projects: [
     { name: "cli", testMatch: /cli\.spec\.ts/ },
     { name: "desktop", testMatch: /desktop\.spec\.ts/ },

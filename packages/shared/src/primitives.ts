@@ -2,7 +2,16 @@ import { z } from "zod";
 
 const StableIdSchema = z.string().trim().min(1).max(200);
 
-export const ToolIdSchema = z.enum(["claude-code", "cursor", "codex", "opencode"]);
+const BuiltInToolIdSchema = z.enum(["claude-code", "cursor", "codex", "opencode"]);
+const CustomToolIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/, "Expected a lowercase kebab tool id")
+  .brand<"CustomToolId">();
+
+export const ToolIdSchema = z.union([BuiltInToolIdSchema, CustomToolIdSchema]);
 export type ToolId = z.infer<typeof ToolIdSchema>;
 
 export const AdapterIdSchema = StableIdSchema.brand<"AdapterId">();

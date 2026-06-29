@@ -4,6 +4,10 @@ import type { AdapterId, ToolId } from "@ai-config-hub/shared";
 import { claudeCodeRegistration } from "./claude-code.js";
 import { codexRegistration } from "./codex.js";
 import { cursorRegistration } from "./cursor.js";
+import {
+  createDeclarativeToolRegistration,
+  type DeclarativeToolDefinition,
+} from "./declarative-tool.js";
 import { opencodeRegistration } from "./opencode.js";
 
 export interface AdapterRegistry {
@@ -14,10 +18,15 @@ export interface AdapterRegistry {
 
 export function createAdapterRegistry(
   registrations: readonly AdapterRegistration[],
+  customDefinitions: readonly DeclarativeToolDefinition[] = [],
 ): AdapterRegistry {
   const byTool: Partial<Record<ToolId, AdapterRegistration>> = {};
   const adapterIds = new Set<AdapterId>();
-  for (const registration of registrations) {
+  const allRegistrations = [
+    ...registrations,
+    ...customDefinitions.map((definition) => createDeclarativeToolRegistration(definition)),
+  ];
+  for (const registration of allRegistrations) {
     if (registration.contractVersion !== 1) throw new Error("Unsupported adapter contract version");
     if (byTool[registration.toolId] !== undefined) {
       throw new Error(`Duplicate tool registration: ${registration.toolId}`);
@@ -57,6 +66,8 @@ const builtInRegistrations = Object.freeze([
   opencodeRegistration,
 ]);
 
-export function createDefaultAdapterRegistry(): AdapterRegistry {
-  return createAdapterRegistry(builtInRegistrations);
+export function createDefaultAdapterRegistry(options?: {
+  readonly customTools?: readonly DeclarativeToolDefinition[];
+}): AdapterRegistry {
+  return createAdapterRegistry(builtInRegistrations, options?.customTools ?? []);
 }

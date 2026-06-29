@@ -18,9 +18,12 @@
     "paths": {
       "@ai-config-hub/adapters": ["./packages/adapters/src/index.ts"],
       "@ai-config-hub/api": ["./packages/api/src/index.ts"],
+      "@ai-config-hub/api/browser": ["./packages/api/src/browser.ts"],
+      "@ai-config-hub/asset-library": ["./packages/asset-library/src/index.ts"],
       "@ai-config-hub/core": ["./packages/core/src/index.ts"],
       "@ai-config-hub/deployer": ["./packages/deployer/src/index.ts"],
       "@ai-config-hub/git": ["./packages/git/src/index.ts"],
+      "@ai-config-hub/local-api": ["./packages/local-api/src/index.ts"],
       "@ai-config-hub/scanner": ["./packages/scanner/src/index.ts"],
       "@ai-config-hub/shared": ["./packages/shared/src/index.ts"],
       "@ai-config-hub/storage": ["./packages/storage/src/index.ts"]

@@ -3,9 +3,16 @@ import { describe, expect, it } from "vitest";
 import { ContentHashSchema, IsoDateTimeSchema, ToolIdSchema } from "./primitives.js";
 
 describe("shared primitives", () => {
-  it("accepts only the four MVP tool ids", () => {
-    expect(ToolIdSchema.options).toEqual(["claude-code", "cursor", "codex", "opencode"]);
-    expect(ToolIdSchema.safeParse("other").success).toBe(false);
+  it("accepts built-in tool ids and safe custom kebab ids", () => {
+    for (const toolId of ["claude-code", "cursor", "codex", "opencode", "my-tool", "tool2"]) {
+      expect(ToolIdSchema.safeParse(toolId).success).toBe(true);
+    }
+  });
+
+  it("rejects unsafe custom tool ids", () => {
+    for (const toolId of ["", "My Tool", "my_tool", "-tool", "tool-", "two--dash", "tool.script"]) {
+      expect(ToolIdSchema.safeParse(toolId).success).toBe(false);
+    }
   });
 
   it("requires a prefixed SHA-256 hash", () => {

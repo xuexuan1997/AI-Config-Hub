@@ -7,16 +7,22 @@ const packageSource = (name: string) =>
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@ai-config-hub/adapters": packageSource("adapters"),
-      "@ai-config-hub/api": packageSource("api"),
-      "@ai-config-hub/core": packageSource("core"),
-      "@ai-config-hub/deployer": packageSource("deployer"),
-      "@ai-config-hub/git": packageSource("git"),
-      "@ai-config-hub/scanner": packageSource("scanner"),
-      "@ai-config-hub/shared": packageSource("shared"),
-      "@ai-config-hub/storage": packageSource("storage"),
-    },
+    alias: [
+      {
+        find: "@ai-config-hub/api/browser",
+        replacement: fileURLToPath(new URL("./packages/api/src/browser.ts", import.meta.url)),
+      },
+      { find: "@ai-config-hub/adapters", replacement: packageSource("adapters") },
+      { find: "@ai-config-hub/api", replacement: packageSource("api") },
+      { find: "@ai-config-hub/asset-library", replacement: packageSource("asset-library") },
+      { find: "@ai-config-hub/core", replacement: packageSource("core") },
+      { find: "@ai-config-hub/deployer", replacement: packageSource("deployer") },
+      { find: "@ai-config-hub/git", replacement: packageSource("git") },
+      { find: "@ai-config-hub/local-api", replacement: packageSource("local-api") },
+      { find: "@ai-config-hub/scanner", replacement: packageSource("scanner") },
+      { find: "@ai-config-hub/shared", replacement: packageSource("shared") },
+      { find: "@ai-config-hub/storage", replacement: packageSource("storage") },
+    ],
   },
   test: {
     globalSetup: ["./packages/deployer/scripts/vitest-native-setup.mjs"],

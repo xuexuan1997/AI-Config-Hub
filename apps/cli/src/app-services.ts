@@ -394,7 +394,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
         taskId: request.taskId === undefined ? undefined : TaskIdSchema.parse(request.taskId),
         projectId:
           request.projectId === undefined ? undefined : ProjectIdSchema.parse(request.projectId),
-        toolKeys: request.toolKeys,
+        toolKeys: request.toolKeys?.map((toolKey) => ToolIdSchema.parse(toolKey)),
         severities: request.severities,
         from: request.from,
         to: request.to,

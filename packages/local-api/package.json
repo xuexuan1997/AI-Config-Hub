@@ -1,5 +1,5 @@
 {
-  "name": "@ai-config-hub/api",
+  "name": "@ai-config-hub/local-api",
   "version": "0.2.1",
   "private": true,
   "type": "module",
@@ -12,20 +12,19 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./browser": {
-      "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --root ../.. packages/api/src"
+    "test": "vitest run --root ../.. packages/local-api/src"
   },
   "dependencies": {
-    "@ai-config-hub/core": "workspace:*",
-    "@ai-config-hub/shared": "workspace:*",
-    "zod": "catalog:"
+    "@ai-config-hub/api": "workspace:*",
+    "@ai-config-hub/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.2",
+    "vitest": "4.1.9"
   }
 }

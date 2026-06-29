@@ -3,11 +3,13 @@ const packagePolicies = [
   { name: "shared", allowed: ["shared"] },
   { name: "core", allowed: ["core", "shared"] },
   { name: "api", allowed: ["api", "core", "shared"] },
+  { name: "asset-library", allowed: ["asset-library", "core", "shared"] },
   { name: "adapters", allowed: ["adapters", "core", "shared"] },
   { name: "scanner", allowed: ["scanner", "adapters", "core", "shared"] },
   { name: "deployer", allowed: ["deployer", "adapters", "core", "shared"] },
   { name: "storage", allowed: ["storage", "core", "shared"] },
   { name: "git", allowed: ["git", "core", "shared"] },
+  { name: "local-api", allowed: ["local-api", "api", "shared"] },
 ];
 
 const packageDependencyRules = packagePolicies.map(({ name, allowed }) => ({
@@ -49,7 +51,7 @@ const config = {
       name: "renderer-no-privileged-capabilities",
       severity: "error",
       from: {
-        path: "^(?:apps/desktop/src/renderer|tests/architecture/fixtures/renderer)(?:/|$)",
+        path: "^(?:apps/desktop/src/renderer|apps/web/src/(?!.*\\.test\\.)|tests/architecture/fixtures/renderer)(?:/|$)",
       },
       to: {
         path: "^(?:(?:node:)?(?:fs|fs/promises|child_process|worker_threads|net|tls)|electron|@ai-config-hub/(?:storage|deployer|scanner|adapters|git)|packages/(?:storage|deployer|scanner|adapters|git)(?:/|$))",

@@ -5,11 +5,13 @@ const packageNames = [
   "shared",
   "core",
   "api",
+  "asset-library",
   "adapters",
   "scanner",
   "storage",
   "deployer",
   "git",
+  "local-api",
 ] as const;
 
 describe("package boundaries", () => {
@@ -22,6 +24,6 @@ describe("package boundaries", () => {
     };
 
     expect(manifest.name).toBe(`@ai-config-hub/${name}`);
-    expect(Object.keys(manifest.exports)).toEqual(["."]);
+    expect(Object.keys(manifest.exports)).toEqual(name === "api" ? [".", "./browser"] : ["."]);
   });
 });

@@ -30,9 +30,7 @@ export function MigrationView(props: {
           <select
             id="migration-target"
             value={props.state.migration.targetToolKey}
-            onChange={(event) =>
-              props.onTargetTool(event.currentTarget.value as MigrationTargetToolKey)
-            }
+            onChange={(event) => props.onTargetTool(event.currentTarget.value)}
           >
             {MIGRATION_TARGET_TOOL_OPTIONS.map((target) => (
               <option key={target} value={target}>

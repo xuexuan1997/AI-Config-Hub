@@ -1,0 +1,24 @@
+{
+  "name": "@ai-config-hub/web",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build --config vite.config.ts",
+    "dev": "vite --config vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ../.. apps/web/src"
+  },
+  "dependencies": {
+    "@ai-config-hub/api": "workspace:*",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "vite": "8.0.16",
+    "vitest": "4.1.9"
+  }
+}

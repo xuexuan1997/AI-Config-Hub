@@ -14,7 +14,9 @@ const mainEntry = join(repoRoot, "apps/desktop/dist/main/main/main.js");
 
 test.setTimeout(120_000);
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browserName }, testInfo) => {
+  testInfo.annotations.push({ type: "browser", description: browserName });
+  testInfo.setTimeout(120_000);
   await execFileAsync("pnpm", ["build"], {
     cwd: repoRoot,
     env: process.env,

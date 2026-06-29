@@ -31,25 +31,27 @@ type AgentResource = Extract<NormalizedResource, { kind: "agent" }>;
 type SkillResource = Extract<NormalizedResource, { kind: "skill" }>;
 type McpResource = Extract<NormalizedResource, { kind: "mcp" }>;
 type RemoteMcpTransport = Extract<McpResource["data"]["transport"], { kind: "http" | "sse" }>;
+type BuiltInToolId = "claude-code" | "cursor" | "codex" | "opencode";
+type JsonMcpToolId = Exclude<BuiltInToolId, "codex">;
 
 const agentDirectories = {
   "claude-code": ".claude/agents",
   cursor: ".cursor/agents",
   opencode: ".opencode/agents",
-} as const satisfies Record<Exclude<ToolId, "codex">, string>;
+} as const satisfies Record<Exclude<BuiltInToolId, "codex">, string>;
 
 const skillDirectories = {
   "claude-code": ".claude/skills",
   cursor: ".cursor/skills",
   codex: ".agents/skills",
   opencode: ".opencode/skills",
-} as const satisfies Record<ToolId, string>;
+} as const satisfies Record<BuiltInToolId, string>;
 
 const jsonMcpPaths = {
   "claude-code": ".mcp.json",
   cursor: ".cursor/mcp.json",
   opencode: "opencode.json",
-} as const satisfies Record<Exclude<ToolId, "codex">, string>;
+} as const satisfies Record<JsonMcpToolId, string>;
 
 function hash(text: string) {
   return ContentHashSchema.parse(
@@ -138,8 +140,9 @@ function renderRule(target: ToolId, resource: RuleResource): ConvertedOutput {
 
 function renderAgent(target: ToolId, resource: AgentResource): ConvertedOutput {
   if (target === "codex") return renderCodexAgent(resource);
+  const directory = agentDirectories[jsonMcpTarget(target)];
   return output(
-    `${agentDirectories[target]}/${slug(resource.data.name)}.md`,
+    `${directory}/${slug(resource.data.name)}.md`,
     "text/markdown",
     frontmatter(
       {
@@ -153,8 +156,9 @@ function renderAgent(target: ToolId, resource: AgentResource): ConvertedOutput {
 }
 
 function renderSkill(target: ToolId, resource: SkillResource): ConvertedOutput {
+  const directory = skillDirectories[builtInTarget(target)];
   return output(
-    `${skillDirectories[target]}/${slug(resource.data.name)}/SKILL.md`,
+    `${directory}/${slug(resource.data.name)}/SKILL.md`,
     "text/markdown",
     frontmatter(
       {
@@ -170,7 +174,9 @@ function renderSkill(target: ToolId, resource: SkillResource): ConvertedOutput {
 }
 
 function renderMcp(target: ToolId, resource: McpResource): ConvertedOutput {
-  return target === "codex" ? renderCodexMcp(resource) : renderJsonMcp(target, resource);
+  return target === "codex"
+    ? renderCodexMcp(resource)
+    : renderJsonMcp(jsonMcpTarget(target), resource);
 }
 
 function renderCodexAgent(resource: AgentResource): ConvertedOutput {
@@ -231,12 +237,33 @@ function remoteUrl(transport: RemoteMcpTransport) {
   return url.toString();
 }
 
-function renderJsonMcp(target: Exclude<ToolId, "codex">, resource: McpResource): ConvertedOutput {
+function renderJsonMcp(target: JsonMcpToolId, resource: McpResource): ConvertedOutput {
   const document =
     target === "opencode"
       ? { mcp: { [resource.data.name]: jsonMcpConfig(resource, target) } }
       : { mcpServers: { [resource.data.name]: jsonMcpConfig(resource, target) } };
   return output(jsonMcpPaths[target], "application/json", `${JSON.stringify(document, null, 2)}\n`);
+}
+
+function builtInTarget(target: ToolId): BuiltInToolId {
+  switch (target) {
+    case "claude-code":
+      return "claude-code";
+    case "cursor":
+      return "cursor";
+    case "codex":
+      return "codex";
+    case "opencode":
+      return "opencode";
+    default:
+      throw new TypeError(`Unsupported conversion target: ${target}`);
+  }
+}
+
+function jsonMcpTarget(target: ToolId): JsonMcpToolId {
+  const builtIn = builtInTarget(target);
+  if (builtIn === "codex") throw new TypeError("Codex uses TOML MCP rendering");
+  return builtIn;
 }
 
 function renderCodexMcp(resource: McpResource): ConvertedOutput {
