@@ -199,6 +199,40 @@ class MemoryFiles implements FileSnapshotPort, DeploymentFilePort {
     return Promise.resolve({ resultingHash: hash(input.text) });
   }
 
+  copy(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }> {
+    this.writes.push(`copy:${input.source}->${input.target}`);
+    const source = this.files.get(input.source);
+    if (source === undefined || hash(source) !== input.expectedSourceHash)
+      throw new Error("copy source drift");
+    const current = this.files.get(input.target);
+    const currentHash = current === undefined ? "absent" : hash(current);
+    if (currentHash !== input.expectedHash) throw new Error("copy target drift");
+    this.files.set(input.target, source);
+    return Promise.resolve({ resultingHash: hash(source) });
+  }
+
+  createSymlink(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }> {
+    this.writes.push(`symlink:${input.source}->${input.target}`);
+    const source = this.files.get(input.source);
+    if (source === undefined || hash(source) !== input.expectedSourceHash)
+      throw new Error("symlink source drift");
+    const current = this.files.get(input.target);
+    const currentHash = current === undefined ? "absent" : hash(current);
+    if (currentHash !== input.expectedHash) throw new Error("symlink target drift");
+    this.files.set(input.target, source);
+    return Promise.resolve({ resultingHash: hash(source) });
+  }
+
   remove(input: {
     readonly target: AbsolutePath;
     readonly expectedHash: ContentHash;
@@ -627,6 +661,62 @@ describe("DeploymentExecutionService", () => {
       "replace:/target/delete.md:old delete",
     ]);
     expect(files.files.get(target)).toBe("old delete");
+  });
+
+  it("executes copy deployment operations through the file port", async () => {
+    const source = AbsolutePathSchema.parse("/target/source.md");
+    const target = AbsolutePathSchema.parse("/target/copied.md");
+    const plan = basePlan({
+      operations: [
+        {
+          kind: "create",
+          targetPath: target,
+          nextText: "copied contents",
+          expectedTargetHash: "absent",
+          deploymentType: "copy",
+          sourcePath: source,
+          sourceHash: hash("copied contents"),
+        },
+      ],
+      expectedTargetHashes: { [target]: "absent" },
+      requiredConfirmations: [],
+    });
+    const files = new MemoryFiles(new Map([[source, "copied contents"]]));
+    const { service } = serviceFixture(plan, files);
+
+    const result = await execute(service, []);
+
+    expect(result.status).toBe("succeeded");
+    expect(files.writes).toEqual([`copy:${source}->${target}`]);
+    expect(files.files.get(target)).toBe("copied contents");
+  });
+
+  it("executes symlink deployment operations through the file port", async () => {
+    const source = AbsolutePathSchema.parse("/target/source.md");
+    const target = AbsolutePathSchema.parse("/target/linked.md");
+    const plan = basePlan({
+      operations: [
+        {
+          kind: "create",
+          targetPath: target,
+          nextText: "linked contents",
+          expectedTargetHash: "absent",
+          deploymentType: "symlink",
+          sourcePath: source,
+          sourceHash: hash("linked contents"),
+        },
+      ],
+      expectedTargetHashes: { [target]: "absent" },
+      requiredConfirmations: [],
+    });
+    const files = new MemoryFiles(new Map([[source, "linked contents"]]));
+    const { service } = serviceFixture(plan, files);
+
+    const result = await execute(service, []);
+
+    expect(result.status).toBe("succeeded");
+    expect(files.writes).toEqual([`symlink:${source}->${target}`]);
+    expect(files.files.get(target)).toBe("linked contents");
   });
 
   it("fails rollback instead of overwriting external drift after a write", async () => {

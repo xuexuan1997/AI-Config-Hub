@@ -20,6 +20,8 @@ export type DeploymentOperationType = z.infer<typeof DeploymentOperationTypeSche
 
 const operationMetadataShape = {
   deploymentType: DeploymentOperationTypeSchema.default("generated_file"),
+  sourcePath: AbsolutePathSchema.optional(),
+  sourceHash: ContentHashSchema.optional(),
 } as const;
 
 const generatedTargetMetadataShape = {
@@ -57,11 +59,38 @@ const DeleteOperationSchema = z
   .strict()
   .readonly();
 
-export const DeploymentOperationSchema = z.discriminatedUnion("kind", [
-  CreateOperationSchema,
-  ReplaceOperationSchema,
-  DeleteOperationSchema,
-]);
+export const DeploymentOperationSchema = z
+  .discriminatedUnion("kind", [
+    CreateOperationSchema,
+    ReplaceOperationSchema,
+    DeleteOperationSchema,
+  ])
+  .superRefine((operation, context) => {
+    const deploymentType = operation.deploymentType ?? "generated_file";
+    if (deploymentType === "copy" || deploymentType === "symlink") {
+      if (operation.kind === "delete") {
+        context.addIssue({
+          code: "custom",
+          message: "Copy and symlink deployment operations cannot delete targets",
+          path: ["deploymentType"],
+        });
+      }
+      if (operation.sourcePath === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Copy and symlink deployment operations require sourcePath",
+          path: ["sourcePath"],
+        });
+      }
+      if (operation.sourceHash === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Copy and symlink deployment operations require sourceHash",
+          path: ["sourceHash"],
+        });
+      }
+    }
+  });
 type ParsedDeploymentOperation = z.output<typeof DeploymentOperationSchema>;
 export type DeploymentOperation =
   | (Omit<Extract<ParsedDeploymentOperation, { readonly kind: "create" }>, "deploymentType"> & {

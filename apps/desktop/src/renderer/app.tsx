@@ -1,15 +1,18 @@
 import { useReducer } from "react";
 
-import type { TaskEvent } from "@ai-config-hub/api";
+import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/api";
 
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
 import {
   deploymentBlockersForState,
   deploymentConfirmationsForState,
+  effectiveRequestForState,
   formatUiError,
+  historyDetailRequestForEntry,
   initialState,
   migrationPreviewBlockersForState,
+  openSourceRequestForState,
   previewRequestForState,
   reducer,
   refreshAssetDetail,
@@ -88,6 +91,103 @@ export function App(props: { readonly api: DesktopApi }) {
         counts: diagnostics.diagnosticCounts,
       });
       dispatch({ type: "history", history: await refreshHistory(props.api) });
+    });
+  }
+
+  async function refreshWorkspaceAfterScan(options: {
+    readonly assetId?: CommandResponse<"assets.list">["items"][number]["id"];
+    readonly previewRequest?: CommandRequest<"migration.preview">;
+  }): Promise<void> {
+    const assets = await refreshAssets(props.api);
+    dispatch({ type: "assets", assets });
+
+    let inspectedAssetId: CommandResponse<"assets.list">["items"][number]["id"] | undefined;
+    if (options.assetId !== undefined && assets.some((asset) => asset.id === options.assetId)) {
+      const detail = await refreshAssetDetail(props.api, options.assetId);
+      if (detail !== undefined) {
+        inspectedAssetId = options.assetId;
+        dispatch({ type: "assetDetail", detail });
+      }
+    }
+
+    const diagnostics = await refreshDiagnostics(props.api, inspectedAssetId);
+    dispatch({
+      type: "diagnostics",
+      diagnostics: diagnostics.diagnostics,
+      counts: diagnostics.diagnosticCounts,
+    });
+    dispatch({ type: "history", history: await refreshHistory(props.api) });
+
+    const previousPreviewRequest = options.previewRequest;
+    if (previousPreviewRequest === undefined) return;
+    const availableAssetIds = new Set<string>(assets.map((asset) => asset.id));
+    if (!previousPreviewRequest.sourceAssetIds.every((assetId) => availableAssetIds.has(assetId))) {
+      dispatch({
+        type: "message",
+        message: "Selected migration sources changed after the rescan; create a new preview.",
+      });
+      return;
+    }
+    const previewResponse = await props.api.invoke("migration.preview", previousPreviewRequest);
+    dispatch(
+      previewResponse.ok
+        ? { type: "preview", preview: previewResponse.data }
+        : { type: "message", message: previewResponse.error.message },
+    );
+  }
+
+  async function openSource() {
+    await runAction("Open source", async () => {
+      const request = openSourceRequestForState(state);
+      if (request === undefined) {
+        dispatch({ type: "message", message: "Inspect an asset before opening its source file." });
+        return;
+      }
+      const response = await props.api.invoke("assets.openSource", request);
+      dispatch({
+        type: "message",
+        message: response.ok ? "Source file opened." : response.error.message,
+      });
+    });
+  }
+
+  async function rescanAfterEdit() {
+    await runAction("Rescan after edit", async () => {
+      const assetId = state.assetDetail?.asset.id;
+      const projectRoot = state.projectRoot;
+      if (assetId === undefined || projectRoot === undefined) {
+        dispatch({
+          type: "message",
+          message: "Inspect an asset with a selected project before rescanning after edit.",
+        });
+        return;
+      }
+
+      const previousPreviewRequest = previewRequestForState(state);
+      const response = await props.api.invoke("scan.start", {
+        mode: "full",
+        roots: [projectRoot],
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "queued" : "error",
+        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+      });
+      if (!response.ok) return;
+      subscribeTask(response.data.taskId, (event) => {
+        const action = scanActionForTaskEvent(event);
+        if (action !== undefined) dispatch(action);
+        const taskAction = taskActionForTaskEvent(event);
+        if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
+        if (event.type === "completed") {
+          void refreshWorkspaceAfterScan({
+            assetId,
+            ...(previousPreviewRequest === undefined
+              ? {}
+              : { previewRequest: previousPreviewRequest }),
+          });
+        }
+      });
     });
   }
 
@@ -205,6 +305,40 @@ export function App(props: { readonly api: DesktopApi }) {
               });
             });
           }}
+          onLoadEffective={() => {
+            void runAction("Resolve effective configuration", async () => {
+              const request = effectiveRequestForState(state);
+              if (request === undefined) {
+                dispatch({
+                  type: "message",
+                  message:
+                    "Inspect an asset with a selected project before resolving effective configuration.",
+                });
+                return;
+              }
+              const response = await props.api.invoke("effective.resolve", request);
+              if (response.ok) dispatch({ type: "effective", effective: response.data });
+              else dispatch({ type: "message", message: response.error.message });
+            });
+          }}
+          onOpenSource={() => void openSource()}
+          onRescanAfterEdit={() => void rescanAfterEdit()}
+          onLocateDiagnostic={(assetId) => {
+            void runAction("Locate diagnostic", async () => {
+              const detail = await refreshAssetDetail(props.api, assetId);
+              if (detail === undefined) {
+                dispatch({ type: "message", message: "Diagnostic asset is unavailable." });
+                return;
+              }
+              dispatch({ type: "assetDetail", detail });
+              const diagnostics = await refreshDiagnostics(props.api, assetId);
+              dispatch({
+                type: "diagnostics",
+                diagnostics: diagnostics.diagnostics,
+                counts: diagnostics.diagnosticCounts,
+              });
+            });
+          }}
         />
       ) : null}
       {state.route === "migration" ? (
@@ -229,6 +363,7 @@ export function App(props: { readonly api: DesktopApi }) {
           }
           onDeploy={() => void deploy()}
           onRollback={() => void rollback()}
+          onReviewHistory={() => dispatch({ type: "route", route: "history" })}
         />
       ) : null}
       {state.route === "history" ? (
@@ -237,6 +372,16 @@ export function App(props: { readonly api: DesktopApi }) {
           onRefresh={() => {
             void runAction("Refresh history", async () => {
               dispatch({ type: "history", history: await refreshHistory(props.api) });
+            });
+          }}
+          onLoadDetail={(id) => {
+            void runAction("Load history detail", async () => {
+              const response = await props.api.invoke(
+                "history.get",
+                historyDetailRequestForEntry(id),
+              );
+              if (response.ok) dispatch({ type: "historyDetail", detail: response.data });
+              else dispatch({ type: "message", message: response.error.message });
             });
           }}
         />

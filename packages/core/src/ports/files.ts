@@ -45,6 +45,18 @@ export interface DeploymentFilePort {
     readonly text: string;
     readonly expectedHash: ContentHash | "absent";
   }): Promise<{ readonly resultingHash: ContentHash }>;
+  copy(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }>;
+  createSymlink(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }>;
   remove(input: {
     readonly target: AbsolutePath;
     readonly expectedHash: ContentHash;

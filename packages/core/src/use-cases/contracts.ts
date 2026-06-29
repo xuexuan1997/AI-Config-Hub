@@ -6,6 +6,7 @@ import type {
   DeploymentRecordId,
   DiagnosticSeverity,
   PaginationCursor,
+  ProjectId,
   ResourceKind,
   ScanRunId,
   ScopeId,
@@ -28,12 +29,15 @@ export const CORE_COMMAND_NAMES = [
   "scan.cancel",
   "assets.list",
   "assets.get",
+  "assets.openSource",
   "effective.resolve",
   "diagnostics.list",
+  "diagnostics.export",
   "migration.preview",
   "deployment.execute",
   "deployment.rollback",
   "history.list",
+  "history.get",
   "settings.get",
   "settings.update",
 ] as const;
@@ -75,6 +79,15 @@ export interface AssetGetRequest {
   readonly assetId: AssetId;
 }
 
+export interface AssetOpenSourceRequest {
+  readonly assetId: AssetId;
+}
+
+export interface AssetOpenSourceResult {
+  readonly assetId: AssetId;
+  readonly opened: true;
+}
+
 export interface EffectiveResolveRequest {
   readonly toolInstallationId: ToolInstallationId;
   readonly canonicalTargetPath: AbsolutePath;
@@ -82,10 +95,56 @@ export interface EffectiveResolveRequest {
 }
 
 export interface DiagnosticsListRequest {
+  readonly projectId?: ProjectId;
   readonly assetId?: AssetId;
+  readonly toolIds?: readonly ToolId[];
   readonly severity?: readonly DiagnosticSeverity[];
+  readonly codes?: readonly string[];
   readonly cursor?: PaginationCursor;
   readonly limit: number;
+}
+
+export interface DiagnosticsExportRequest {
+  readonly format: "json" | "markdown";
+  readonly taskId?: TaskId;
+  readonly projectId?: ProjectId;
+  readonly toolKeys?: readonly ToolId[];
+  readonly severities?: readonly DiagnosticSeverity[];
+  readonly from?: IsoDateTime;
+  readonly to?: IsoDateTime;
+}
+
+export interface DiagnosticsExportItem {
+  readonly id: Diagnostic["diagnosticId"];
+  readonly code: Diagnostic["code"];
+  readonly severity: Diagnostic["severity"];
+  readonly assetId?: AssetId;
+  readonly location?: {
+    readonly pathDisplay: string;
+    readonly line?: number;
+    readonly column?: number;
+  };
+  readonly message: Diagnostic["message"];
+  readonly suggestedAction: string;
+  readonly blocking: Diagnostic["blocking"];
+}
+
+export interface DiagnosticsExportResult {
+  readonly format: DiagnosticsExportRequest["format"];
+  readonly generatedAt: IsoDateTime;
+  readonly filters: Omit<DiagnosticsExportRequest, "format">;
+  readonly summary: {
+    readonly total: number;
+    readonly info: number;
+    readonly warning: number;
+    readonly error: number;
+  };
+  readonly items: readonly DiagnosticsExportItem[];
+  readonly redactions: readonly {
+    readonly pointer: string;
+    readonly reason: "secret" | "path" | "policy";
+  }[];
+  readonly content: string;
 }
 
 export interface MigrationPreviewRequest {
@@ -129,6 +188,38 @@ export interface HistoryListRequest {
   readonly limit: number;
 }
 
+export interface HistoryGetRequest {
+  readonly id: DeploymentRecordId;
+}
+
+export interface HistoryEntryResult {
+  readonly id: DeploymentRecordId;
+  readonly kind: "deployment" | "rollback";
+  readonly status: DeploymentRecord["status"];
+  readonly createdAt: IsoDateTime;
+  readonly finishedAt?: IsoDateTime;
+}
+
+export interface HistoryPlanResult {
+  readonly planId: DeploymentPlanId;
+  readonly planHash: ContentHash;
+  readonly requiredConfirmations: DeploymentPlan["requiredConfirmations"];
+}
+
+export interface HistoryChangeResult {
+  readonly operation: DeploymentPlan["operations"][number]["kind"];
+  readonly pathDisplay: AbsolutePath;
+  readonly beforeHash: ContentHash | null;
+  readonly afterHash: ContentHash | null;
+  readonly diff: string;
+}
+
+export interface HistoryGetResult {
+  readonly entry: HistoryEntryResult;
+  readonly plan: HistoryPlanResult;
+  readonly changes: readonly HistoryChangeResult[];
+}
+
 export interface SettingsUpdateRequest {
   readonly expectedRevision: string;
   readonly patch: Partial<PublicSettings>;
@@ -140,6 +231,10 @@ export interface UseCaseContractMap {
   readonly "scan.cancel": { readonly input: ScanStatusRequest; readonly output: ScanCancelResult };
   readonly "assets.list": { readonly input: AssetsListRequest; readonly output: Page<Asset> };
   readonly "assets.get": { readonly input: AssetGetRequest; readonly output: Asset };
+  readonly "assets.openSource": {
+    readonly input: AssetOpenSourceRequest;
+    readonly output: AssetOpenSourceResult;
+  };
   readonly "effective.resolve": {
     readonly input: EffectiveResolveRequest;
     readonly output: EffectiveConfig;
@@ -147,6 +242,10 @@ export interface UseCaseContractMap {
   readonly "diagnostics.list": {
     readonly input: DiagnosticsListRequest;
     readonly output: Page<Diagnostic>;
+  };
+  readonly "diagnostics.export": {
+    readonly input: DiagnosticsExportRequest;
+    readonly output: DiagnosticsExportResult;
   };
   readonly "migration.preview": {
     readonly input: MigrationPreviewRequest;
@@ -163,6 +262,10 @@ export interface UseCaseContractMap {
   readonly "history.list": {
     readonly input: HistoryListRequest;
     readonly output: Page<DeploymentRecord>;
+  };
+  readonly "history.get": {
+    readonly input: HistoryGetRequest;
+    readonly output: HistoryGetResult;
   };
   readonly "settings.get": {
     readonly input: Readonly<Record<never, never>>;

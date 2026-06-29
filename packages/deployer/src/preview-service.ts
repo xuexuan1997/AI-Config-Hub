@@ -326,11 +326,39 @@ export class DeploymentPreviewService {
             "Adapter deployment planning returned an unsupported operation kind",
           );
         }
-        if ((operation.deploymentType ?? "generated_file") !== "generated_file") {
+        const deploymentType = operation.deploymentType ?? "generated_file";
+        if (!["generated_file", "copy", "symlink"].includes(deploymentType)) {
           throw error(
             "VALIDATION_FAILED",
             "Adapter deployment planning returned an unsupported deployment operation type",
           );
+        }
+        if (deploymentType === "copy" || deploymentType === "symlink") {
+          if (operation.sourcePath === undefined || operation.sourceHash === undefined) {
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned source operation without source metadata",
+            );
+          }
+          try {
+            const canonicalSource = await this.options.pathPolicy.canonicalize({
+              path: operation.sourcePath,
+              allowedRoots: request.allowedRoots,
+              intent: "read",
+            });
+            if (canonicalSource.path !== operation.sourcePath) {
+              throw error(
+                "VALIDATION_FAILED",
+                "Adapter deployment planning returned a non-canonical source",
+              );
+            }
+          } catch (cause) {
+            if (cause instanceof AppError) throw cause;
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned a source outside allowed roots",
+            );
+          }
         }
         if (outputHash(operation.nextText) !== convertedOutput.contentHash) {
           throw error(

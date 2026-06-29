@@ -1,6 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, open, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  symlink,
+  unlink,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -268,6 +278,31 @@ async function writeAtomically(input: {
   }
 }
 
+async function createSymlinkAtomically(input: {
+  readonly source: AbsolutePath;
+  readonly destination: AbsolutePath;
+  readonly operation: "replace";
+  readonly beforeParentSync?: () => Promise<void>;
+}): Promise<void> {
+  const directory = dirname(input.destination);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = join(directory, `.${randomUUID()}.tmp`);
+  try {
+    await symlink(input.source, temporaryPath);
+    await rename(temporaryPath, input.destination);
+    try {
+      await input.beforeParentSync?.();
+      await syncDirectory(directory);
+    } catch (cause) {
+      throw new CommittedButDurabilityUncertainError(input.operation, cause);
+    }
+  } finally {
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if (!isMissing(error)) throw error;
+    });
+  }
+}
+
 export class NodeDeploymentFilePort implements DeploymentFilePort {
   constructor(private readonly options: NodeDeploymentFilePortOptions) {}
 
@@ -340,6 +375,53 @@ export class NodeDeploymentFilePort implements DeploymentFilePort {
       ...(beforeParentSync === undefined ? {} : { beforeParentSync }),
     });
     return { resultingHash };
+  }
+
+  async copy(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }> {
+    const source = await confine(input.source, this.options.allowedRoots);
+    const target = await confine(input.target, this.options.allowedRoots);
+    const bytes = await readFile(source);
+    const sourceHash = contentHash(bytes);
+    if (sourceHash !== input.expectedSourceHash) throw staleTargetError();
+    if ((await currentHash(target)) !== input.expectedHash) throw staleTargetError();
+    const sourceMode = (await stat(source)).mode & 0o777;
+    const beforeParentSync = testHooks.get(this)?.beforeParentSync;
+
+    await writeAtomically({
+      destination: target,
+      bytes,
+      mode: sourceMode,
+      operation: "replace",
+      ...(beforeParentSync === undefined ? {} : { beforeParentSync }),
+    });
+    return { resultingHash: sourceHash };
+  }
+
+  async createSymlink(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }): Promise<{ readonly resultingHash: ContentHash }> {
+    const source = await confine(input.source, this.options.allowedRoots);
+    const target = await confine(input.target, this.options.allowedRoots);
+    const sourceHash = contentHash(await readFile(source));
+    if (sourceHash !== input.expectedSourceHash) throw staleTargetError();
+    if ((await currentHash(target)) !== input.expectedHash) throw staleTargetError();
+    const beforeParentSync = testHooks.get(this)?.beforeParentSync;
+
+    await createSymlinkAtomically({
+      source,
+      destination: target,
+      operation: "replace",
+      ...(beforeParentSync === undefined ? {} : { beforeParentSync }),
+    });
+    return { resultingHash: sourceHash };
   }
 
   async remove(input: {

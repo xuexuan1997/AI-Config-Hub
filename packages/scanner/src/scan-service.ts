@@ -183,7 +183,9 @@ export class ScanService {
     this.phase(input, "validating");
     const allAdapterDiagnostics = [
       ...adapterDiagnostics,
-      ...parsedItems.flatMap(({ diagnostics }) => diagnostics),
+      ...parsedItems.flatMap((item) =>
+        item.diagnostics.map((diagnostic) => withDiagnosticOwnership(diagnostic, item)),
+      ),
     ];
     const scopes = buildScopes(parsedItems);
     const assets = parsedItems
@@ -235,7 +237,14 @@ export class ScanService {
           effectiveConfigDraft: resolution.draft,
           signal: input.signal,
         });
-        allAdapterDiagnostics.push(...resolution.diagnostics, ...diagnosis.diagnostics);
+        allAdapterDiagnostics.push(
+          ...resolution.diagnostics.map((diagnostic) =>
+            withToolDiagnosticOwnership(diagnostic, tool),
+          ),
+          ...diagnosis.diagnostics.map((diagnostic) =>
+            withToolDiagnosticOwnership(diagnostic, tool),
+          ),
+        );
         effectiveConfigs.push(
           EffectiveConfigSchema.parse({
             ...resolution.draft,
@@ -256,7 +265,7 @@ export class ScanService {
         );
       }
     }
-    const diagnostics = allAdapterDiagnostics.map((diagnostic) =>
+    const diagnostics = uniqueAdapterDiagnostics(allAdapterDiagnostics).map((diagnostic) =>
       normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
     );
     const succeededCount = parsedItems.filter(({ status }) => status === "parsed").length;
@@ -291,6 +300,60 @@ export class ScanService {
     input.signal.throwIfAborted();
     input.onPhase?.(phase);
   }
+}
+
+function withDiagnosticOwnership(
+  diagnostic: AdapterDiagnostic,
+  item: ParsedItem,
+): AdapterDiagnostic {
+  return {
+    ...diagnostic,
+    evidence: {
+      ...diagnostic.evidence,
+      toolId: item.tool.toolId,
+      toolInstallationId: item.tool.installationId,
+      sourcePath: item.candidate.sourcePath,
+      scopeKind: item.candidate.scope.kind,
+      scopeRoot: item.candidate.scope.canonicalRootPath,
+      ...(item.candidate.scope.projectRoot === undefined
+        ? {}
+        : { projectRoot: item.candidate.scope.projectRoot }),
+    },
+  };
+}
+
+function withToolDiagnosticOwnership(
+  diagnostic: AdapterDiagnostic,
+  tool: ToolInstallation,
+): AdapterDiagnostic {
+  return {
+    ...diagnostic,
+    evidence: {
+      ...diagnostic.evidence,
+      toolId: tool.toolId,
+      toolInstallationId: tool.installationId,
+    },
+  };
+}
+
+function uniqueAdapterDiagnostics(
+  diagnostics: readonly AdapterDiagnostic[],
+): readonly AdapterDiagnostic[] {
+  const seen = new Set<string>();
+  const unique: AdapterDiagnostic[] = [];
+  for (const diagnostic of diagnostics) {
+    const key = [
+      diagnostic.code,
+      diagnostic.location?.path ?? "",
+      diagnostic.location?.line ?? "",
+      diagnostic.location?.column ?? "",
+      diagnostic.message,
+    ].join("\0");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(diagnostic);
+  }
+  return unique;
 }
 
 function scopeId(installationId: string, parsed: ParsedAsset): string {

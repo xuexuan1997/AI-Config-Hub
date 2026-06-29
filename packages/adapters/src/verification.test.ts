@@ -371,6 +371,81 @@ describe("adapter baseline diagnostics", () => {
     );
     expect(JSON.stringify(result.diagnostics)).not.toContain("private-token");
   });
+
+  it("reports content, hierarchy, and MCP literal secret diagnostics", async () => {
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const active = ruleAsset("active", "rule:active", "/project/active.md");
+    const ignored = ruleAsset("ignored", "rule:ignored", "/project/ignored.md");
+    const blank = baseAsset("blank", "rule:blank", "/project/blank.md", {
+      kind: "rule",
+      data: { name: "blank", instructions: "   ", globs: [], extensions: {} },
+    });
+    const mcp = mcpAsset({ kind: "literal", value: "--api-token=secret-value", deployable: true });
+
+    const result = await adapter.diagnose({
+      tool: deploymentTarget().tool,
+      assets: [active, ignored, blank, mcp],
+      effectiveConfigDraft: {
+        canonicalTargetPath: AbsolutePathSchema.parse("/project"),
+        resourceKinds: ["rule", "mcp"],
+        resolvedResources: [active.resource, mcp.resource],
+        contributingAssetIds: [active.assetId, mcp.assetId],
+        ignoredAssetIds: [ignored.assetId],
+        steps: [
+          { action: "inherit", assetId: active.assetId, reason: "Active rule wins" },
+          { action: "ignore", assetId: ignored.assetId, reason: "Lower precedence" },
+          { action: "inherit", assetId: mcp.assetId, reason: "MCP applies" },
+        ],
+        resolutionInputHash: hash("resolution"),
+      },
+      signal: neverCancelled,
+    });
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RESOURCE_INSTRUCTIONS_EMPTY",
+          severity: "error",
+          blocking: true,
+          location: { path: "/project/blank.md" },
+        }),
+        expect.objectContaining({
+          code: "RESOURCE_IGNORED_BY_EFFECTIVE_CONFIG",
+          severity: "info",
+          blocking: false,
+          location: { path: "/project/ignored.md" },
+        }),
+        expect.objectContaining({
+          code: "MCP_LITERAL_SECRET_RISK",
+          severity: "warning",
+          blocking: false,
+          location: { path: "/project/mcp.json" },
+        }),
+      ]),
+    );
+    expect(JSON.stringify(result.diagnostics)).not.toContain("secret-value");
+  });
+
+  it("blocks assets that are outside the detected tool configuration roots", async () => {
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+
+    const result = await adapter.diagnose({
+      tool: deploymentTarget().tool,
+      assets: [ruleAsset("outside", "rule:outside", "/outside/AGENTS.md")],
+      signal: neverCancelled,
+    });
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RESOURCE_OUTSIDE_CONFIG_ROOT",
+          severity: "error",
+          blocking: true,
+          location: { path: "/outside/AGENTS.md" },
+        }),
+      ]),
+    );
+  });
 });
 
 function record(input: {

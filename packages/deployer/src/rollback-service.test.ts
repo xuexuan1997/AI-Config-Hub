@@ -181,6 +181,12 @@ class MemoryFiles implements FileSnapshotPort, DeploymentFilePort {
     this.writes.push(`replace:${input.target}:${input.text}`);
     return Promise.resolve({ resultingHash: hash(input.text) });
   }
+  copy(): never {
+    throw new Error("rollback must not copy sources");
+  }
+  createSymlink(): never {
+    throw new Error("rollback must not create symlinks");
+  }
   remove(input: { readonly target: AbsolutePath; readonly expectedHash: ContentHash }) {
     const current = this.files.get(input.target);
     if (current === undefined || hash(current) !== input.expectedHash)

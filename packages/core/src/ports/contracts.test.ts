@@ -1,5 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import type { AssetId } from "@ai-config-hub/shared";
+
 import {
   CORE_COMMAND_NAMES,
   type CoreUseCases,
@@ -43,16 +45,29 @@ describe("core use cases", () => {
       "scan.cancel",
       "assets.list",
       "assets.get",
+      "assets.openSource",
       "effective.resolve",
       "diagnostics.list",
+      "diagnostics.export",
       "migration.preview",
       "deployment.execute",
       "deployment.rollback",
       "history.list",
+      "history.get",
       "settings.get",
       "settings.update",
     ]);
     expectTypeOf<keyof CoreUseCases>().toEqualTypeOf<(typeof CORE_COMMAND_NAMES)[number]>();
+    expectTypeOf<UseCaseContractMap["assets.openSource"]["input"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+    }>();
+    expectTypeOf<UseCaseContractMap["assets.openSource"]["output"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+      readonly opened: true;
+    }>();
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("entry");
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("plan");
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("changes");
   });
 
   it("requires a process-local confirmation grant for write use cases", () => {

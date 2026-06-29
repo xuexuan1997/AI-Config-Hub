@@ -276,6 +276,71 @@ describe("DeploymentPreviewService", () => {
     );
   });
 
+  it("accepts adapter-planned copy and symlink operations with confined source metadata", async () => {
+    const sourcePath = AbsolutePathSchema.parse("/source/shared-rule.md");
+    const sourceHash = hash("Shared rule.\n");
+    for (const deploymentType of ["copy", "symlink"] as const) {
+      const context = fixture(
+        {},
+        {
+          registry: registryWithPlanningMutation((planning) => ({
+            ...planning,
+            draft: {
+              ...planning.draft,
+              operations: planning.draft.operations.map((operation) =>
+                operation.kind === "create" || operation.kind === "replace"
+                  ? { ...operation, deploymentType, sourcePath, sourceHash }
+                  : operation,
+              ),
+            },
+          })),
+        },
+      );
+
+      const result = await context.service.preview({
+        ...request([asset(`asset-${deploymentType}`)]),
+        allowedRoots: [ROOT, AbsolutePathSchema.parse("/source")],
+      });
+
+      expect(result.plan.operations).toEqual([
+        expect.objectContaining({ deploymentType, sourcePath, sourceHash }),
+      ]);
+      expect(context.repository.savePlanAndRecord).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("rejects adapter-planned copy and symlink operations outside allowed source roots", async () => {
+    const sourcePath = AbsolutePathSchema.parse("/outside/shared-rule.md");
+    const context = fixture(
+      {},
+      {
+        registry: registryWithPlanningMutation((planning) => ({
+          ...planning,
+          draft: {
+            ...planning.draft,
+            operations: planning.draft.operations.map((operation) =>
+              operation.kind === "create" || operation.kind === "replace"
+                ? {
+                    ...operation,
+                    deploymentType: "copy" as const,
+                    sourcePath,
+                    sourceHash: hash("Shared rule.\n"),
+                  }
+                : operation,
+            ),
+          },
+        })),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-copy-source")])),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
   it("rejects adapter-planned operations whose nextText does not match the converted output hash", async () => {
     const context = fixture(
       {},

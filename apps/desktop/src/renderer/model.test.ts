@@ -2,6 +2,7 @@ import {
   AssetIdSchema,
   ContentHashSchema,
   DeploymentPlanIdSchema,
+  DeploymentRecordIdSchema,
   DiagnosticIdSchema,
   ScopeIdSchema,
   TaskIdSchema,
@@ -11,10 +12,13 @@ import { describe, expect, it } from "vitest";
 import {
   deploymentBlockersForState,
   deploymentConfirmationsForState,
+  effectiveRequestForState,
   formatUiError,
+  historyDetailRequestForEntry,
   initialState,
   migrationHashRowsForPreview,
   migrationSourceDriftRowsForState,
+  openSourceRequestForState,
   previewRequestForState,
   reducer,
   rollbackRequestForState,
@@ -347,11 +351,179 @@ describe("renderer project selection state", () => {
     expect(withDiagnostics.diagnosticCounts).toEqual({ info: 0, warning: 1, error: 0 });
   });
 
+  it("builds and stores effective configuration explanations from the selected asset", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+      },
+      source: {
+        pathDisplay: "/workspace/AGENTS.md",
+        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        observedAt: "2026-06-28T08:00:00.000Z",
+      },
+      redactions: [],
+    };
+    const effective = {
+      effective: { rules: ["Use tests."] },
+      contributors: [
+        {
+          assetId: AssetIdSchema.parse("asset-1"),
+          action: "inherit" as const,
+          reasonCode: "PROJECT_SCOPE",
+        },
+      ],
+      ignored: [{ assetId: AssetIdSchema.parse("asset-2"), reasonCode: "OVERRIDDEN" }],
+      diagnostics: [],
+      snapshotRevision: "revision-1",
+    };
+    const withProject = reducer(initialState, { type: "project", root: "/workspace" });
+    const withDetail = reducer(withProject, { type: "assetDetail", detail });
+    const withEffective = reducer(withDetail, { type: "effective", effective });
+
+    expect(effectiveRequestForState(withDetail)).toEqual({
+      toolKey: "codex",
+      projectId: "/workspace",
+      targetScopeId: "/workspace",
+      resourceTypes: ["rule"],
+    });
+    expect(withEffective.effective).toBe(effective);
+  });
+
+  it("opens source files by selected asset id only", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+      },
+      source: {
+        pathDisplay: "/workspace/AGENTS.md",
+        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        observedAt: "2026-06-28T08:00:00.000Z",
+      },
+      redactions: [],
+    };
+    const withDetail = reducer(initialState, { type: "assetDetail", detail });
+
+    expect(openSourceRequestForState(initialState)).toBeUndefined();
+    expect(openSourceRequestForState(withDetail)).toEqual({ assetId: "asset-1" });
+  });
+
+  it("clears project-scoped details when the project changes", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+      },
+      source: {
+        pathDisplay: "/workspace/AGENTS.md",
+        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        observedAt: "2026-06-28T08:00:00.000Z",
+      },
+      redactions: [],
+    };
+    const effective = {
+      effective: { rules: ["Use tests."] },
+      contributors: [],
+      ignored: [],
+      diagnostics: [],
+      snapshotRevision: "revision-1",
+    };
+    const historyDetail = {
+      entry: {
+        id: DeploymentRecordIdSchema.parse("deployment-1"),
+        kind: "deployment" as const,
+        status: "succeeded",
+        createdAt: "2026-06-28T08:00:00.000Z",
+      },
+      plan: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        requiredConfirmations: [],
+      },
+      changes: [],
+    };
+    const withProject = reducer(initialState, { type: "project", root: "/workspace" });
+    const withDetail = reducer(withProject, { type: "assetDetail", detail });
+    const withEffective = reducer(withDetail, { type: "effective", effective });
+    const withHistoryDetail = reducer(withEffective, {
+      type: "historyDetail",
+      detail: historyDetail,
+    });
+    const switched = reducer(withHistoryDetail, { type: "project", root: "/other-workspace" });
+
+    expect(switched.projectRoot).toBe("/other-workspace");
+    expect(switched.assetDetail).toBeUndefined();
+    expect(switched.effective).toBeUndefined();
+    expect(switched.historyDetail).toBeUndefined();
+  });
+
+  it("prunes stale asset and history details after refreshes", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+      },
+      source: {
+        pathDisplay: "/workspace/AGENTS.md",
+        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        observedAt: "2026-06-28T08:00:00.000Z",
+      },
+      redactions: [],
+    };
+    const effective = {
+      effective: { rules: ["Use tests."] },
+      contributors: [],
+      ignored: [],
+      diagnostics: [],
+      snapshotRevision: "revision-1",
+    };
+    const historyDetail = {
+      entry: {
+        id: DeploymentRecordIdSchema.parse("deployment-1"),
+        kind: "deployment" as const,
+        status: "succeeded",
+        createdAt: "2026-06-28T08:00:00.000Z",
+      },
+      plan: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        requiredConfirmations: [],
+      },
+      changes: [],
+    };
+    const withDetail = reducer(initialState, { type: "assetDetail", detail });
+    const withEffective = reducer(withDetail, { type: "effective", effective });
+    const withHistoryDetail = reducer(withEffective, {
+      type: "historyDetail",
+      detail: historyDetail,
+    });
+    const assetsRefreshed = reducer(withHistoryDetail, { type: "assets", assets: [] });
+    const historyRefreshed = reducer(withHistoryDetail, { type: "history", history: [] });
+
+    expect(assetsRefreshed.assetDetail).toBeUndefined();
+    expect(assetsRefreshed.effective).toBeUndefined();
+    expect(historyRefreshed.historyDetail).toBeUndefined();
+  });
+
   it("requires explicit deployment confirmation for each fresh preview", () => {
     const preview = {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      fieldLosses: [],
       requiredConfirmations: [],
       changes: [
         {
@@ -382,6 +554,7 @@ describe("renderer project selection state", () => {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "partial" as const,
+      fieldLosses: [],
       requiredConfirmations: ["overwrite", "partial_conversion"] as const,
       changes: [
         {
@@ -439,6 +612,7 @@ describe("renderer project selection state", () => {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      fieldLosses: [],
       requiredConfirmations: [],
       changes: [
         {
@@ -487,6 +661,7 @@ describe("renderer project selection state", () => {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      fieldLosses: [],
       requiredConfirmations: [],
       changes: [
         {
@@ -513,11 +688,60 @@ describe("renderer project selection state", () => {
     ]);
   });
 
+  it("blocks deployment while a recovery lock is active", () => {
+    const state = reducer(initialState, {
+      type: "taskEvent",
+      action: {
+        taskId: "task:deployment:failed",
+        taskKind: "deployment",
+        phase: "completed",
+        status: "failed",
+        recoveryLock: true,
+      },
+    });
+
+    expect(deploymentBlockersForState(state)).toContain(
+      "Review recovery history and resolve the active recovery lock before deploying.",
+    );
+  });
+
+  it("builds and stores history detail requests for diff inspection", () => {
+    const detail = {
+      entry: {
+        id: DeploymentRecordIdSchema.parse("deployment-1"),
+        kind: "deployment" as const,
+        status: "succeeded",
+        createdAt: "2026-06-28T08:00:00.000Z",
+      },
+      plan: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        requiredConfirmations: ["overwrite"] as const,
+      },
+      changes: [
+        {
+          operation: "replace" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          afterHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+          diff: "- Old\n+ Use tests.",
+        },
+      ],
+    };
+    const withDetail = reducer(initialState, { type: "historyDetail", detail });
+
+    expect(historyDetailRequestForEntry("deployment-1")).toEqual({
+      id: DeploymentRecordIdSchema.parse("deployment-1"),
+    });
+    expect(withDetail.historyDetail).toBe(detail);
+  });
+
   it("summarizes migration preview hashes in stable source and target order", () => {
     const preview = {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      fieldLosses: [],
       requiredConfirmations: [],
       changes: [
         {
@@ -571,6 +795,7 @@ describe("renderer project selection state", () => {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
+      fieldLosses: [],
       requiredConfirmations: [],
       changes: [
         {

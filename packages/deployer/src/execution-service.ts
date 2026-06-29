@@ -169,6 +169,12 @@ function journalHash(completed: CompletedOperation): ContentHash {
 
 function operationDesiredHash(operation: DeploymentOperation): ContentHash | undefined {
   if (operation.kind === "delete") return undefined;
+  if (
+    (operation.deploymentType === "copy" || operation.deploymentType === "symlink") &&
+    operation.sourceHash !== undefined
+  ) {
+    return operation.sourceHash;
+  }
   return textHash(operation.nextText);
 }
 
@@ -382,6 +388,35 @@ export class DeploymentExecutionService {
         expectedHash: operation.expectedTargetHash,
       });
       return undefined;
+    }
+    if (operation.deploymentType === "copy") {
+      if (operation.sourcePath === undefined || operation.sourceHash === undefined) {
+        throw appError("VALIDATION_FAILED", "Copy deployment operation is missing source metadata");
+      }
+      return (
+        await this.options.deploymentFiles.copy({
+          source: operation.sourcePath,
+          target: operation.targetPath,
+          expectedSourceHash: operation.sourceHash,
+          expectedHash: operation.expectedTargetHash,
+        })
+      ).resultingHash;
+    }
+    if (operation.deploymentType === "symlink") {
+      if (operation.sourcePath === undefined || operation.sourceHash === undefined) {
+        throw appError(
+          "VALIDATION_FAILED",
+          "Symlink deployment operation is missing source metadata",
+        );
+      }
+      return (
+        await this.options.deploymentFiles.createSymlink({
+          source: operation.sourcePath,
+          target: operation.targetPath,
+          expectedSourceHash: operation.sourceHash,
+          expectedHash: operation.expectedTargetHash,
+        })
+      ).resultingHash;
     }
     return (
       await this.options.deploymentFiles.atomicReplace({

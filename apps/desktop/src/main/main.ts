@@ -37,6 +37,12 @@ if (app.requestSingleInstanceLock()) {
       commandServices = await createDesktopCommandServices({
         appVersion: app.getVersion(),
         userDataPath: desktopUserDataPath(),
+        sourceFileOpener: {
+          async openPath(path) {
+            const error = await shell.openPath(path);
+            if (error.length > 0) throw new Error(error);
+          },
+        },
       });
       unregisterIpc = registerIpcHandlers({
         ipcMain,

@@ -1,5 +1,11 @@
 import type { CommandServiceMap } from "@ai-config-hub/api";
-import { ContentHashSchema, TaskIdSchema } from "@ai-config-hub/shared";
+import {
+  AssetIdSchema,
+  ContentHashSchema,
+  DeploymentPlanIdSchema,
+  DiagnosticIdSchema,
+  TaskIdSchema,
+} from "@ai-config-hub/shared";
 import { describe, expect, it } from "vitest";
 
 import { createCliProgram, runCli } from "./cli.js";
@@ -65,6 +71,11 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },
         redactions: [],
       }),
+    "assets.openSource": (payload) =>
+      Promise.resolve({
+        assetId: (payload as { readonly assetId: string }).assetId,
+        opened: true,
+      }),
     "effective.resolve": () =>
       Promise.resolve({
         effective: { rules: ["Use local conventions."] },
@@ -90,11 +101,33 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         countsBySeverity: { info: 0, warning: 1, error: 0 },
         snapshotRevision: "1",
       }),
+    "diagnostics.export": () =>
+      Promise.resolve({
+        format: "markdown",
+        generatedAt: now,
+        filters: { toolKeys: ["codex"], severities: ["warning"] },
+        summary: { total: 1, info: 0, warning: 1, error: 0 },
+        items: [
+          {
+            id: "diagnostic-1",
+            code: "MISSING_REFERENCE",
+            severity: "warning",
+            message: "A referenced file is missing",
+            suggestedAction: "Create the referenced file or remove the reference",
+            blocking: false,
+            location: { pathDisplay: "~/project/AGENTS.md", line: 1 },
+          },
+        ],
+        redactions: [{ pointer: "/items/0/message", reason: "secret" }],
+        content:
+          "# Diagnostic report\n\n- warning MISSING_REFERENCE: A referenced file is missing\n",
+      }),
     "migration.preview": () =>
       Promise.resolve({
-        planId: "deployment-plan-1",
+        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
         planHash: hash,
         compatibility: "full",
+        fieldLosses: [],
         requiredConfirmations: [],
         changes: [
           {
@@ -141,6 +174,29 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           },
         ],
         nextCursor: null,
+      }),
+    "history.get": () =>
+      Promise.resolve({
+        entry: {
+          id: "deployment-1",
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: now,
+        },
+        plan: {
+          planId: "deployment-plan-1",
+          planHash: hash,
+          requiredConfirmations: [],
+        },
+        changes: [
+          {
+            operation: "create",
+            pathDisplay: ".cursor/rules/AGENTS.mdc",
+            beforeHash: null,
+            afterHash: hash,
+            diff: "+ Use local conventions.",
+          },
+        ],
       }),
     "settings.get": () =>
       Promise.resolve({
@@ -205,7 +261,8 @@ describe("CLI program", () => {
       ["assets", "list", "--tool", "codex"],
       ["assets", "get", "asset-1"],
       ["effective", "resolve", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
-      ["diagnose", "--severity", "warning"],
+      ["diagnose", "--severity", "warning", "--code", "UNRESOLVED_SKILL_REFERENCE"],
+      ["diagnose", "export", "--tool", "codex", "--severity", "warning", "--format", "markdown"],
       ["migrate", "--dry-run", "--source", "asset-1", "--target", "cursor", "--scope", "scope-1"],
       ["deploy", "deployment-plan-1", "--plan-hash", hash, "--confirm", "overwrite"],
       ["rollback", "deployment-1"],
@@ -237,11 +294,19 @@ describe("CLI program", () => {
       "assets.get",
       "effective.resolve",
       "diagnostics.list",
+      "diagnostics.export",
       "migration.preview",
       "deployment.execute",
       "deployment.rollback",
       "history.list",
     ]);
+    const diagnoseCall = calls.find((call) => call.startsWith("diagnostics.list:"));
+    if (diagnoseCall === undefined) throw new Error("Expected diagnostics.list call");
+    expect(JSON.parse(diagnoseCall.slice("diagnostics.list:".length))).toEqual({
+      severities: ["warning"],
+      codes: ["UNRESOLVED_SKILL_REFERENCE"],
+      limit: 50,
+    });
     expect(calls).toContain(
       `deployment.execute:${JSON.stringify({
         planId: "deployment-plan-1",
@@ -257,6 +322,13 @@ describe("CLI program", () => {
       from: "2026-06-24T00:00:00.000Z",
       to: "2026-06-25T00:00:00.000Z",
       limit: 50,
+    });
+    const exportCall = calls.find((call) => call.startsWith("diagnostics.export:"));
+    if (exportCall === undefined) throw new Error("Expected diagnostics.export call");
+    expect(JSON.parse(exportCall.slice("diagnostics.export:".length))).toEqual({
+      format: "markdown",
+      toolKeys: ["codex"],
+      severities: ["warning"],
     });
   });
 
@@ -293,5 +365,105 @@ describe("CLI program", () => {
     expect(result).toEqual({ exitCode: 0 });
     expect(output.join("")).toContain("deployment deployment-1 succeeded");
     expect(output.join("")).toContain("snapshot abc123def456");
+  });
+
+  it("prints migration preview metadata as a readable text summary", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services({
+          "migration.preview": () =>
+            Promise.resolve({
+              planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+              planHash: hash,
+              compatibility: "partial",
+              fieldLosses: [
+                {
+                  assetId: AssetIdSchema.parse("asset-1"),
+                  droppedFields: ["/data/extensions", "/data/allowedTools"],
+                  retainedFields: ["/kind", "/data/name", "/data/instructions"],
+                  transformedFields: [],
+                  warnings: ["Some source fields are not expressible in the target format."],
+                },
+              ],
+              requiredConfirmations: ["partial_conversion", "overwrite"],
+              changes: [
+                {
+                  operation: "replace",
+                  pathDisplay: ".cursor/rules/AGENTS.mdc",
+                  beforeHash: hash,
+                  afterHash: hash,
+                  diff: "- Old\n+ Use local conventions.",
+                },
+              ],
+              warnings: [],
+              sourceHashes: { "asset-1": hash },
+              targetHashes: { ".cursor/rules/AGENTS.mdc": hash },
+              expiresAt: now,
+            }),
+        }),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["migrate", "--dry-run", "--source", "asset-1", "--target", "cursor", "--scope", "scope-1"],
+    );
+
+    const text = output.join("");
+    expect(result).toEqual({ exitCode: 0 });
+    expect(text).toContain("Plan deployment-plan-1");
+    expect(text).toContain("Compatibility: partial");
+    expect(text).toContain("Required confirmations: partial_conversion, overwrite");
+    expect(text).toContain("Expires: 2026-06-24T08:00:00.000Z");
+    expect(text).toContain("Plan hash: sha256:");
+    expect(text).toContain("Source hashes:");
+    expect(text).toContain("  asset-1: sha256:");
+    expect(text).toContain("Target hashes:");
+    expect(text).toContain("  .cursor/rules/AGENTS.mdc: sha256:");
+    expect(text).toContain("Field loss asset-1: dropped /data/extensions, /data/allowedTools");
+    expect(text).toContain("replace .cursor/rules/AGENTS.mdc");
+    expect(text).toContain("- Old");
+    expect(text).toContain("+ Use local conventions.");
+  });
+
+  it("prints a redacted diagnostic report in text mode", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services({
+          "diagnostics.export": () =>
+            Promise.resolve({
+              format: "markdown",
+              generatedAt: now,
+              filters: { toolKeys: ["codex"], severities: ["warning"] },
+              summary: { total: 1, info: 0, warning: 1, error: 0 },
+              items: [
+                {
+                  id: DiagnosticIdSchema.parse("diagnostic-1"),
+                  code: "MISSING_REFERENCE",
+                  severity: "warning",
+                  message: "A referenced file is missing; token=[REDACTED]",
+                  suggestedAction: "Create the referenced file or remove the reference",
+                  blocking: false,
+                  location: { pathDisplay: "~/project/AGENTS.md", line: 1 },
+                },
+              ],
+              redactions: [{ pointer: "/items/0/message", reason: "secret" }],
+              content:
+                "# Diagnostic report\n\n- warning MISSING_REFERENCE ~/project/AGENTS.md:1 A referenced file is missing; token=[REDACTED]\n",
+            }),
+        }),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["diagnose", "export", "--format", "markdown", "--tool", "codex", "--severity", "warning"],
+    );
+
+    const text = output.join("");
+    expect(result).toEqual({ exitCode: 0 });
+    expect(text).toContain("# Diagnostic report");
+    expect(text).toContain("~/project/AGENTS.md");
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("/Users/alice/project/AGENTS.md");
+    expect(text).not.toContain("sk-live-secret");
   });
 });

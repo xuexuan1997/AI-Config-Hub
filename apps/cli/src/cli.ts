@@ -39,6 +39,13 @@ interface ListOptions extends GlobalOptions {
   readonly to?: string;
 }
 
+interface DiagnoseInheritedOptions extends GlobalOptions {
+  readonly tool?: string[];
+  readonly severity?: string[];
+  readonly from?: string;
+  readonly to?: string;
+}
+
 interface EffectiveOptions extends GlobalOptions {
   readonly tool: string;
   readonly project: string;
@@ -157,7 +164,7 @@ export function createCliProgram(options: CliProgramOptions): Command {
       );
     });
 
-  program
+  const diagnose = program
     .command("diagnose")
     .description("List diagnostics from the current index.")
     .option("--tool <tool>", "tool key to include", collect, [])
@@ -179,6 +186,46 @@ export function createCliProgram(options: CliProgramOptions): Command {
         flags,
       );
     });
+  diagnose
+    .command("export")
+    .option("--format <format>", "report format", parseChoice(["json", "markdown"]), "markdown")
+    .option("--task <task-id>", "scan task id")
+    .option("--project <project-id>", "project id")
+    .option("--tool <tool>", "tool key to include", collect, [])
+    .option("--severity <severity>", "diagnostic severity filter", collect, [])
+    .option("--from <iso-date-time>", "created-at lower bound")
+    .option("--to <iso-date-time>", "created-at upper bound")
+    .option("--json", "print a JSON API envelope")
+    .action(
+      async (
+        flags: GlobalOptions & {
+          readonly format?: "json" | "markdown";
+          readonly task?: string;
+          readonly project?: string;
+          readonly tool?: string[];
+          readonly severity?: string[];
+          readonly from?: string;
+          readonly to?: string;
+        },
+      ) => {
+        const inherited: DiagnoseInheritedOptions = diagnose.opts();
+        const json = flags.json ?? inherited.json;
+        const outputFlags = json === undefined ? flags : { ...flags, json };
+        await invoke(
+          "diagnostics.export",
+          compact({
+            format: flags.format ?? "markdown",
+            taskId: flags.task,
+            projectId: flags.project,
+            toolKeys: optionList(flags.tool, inherited.tool),
+            severities: optionList(flags.severity, inherited.severity),
+            from: flags.from ?? inherited.from,
+            to: flags.to ?? inherited.to,
+          }),
+          outputFlags,
+        );
+      },
+    );
 
   program
     .command("migrate")
@@ -305,6 +352,15 @@ function collect(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
 }
 
+function optionList(
+  local: readonly string[] | undefined,
+  inherited: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (local !== undefined && local.length > 0) return local;
+  if (inherited !== undefined && inherited.length > 0) return inherited;
+  return undefined;
+}
+
 function parsePositiveInteger(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -355,6 +411,10 @@ function renderText<Name extends ApiCommandName>(
   if (name === "history.list" && "items" in data && Array.isArray(data.items)) {
     return renderHistory(data.items);
   }
+  if (name === "diagnostics.export" && typeof data.content === "string") {
+    return data.content.endsWith("\n") ? data.content : `${data.content}\n`;
+  }
+  if (name === "migration.preview") return renderMigrationPreview(data);
   if ("items" in data && Array.isArray(data.items)) return `${data.items.length} item(s)\n`;
   if ("taskId" in data) return `Task ${String(data.taskId)} queued\n`;
   if (name === "assets.get" && typeof data.asset === "object" && data.asset !== null) {
@@ -364,6 +424,81 @@ function renderText<Name extends ApiCommandName>(
     return `${id} ${logicalKey}\n`;
   }
   return `${JSON.stringify(data, null, 2)}\n`;
+}
+
+function renderMigrationPreview(data: Record<string, unknown>): string {
+  const planId = stringValue(data.planId);
+  const compatibility = stringValue(data.compatibility);
+  const requiredConfirmations = arrayValue(data.requiredConfirmations).map(String);
+  const expiresAt = stringValue(data.expiresAt);
+  const planHash = stringValue(data.planHash);
+  const lines = [
+    `Plan ${planId}`,
+    `Compatibility: ${compatibility}`,
+    `Required confirmations: ${
+      requiredConfirmations.length === 0 ? "none" : requiredConfirmations.join(", ")
+    }`,
+    `Expires: ${expiresAt}`,
+    `Plan hash: ${planHash}`,
+  ];
+
+  lines.push("Source hashes:");
+  appendHashRows(lines, data.sourceHashes);
+  lines.push("Target hashes:");
+  appendHashRows(lines, data.targetHashes);
+
+  for (const loss of arrayValue(data.fieldLosses)) {
+    if (typeof loss !== "object" || loss === null) continue;
+    const row = loss as Record<string, unknown>;
+    const droppedFields = arrayValue(row.droppedFields).map(String);
+    lines.push(
+      `Field loss ${stringValue(row.assetId)}: dropped ${
+        droppedFields.length === 0 ? "none" : droppedFields.join(", ")
+      }`,
+    );
+    const transformedFields = arrayValue(row.transformedFields);
+    for (const transformed of transformedFields) {
+      if (typeof transformed !== "object" || transformed === null) continue;
+      const item = transformed as Record<string, unknown>;
+      lines.push(
+        `  transformed ${stringValue(item.sourceField)} -> ${stringValue(item.targetField)}: ${stringValue(item.reason)}`,
+      );
+    }
+    for (const warning of arrayValue(row.warnings)) {
+      lines.push(`  warning: ${String(warning)}`);
+    }
+  }
+
+  for (const change of arrayValue(data.changes)) {
+    if (typeof change !== "object" || change === null) continue;
+    const row = change as Record<string, unknown>;
+    lines.push(
+      `${stringValue(row.operation)} ${stringValue(row.pathDisplay)}`,
+      `  before: ${nullableHash(row.beforeHash)}`,
+      `  after: ${nullableHash(row.afterHash)}`,
+    );
+    const diff = stringValue(row.diff);
+    if (diff.length > 0) lines.push(diff);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function appendHashRows(lines: string[], hashes: unknown): void {
+  if (typeof hashes !== "object" || hashes === null || Array.isArray(hashes)) {
+    lines.push("  none");
+    return;
+  }
+  const entries = Object.entries(hashes as Record<string, unknown>).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length === 0) {
+    lines.push("  none");
+    return;
+  }
+  for (const [label, hash] of entries) {
+    lines.push(`  ${label}: ${nullableHash(hash)}`);
+  }
 }
 
 function renderHistory(items: readonly unknown[]): string {
@@ -389,6 +524,18 @@ function renderHistory(items: readonly unknown[]): string {
     .filter((line) => line.length > 0)
     .join("\n")
     .concat("\n");
+}
+
+function arrayValue(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function nullableHash(value: unknown): string {
+  return value === null ? "absent" : stringValue(value);
 }
 
 function renderSnapshot(snapshot: unknown): string {

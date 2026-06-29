@@ -11,6 +11,7 @@ export function DeploymentView(props: {
   readonly onConfirmRequirement: (confirmation: DeploymentConfirmation, granted: boolean) => void;
   readonly onDeploy: () => void;
   readonly onRollback: () => void;
+  readonly onReviewHistory: () => void;
 }) {
   const blockers = deploymentBlockersForState(props.state);
   const rollbackUnavailable = rollbackRequestForState(props.state) === undefined;
@@ -34,7 +35,12 @@ export function DeploymentView(props: {
           </p>
           {activeTask.message === undefined ? null : <p>{activeTask.message}</p>}
           {activeTask.recoveryLock ? (
-            <p className="recovery-lock">Recovery lock active. Review history before retrying.</p>
+            <div className="recovery-lock">
+              <p>Recovery lock active. Review history before retrying.</p>
+              <button type="button" onClick={props.onReviewHistory}>
+                Review history
+              </button>
+            </div>
           ) : null}
         </section>
       )}

@@ -177,6 +177,61 @@ describe("NodeDeploymentFilePort confinement", () => {
     ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
     await expect(lstat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("copies a confined source to a confined target with hash drift checks", async () => {
+    const { allowedRoot, port } = await fixture();
+    const source = join(allowedRoot, "source.txt");
+    const target = join(allowedRoot, "copied.txt");
+    await writeFile(source, "source contents");
+
+    await expect(
+      port.copy({
+        source: absolute(source),
+        target: absolute(target),
+        expectedSourceHash: hash("source contents"),
+        expectedHash: "absent",
+      }),
+    ).resolves.toEqual({ resultingHash: hash("source contents") });
+    await expect(readFile(target, "utf8")).resolves.toBe("source contents");
+
+    await writeFile(source, "changed source");
+    await expect(
+      port.copy({
+        source: absolute(source),
+        target: absolute(target),
+        expectedSourceHash: hash("source contents"),
+        expectedHash: hash("source contents"),
+      }),
+    ).rejects.toMatchObject({ code: "STALE_TARGET" });
+  });
+
+  it("creates a confined symlink and rejects escaping link sources", async () => {
+    const { allowedRoot, outsideRoot, port } = await fixture();
+    const source = join(allowedRoot, "source.txt");
+    const target = join(allowedRoot, "linked.txt");
+    const outside = join(outsideRoot, "outside.txt");
+    await writeFile(source, "linked contents");
+    await writeFile(outside, "outside");
+
+    await expect(
+      port.createSymlink({
+        source: absolute(source),
+        target: absolute(target),
+        expectedSourceHash: hash("linked contents"),
+        expectedHash: "absent",
+      }),
+    ).resolves.toEqual({ resultingHash: hash("linked contents") });
+    await expect(readFile(target, "utf8")).resolves.toBe("linked contents");
+
+    await expect(
+      port.createSymlink({
+        source: absolute(outside),
+        target: absolute(join(allowedRoot, "outside-link.txt")),
+        expectedSourceHash: hash("outside"),
+        expectedHash: "absent",
+      }),
+    ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
+  });
 });
 
 describe("NodeDeploymentFilePort optimistic concurrency", () => {

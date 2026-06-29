@@ -194,6 +194,16 @@ describe("CLI command service composition", () => {
           message: `record deployment ${rollback.rollbackId}`,
         },
       });
+      const detail = await runtime.services["history.get"]({ id: deployment.deploymentId });
+      expect(detail).toMatchObject({
+        entry: { id: deployment.deploymentId, kind: "deployment", status: "succeeded" },
+        plan: {
+          planId: preview.planId,
+          planHash: preview.planHash,
+          requiredConfirmations: preview.requiredConfirmations,
+        },
+      });
+      expect(detail.changes).toEqual(preview.changes);
 
       const historyRoot = join(userData, "history", "local-git");
       expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
@@ -249,6 +259,55 @@ describe("CLI command service composition", () => {
       const historyItem = history.items.find((item) => item.id === deployment.deploymentId);
       expect(historyItem).toMatchObject({ id: deployment.deploymentId, status: "succeeded" });
       expect(historyItem?.snapshot).toMatchObject({ status: "unavailable" });
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("maps partial conversion details into migration preview field losses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-field-loss-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".claude", "agents"), { recursive: true });
+    await writeFile(
+      join(project, ".claude", "agents", "reviewer.md"),
+      "---\nname: reviewer\nmodel: sonnet\ntools: Read, Grep\n---\nReview carefully.\n",
+      "utf8",
+    );
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "claude-code" && asset.resourceType === "agent",
+      );
+      if (source === undefined) throw new Error("Expected scanned Claude agent asset");
+
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "codex",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+
+      expect(preview.compatibility).toBe("partial");
+      expect(preview.requiredConfirmations).toContain("partial_conversion");
+      expect(preview.fieldLosses).toEqual([
+        {
+          assetId: source.id,
+          droppedFields: ["/data/allowedTools"],
+          retainedFields: ["/data/name", "/data/instructions", "/data/model"],
+          transformedFields: [],
+          warnings: [expect.stringContaining("/data/allowedTools")],
+        },
+      ]);
     } finally {
       runtime.close();
     }
@@ -347,6 +406,123 @@ describe("CLI command service composition", () => {
           expect(error.message).toContain("same resource type");
         },
       );
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("exports filtered diagnostics with shortened and redacted paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-diagnostic-export-"));
+    temporaryDirectories.push(root);
+    const home = join(root, "home");
+    const project = join(home, "sk-live-secret", "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".agents", "skills", "release"), { recursive: true });
+    await writeFile(join(project, "AGENTS.md"), "Use local conventions.\n", "utf8");
+    await writeFile(
+      join(project, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\nreferences: missing.md\n---\nRun checks.\n",
+      "utf8",
+    );
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      homeDirectory: home,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      const scan = await runtime.services["scan.start"]({
+        mode: "full",
+        roots: [project],
+        toolKeys: ["codex"],
+      });
+      const report = await runtime.services["diagnostics.export"]({
+        format: "markdown",
+        taskId: scan.taskId,
+        toolKeys: ["codex"],
+        severities: ["warning"],
+      });
+
+      expect(report.summary).toEqual({ total: 1, info: 0, warning: 1, error: 0 });
+      expect(report.content).toContain("# Diagnostic report");
+      expect(report.content).toContain("<project>/.agents/skills/release/SKILL.md");
+      expect(report.content).not.toContain(home);
+      expect(report.content).not.toContain("sk-live-secret");
+      expect(report.redactions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ pointer: "/items/0/location/pathDisplay", reason: "path" }),
+        ]),
+      );
+
+      const offsetWindow = await runtime.services["diagnostics.export"]({
+        format: "markdown",
+        from: "2026-06-28T16:00:00+08:00",
+        to: "2026-06-30T08:00:00.000Z",
+        toolKeys: ["codex"],
+        severities: ["warning"],
+      });
+      expect(offsetWindow.summary.total).toBe(1);
+
+      const listed = await runtime.services["diagnostics.list"]({
+        limit: 50,
+        toolKeys: ["codex"],
+        codes: ["UNRESOLVED_SKILL_REFERENCE"],
+      });
+      expect(listed.items).toHaveLength(1);
+
+      const wrongCode = await runtime.services["diagnostics.list"]({
+        limit: 50,
+        toolKeys: ["codex"],
+        codes: ["MISSING_REFERENCE"],
+      });
+      expect(wrongCode.items).toHaveLength(0);
+
+      const empty = await runtime.services["diagnostics.export"]({
+        format: "markdown",
+        toolKeys: ["cursor"],
+        severities: ["warning"],
+      });
+      expect(empty.summary.total).toBe(0);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("exports parse diagnostics by tool even when no asset was indexed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-diagnostic-parse-export-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".codex", "agents"), { recursive: true });
+    await writeFile(join(project, ".codex", "agents", "broken.toml"), "name = [\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+    });
+
+    try {
+      await runtime.services["scan.start"]({
+        mode: "full",
+        roots: [project],
+        toolKeys: ["codex"],
+      });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      expect(assets.items).toHaveLength(0);
+
+      const report = await runtime.services["diagnostics.export"]({
+        format: "markdown",
+        projectId: project,
+        toolKeys: ["codex"],
+        severities: ["error"],
+      });
+
+      expect(report.summary).toEqual({ total: 1, info: 0, warning: 0, error: 1 });
+      expect(report.items[0]).toMatchObject({ code: "ADAPTER_PARSE_INVALID", severity: "error" });
+      expect(report.content).toContain("<project>/.codex/agents/broken.toml");
+      expect(report.content).not.toContain(project);
     } finally {
       runtime.close();
     }

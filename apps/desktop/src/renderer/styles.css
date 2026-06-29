@@ -163,6 +163,13 @@ pre {
   margin-top: 1.5rem;
 }
 
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
 .detail-panel dl {
   display: grid;
   gap: 0.5rem 1rem;
@@ -252,6 +259,38 @@ pre {
   color: #ffd27a;
   margin: 0 0 1rem;
   padding-left: 1.2rem;
+}
+
+.field-loss-panel {
+  border-top: 1px solid #243455;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.field-loss-panel h2,
+.field-loss-detail h3 {
+  font-size: 1rem;
+}
+
+.field-loss-detail {
+  border-top: 1px solid #243455;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.field-loss-detail dl {
+  display: grid;
+  gap: 0.35rem 0.75rem;
+  grid-template-columns: max-content 1fr;
+}
+
+.field-loss-detail dt {
+  color: #8ea0c2;
+}
+
+.field-loss-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .drift-panel {

@@ -1,4 +1,11 @@
 import type { CommandRequest, CommandResponse, TaskEvent, TaskPhase } from "@ai-config-hub/api";
+import {
+  DeploymentRecordIdSchema,
+  ProjectIdSchema,
+  ResourceKindSchema,
+  ScopeIdSchema,
+  ToolIdSchema,
+} from "@ai-config-hub/shared";
 
 import type { DesktopApi } from "../preload/api.js";
 
@@ -75,6 +82,7 @@ export interface AppState {
   readonly scanStatus: "idle" | "queued" | "complete" | "error";
   readonly assets: CommandResponse<"assets.list">["items"];
   readonly assetDetail?: CommandResponse<"assets.get">;
+  readonly effective?: CommandResponse<"effective.resolve">;
   readonly diagnostics: CommandResponse<"diagnostics.list">["items"];
   readonly diagnosticCounts: CommandResponse<"diagnostics.list">["countsBySeverity"];
   readonly migration: MigrationFormState;
@@ -82,6 +90,7 @@ export interface AppState {
   readonly deploymentConfirmed: boolean;
   readonly deploymentConfirmationGrants: readonly DeploymentConfirmation[];
   readonly history: CommandResponse<"history.list">["items"];
+  readonly historyDetail?: CommandResponse<"history.get">;
   readonly activeTask?: ActiveTaskState;
   readonly message?: string;
 }
@@ -93,6 +102,7 @@ export type AppAction =
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
   | { readonly type: "assetDetail"; readonly detail: CommandResponse<"assets.get"> }
+  | { readonly type: "effective"; readonly effective: CommandResponse<"effective.resolve"> }
   | {
       readonly type: "diagnostics";
       readonly diagnostics: AppState["diagnostics"];
@@ -116,6 +126,7 @@ export type AppAction =
       readonly granted: boolean;
     }
   | { readonly type: "history"; readonly history: AppState["history"] }
+  | { readonly type: "historyDetail"; readonly detail: CommandResponse<"history.get"> }
   | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate };
 
 export const initialState: AppState = {
@@ -136,6 +147,36 @@ function clearPreview(state: AppState): AppState {
   return { ...withoutPreview, deploymentConfirmed: false, deploymentConfirmationGrants: [] };
 }
 
+function clearProjectDetails(state: AppState): AppState {
+  const {
+    assetDetail: discardedAssetDetail,
+    effective: discardedEffective,
+    historyDetail: discardedHistoryDetail,
+    ...withoutDetails
+  } = state;
+  void discardedAssetDetail;
+  void discardedEffective;
+  void discardedHistoryDetail;
+  return withoutDetails;
+}
+
+function clearAssetDetail(state: AppState): AppState {
+  const {
+    assetDetail: discardedAssetDetail,
+    effective: discardedEffective,
+    ...withoutAsset
+  } = state;
+  void discardedAssetDetail;
+  void discardedEffective;
+  return withoutAsset;
+}
+
+function clearHistoryDetail(state: AppState): AppState {
+  const { historyDetail: discardedHistoryDetail, ...withoutHistoryDetail } = state;
+  void discardedHistoryDetail;
+  return withoutHistoryDetail;
+}
+
 function migrationSourceAssetIds(
   state: AppState,
   assets: AppState["assets"],
@@ -153,7 +194,24 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, route: action.route };
     case "project":
       if (action.root === undefined) {
-        return clearPreview({
+        return clearProjectDetails(
+          clearPreview({
+            route: state.route,
+            scanStatus: state.scanStatus,
+            assets: state.assets,
+            diagnostics: state.diagnostics,
+            diagnosticCounts: state.diagnosticCounts,
+            migration: state.migration,
+            deploymentConfirmed: state.deploymentConfirmed,
+            deploymentConfirmationGrants: state.deploymentConfirmationGrants,
+            history: state.history,
+            ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
+            ...(state.message === undefined ? {} : { message: state.message }),
+          }),
+        );
+      }
+      return clearProjectDetails(
+        clearPreview({
           route: state.route,
           scanStatus: state.scanStatus,
           assets: state.assets,
@@ -163,25 +221,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
           deploymentConfirmed: state.deploymentConfirmed,
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
-          ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
+          projectRoot: action.root,
           ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-          ...(state.message === undefined ? {} : { message: state.message }),
-        });
-      }
-      return clearPreview({
-        route: state.route,
-        scanStatus: state.scanStatus,
-        assets: state.assets,
-        diagnostics: state.diagnostics,
-        diagnosticCounts: state.diagnosticCounts,
-        migration: state.migration,
-        deploymentConfirmed: state.deploymentConfirmed,
-        deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-        history: state.history,
-        projectRoot: action.root,
-        ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
-        ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-      });
+        }),
+      );
     case "message":
       return action.message === undefined
         ? {
@@ -196,7 +239,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
             history: state.history,
             ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
+            ...(state.effective === undefined ? {} : { effective: state.effective }),
             ...(state.preview === undefined ? {} : { preview: state.preview }),
+            ...(state.historyDetail === undefined ? {} : { historyDetail: state.historyDetail }),
             ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           }
         : { ...state, message: action.message };
@@ -206,17 +251,28 @@ export function reducer(state: AppState, action: AppAction): AppState {
         scanStatus: action.status,
         ...(action.message === undefined ? {} : { message: action.message }),
       };
-    case "assets":
-      return clearPreview({
+    case "assets": {
+      const refreshed = {
         ...state,
         assets: action.assets,
         migration: {
           ...state.migration,
           sourceAssetIds: migrationSourceAssetIds(state, action.assets),
         },
-      });
-    case "assetDetail":
-      return { ...state, assetDetail: action.detail };
+      };
+      return clearPreview(
+        action.assets.some((asset) => asset.id === state.assetDetail?.asset.id)
+          ? refreshed
+          : clearAssetDetail(refreshed),
+      );
+    }
+    case "assetDetail": {
+      const { effective: discardedEffective, ...withoutEffective } = state;
+      void discardedEffective;
+      return { ...withoutEffective, assetDetail: action.detail };
+    }
+    case "effective":
+      return { ...state, effective: action.effective };
     case "diagnostics":
       return { ...state, diagnostics: action.diagnostics, diagnosticCounts: action.counts };
     case "migrationSource": {
@@ -260,7 +316,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, deploymentConfirmationGrants };
     }
     case "history":
-      return { ...state, history: action.history };
+      return action.history.some((entry) => entry.id === state.historyDetail?.entry.id)
+        ? { ...state, history: action.history }
+        : { ...clearHistoryDetail(state), history: action.history };
+    case "historyDetail":
+      return { ...state, historyDetail: action.detail };
     case "taskEvent":
       return { ...state, activeTask: mergeActiveTask(state.activeTask, action.action) };
   }
@@ -298,6 +358,30 @@ export async function refreshDiagnostics(
 export async function refreshHistory(api: DesktopApi): Promise<AppState["history"]> {
   const response = await api.invoke("history.list", { limit: 50 });
   return response.ok ? response.data.items : [];
+}
+
+export function effectiveRequestForState(
+  state: AppState,
+): CommandRequest<"effective.resolve"> | undefined {
+  const detail = state.assetDetail;
+  if (detail === undefined || state.projectRoot === undefined) return undefined;
+  return {
+    toolKey: ToolIdSchema.parse(detail.asset.toolKey),
+    projectId: ProjectIdSchema.parse(state.projectRoot),
+    targetScopeId: ScopeIdSchema.parse(state.projectRoot),
+    resourceTypes: [ResourceKindSchema.parse(detail.asset.resourceType)],
+  };
+}
+
+export function openSourceRequestForState(
+  state: AppState,
+): CommandRequest<"assets.openSource"> | undefined {
+  const detail = state.assetDetail;
+  return detail === undefined ? undefined : { assetId: detail.asset.id };
+}
+
+export function historyDetailRequestForEntry(id: string): CommandRequest<"history.get"> {
+  return { id: DeploymentRecordIdSchema.parse(id) };
 }
 
 export function previewRequestForState(
@@ -386,6 +470,9 @@ export function deploymentBlockersForState(
   }
   if (migrationSourceDriftRowsForState(state).some((row) => row.status !== "current")) {
     blockers.push("Refresh the scan and create a fresh migration preview before deploying.");
+  }
+  if (state.activeTask?.recoveryLock === true) {
+    blockers.push("Review recovery history and resolve the active recovery lock before deploying.");
   }
   const missingConfirmations = missingDeploymentConfirmationsForState(state);
   if (missingConfirmations.length > 0) {

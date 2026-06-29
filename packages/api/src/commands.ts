@@ -7,6 +7,7 @@ import {
   DiagnosticIdSchema,
   DiagnosticSeveritySchema,
   IsoDateTimeSchema,
+  JsonPointerSchema,
   PaginationCursorSchema,
   ProjectIdSchema,
   ResourceKindSchema,
@@ -29,6 +30,17 @@ const RevisionSchema = z.string().trim().min(1).max(200);
 const PageLimitSchema = z.number().int().min(1).max(200).default(50);
 const SearchQuerySchema = z.string().trim().min(1).max(500);
 const DiagnosticCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
+
+function isDateRangeOrdered(input: {
+  readonly from?: string | undefined;
+  readonly to?: string | undefined;
+}): boolean {
+  return (
+    input.from === undefined ||
+    input.to === undefined ||
+    Date.parse(input.from) <= Date.parse(input.to)
+  );
+}
 
 const ScanStartRequestSchema = z
   .object({
@@ -82,6 +94,7 @@ const AssetsGetRequestSchema = z
   })
   .strict()
   .readonly();
+const AssetsOpenSourceRequestSchema = z.object({ assetId: AssetIdSchema }).strict().readonly();
 const EffectiveResolveRequestSchema = z
   .object({
     toolKey: ToolIdSchema,
@@ -102,6 +115,34 @@ const DiagnosticsListRequestSchema = z
     limit: PageLimitSchema,
   })
   .strict()
+  .readonly();
+const DiagnosticsExportFormatSchema = z.enum(["json", "markdown"]);
+const diagnosticsExportFilterShape = {
+  taskId: TaskIdSchema.optional(),
+  projectId: ProjectIdSchema.optional(),
+  toolKeys: z.array(ToolIdSchema).min(1).max(4).optional().readonly(),
+  severities: z.array(DiagnosticSeveritySchema).min(1).max(3).optional().readonly(),
+  from: IsoDateTimeSchema.optional(),
+  to: IsoDateTimeSchema.optional(),
+};
+const DiagnosticsExportFiltersSchema = z
+  .object(diagnosticsExportFilterShape)
+  .strict()
+  .refine(isDateRangeOrdered, {
+    message: "Diagnostic export start must not be after end",
+    path: ["from"],
+  })
+  .readonly();
+const DiagnosticsExportRequestSchema = z
+  .object({
+    format: DiagnosticsExportFormatSchema,
+    ...diagnosticsExportFilterShape,
+  })
+  .strict()
+  .refine(isDateRangeOrdered, {
+    message: "Diagnostic export start must not be after end",
+    path: ["from"],
+  })
   .readonly();
 const MigrationPreviewRequestSchema = z
   .object({
@@ -142,15 +183,12 @@ const HistoryListRequestSchema = z
     limit: PageLimitSchema,
   })
   .strict()
-  .refine(
-    (request) =>
-      request.from === undefined || request.to === undefined || request.from <= request.to,
-    {
-      message: "History start must not be after end",
-      path: ["from"],
-    },
-  )
+  .refine(isDateRangeOrdered, {
+    message: "History start must not be after end",
+    path: ["from"],
+  })
   .readonly();
+const HistoryGetRequestSchema = z.object({ id: DeploymentRecordIdSchema }).strict().readonly();
 
 export const PublicSettingKeySchema = z.enum(["theme", "pathDisplay", "scanHints", "fileWatching"]);
 const PublicSettingsPatchSchema = z
@@ -178,12 +216,15 @@ export const CommandRequestSchemas = {
   "scan.cancel": ScanCancelRequestSchema,
   "assets.list": AssetsListRequestSchema,
   "assets.get": AssetsGetRequestSchema,
+  "assets.openSource": AssetsOpenSourceRequestSchema,
   "effective.resolve": EffectiveResolveRequestSchema,
   "diagnostics.list": DiagnosticsListRequestSchema,
+  "diagnostics.export": DiagnosticsExportRequestSchema,
   "migration.preview": MigrationPreviewRequestSchema,
   "deployment.execute": DeploymentExecuteRequestSchema,
   "deployment.rollback": DeploymentRollbackRequestSchema,
   "history.list": HistoryListRequestSchema,
+  "history.get": HistoryGetRequestSchema,
   "settings.get": SettingsGetRequestSchema,
   "settings.update": SettingsUpdateRequestSchema,
 } as const satisfies Record<ApiCommandName, z.ZodType>;
@@ -292,6 +333,13 @@ const AssetsGetResponseSchema = z
   })
   .strict()
   .readonly();
+const AssetsOpenSourceResponseSchema = z
+  .object({
+    assetId: AssetIdSchema,
+    opened: z.literal(true),
+  })
+  .strict()
+  .readonly();
 const DiagnosticViewSchema = z
   .object({
     id: DiagnosticIdSchema,
@@ -352,6 +400,27 @@ const DiagnosticsListResponseSchema = z
   })
   .strict()
   .readonly();
+const DiagnosticsExportSummarySchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    info: z.number().int().nonnegative(),
+    warning: z.number().int().nonnegative(),
+    error: z.number().int().nonnegative(),
+  })
+  .strict()
+  .readonly();
+const DiagnosticsExportResponseSchema = z
+  .object({
+    format: DiagnosticsExportFormatSchema,
+    generatedAt: IsoDateTimeSchema,
+    filters: DiagnosticsExportFiltersSchema,
+    summary: DiagnosticsExportSummarySchema,
+    items: z.array(DiagnosticViewSchema).max(10_000).readonly(),
+    redactions: z.array(RedactionMarkerSchema).max(10_000).readonly(),
+    content: z.string().max(1_000_000),
+  })
+  .strict()
+  .readonly();
 const PlannedChangeSchema = z
   .object({
     operation: z.enum(["create", "replace", "delete"]),
@@ -362,11 +431,34 @@ const PlannedChangeSchema = z
   })
   .strict()
   .readonly();
+const MigrationFieldLossSchema = z
+  .object({
+    assetId: AssetIdSchema,
+    droppedFields: z.array(JsonPointerSchema).max(1_000).readonly(),
+    retainedFields: z.array(JsonPointerSchema).max(1_000).readonly(),
+    transformedFields: z
+      .array(
+        z
+          .object({
+            sourceField: JsonPointerSchema,
+            targetField: JsonPointerSchema,
+            reason: z.string().trim().min(1).max(1_000),
+          })
+          .strict()
+          .readonly(),
+      )
+      .max(1_000)
+      .readonly(),
+    warnings: z.array(z.string().trim().min(1).max(1_000)).max(1_000).readonly(),
+  })
+  .strict()
+  .readonly();
 const MigrationPreviewResponseSchema = z
   .object({
     planId: DeploymentPlanIdSchema,
     planHash: ContentHashSchema,
     compatibility: z.enum(["full", "partial"]),
+    fieldLosses: z.array(MigrationFieldLossSchema).max(1_000).readonly(),
     changes: z.array(PlannedChangeSchema).min(1).max(200).readonly(),
     requiredConfirmations: z.array(DeploymentConfirmationSchema).max(3).readonly(),
     warnings: z.array(DiagnosticViewSchema).max(1_000).readonly(),
@@ -448,6 +540,21 @@ const HistoryListResponseSchema = z
   })
   .strict()
   .readonly();
+const HistoryGetResponseSchema = z
+  .object({
+    entry: HistoryEntrySchema,
+    plan: z
+      .object({
+        planId: DeploymentPlanIdSchema,
+        planHash: ContentHashSchema,
+        requiredConfirmations: z.array(DeploymentConfirmationSchema).max(3).readonly(),
+      })
+      .strict()
+      .readonly(),
+    changes: z.array(PlannedChangeSchema).max(200).readonly(),
+  })
+  .strict()
+  .readonly();
 const PublicSettingsValuesSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]).optional(),
@@ -480,12 +587,15 @@ export const CommandResponseSchemas = {
   "scan.cancel": ScanCancelResponseSchema,
   "assets.list": AssetsListResponseSchema,
   "assets.get": AssetsGetResponseSchema,
+  "assets.openSource": AssetsOpenSourceResponseSchema,
   "effective.resolve": EffectiveResolveResponseSchema,
   "diagnostics.list": DiagnosticsListResponseSchema,
+  "diagnostics.export": DiagnosticsExportResponseSchema,
   "migration.preview": MigrationPreviewResponseSchema,
   "deployment.execute": DeploymentAcceptedSchema,
   "deployment.rollback": RollbackAcceptedSchema,
   "history.list": HistoryListResponseSchema,
+  "history.get": HistoryGetResponseSchema,
   "settings.get": SettingsGetResponseSchema,
   "settings.update": SettingsUpdateResponseSchema,
 } as const satisfies Record<ApiCommandName, z.ZodType>;

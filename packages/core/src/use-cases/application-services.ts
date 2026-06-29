@@ -9,6 +9,7 @@ export interface ScanUseCase {
 export interface AssetQueryUseCase {
   readonly list: CoreUseCases["assets.list"];
   readonly get: CoreUseCases["assets.get"];
+  readonly openSource: CoreUseCases["assets.openSource"];
 }
 
 export interface EffectiveConfigUseCase {
@@ -17,6 +18,7 @@ export interface EffectiveConfigUseCase {
 
 export interface DiagnosticQueryUseCase {
   readonly list: CoreUseCases["diagnostics.list"];
+  readonly export: CoreUseCases["diagnostics.export"];
 }
 
 export interface MigrationPreviewUseCase {
@@ -30,6 +32,7 @@ export interface DeploymentUseCase {
 
 export interface HistoryUseCase {
   readonly list: CoreUseCases["history.list"];
+  readonly get: CoreUseCases["history.get"];
 }
 
 export interface SettingsUseCase {
@@ -55,12 +58,15 @@ export function createCoreUseCases(services: ApplicationServices): CoreUseCases 
     "scan.cancel": services.scan.cancel,
     "assets.list": services.assets.list,
     "assets.get": services.assets.get,
+    "assets.openSource": services.assets.openSource,
     "effective.resolve": services.effective.resolve,
     "diagnostics.list": services.diagnostics.list,
+    "diagnostics.export": services.diagnostics.export,
     "migration.preview": services.migration.preview,
     "deployment.execute": services.deployments.execute,
     "deployment.rollback": services.deployments.rollback,
     "history.list": services.history.list,
+    "history.get": services.history.get,
     "settings.get": services.settings.get,
     "settings.update": services.settings.update,
   });

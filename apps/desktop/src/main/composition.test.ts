@@ -50,6 +50,85 @@ async function writeCodexUserConfigFixtures(home: string): Promise<void> {
 }
 
 describe("desktop command service composition", () => {
+  it("opens asset source files through the injected opener", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-open-source-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    const sourcePath = join(project, "AGENTS.md");
+    await writeFile(sourcePath, "Use local TypeScript conventions.\n", "utf8");
+    const openedPaths: string[] = [];
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      sourceFileOpener: {
+        openPath(path) {
+          openedPaths.push(path);
+          return Promise.resolve();
+        },
+      },
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+
+      await expect(runtime.services["assets.openSource"]({ assetId: source.id })).resolves.toEqual({
+        assetId: source.id,
+        opened: true,
+      });
+      expect(openedPaths).toEqual([await realpath(sourcePath)]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("surfaces opener failures as retryable API errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-open-source-error-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      sourceFileOpener: {
+        openPath() {
+          return Promise.reject(new Error("No registered editor"));
+        },
+      },
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+
+      await expect(
+        runtime.services["assets.openSource"]({ assetId: source.id }),
+      ).rejects.toMatchObject({
+        code: "INTERNAL_ERROR",
+        message: "The source file could not be opened in the external editor",
+        retryable: true,
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("defaults scans to standard user-level configuration roots and surfaces user scope", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-home-scan-"));
     temporaryDirectories.push(root);
@@ -128,6 +207,35 @@ describe("desktop command service composition", () => {
     });
   });
 
+  it("records scan cancellation requests in the task event stream", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-scan-cancel-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      const scan = await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      await runtime.services["scan.cancel"]({ taskId: scan.taskId });
+      const events: TaskEvent[] = [];
+      runtime.taskEvents.subscribe(String(scan.taskId), 0, (event) => events.push(event));
+
+      expect(events.map((event) => event.type)).toContain("cancel.requested");
+      expect(events.find((event) => event.type === "cancel.requested")).toMatchObject({
+        payload: { reason: "user", effectiveAfterPhase: "completed" },
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("records local Git snapshots for successful deployments and rollbacks", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-history-"));
     temporaryDirectories.push(root);
@@ -193,6 +301,16 @@ describe("desktop command service composition", () => {
           message: `record deployment ${rollback.rollbackId}`,
         },
       });
+      const detail = await runtime.services["history.get"]({ id: deployment.deploymentId });
+      expect(detail).toMatchObject({
+        entry: { id: deployment.deploymentId, kind: "deployment", status: "succeeded" },
+        plan: {
+          planId: preview.planId,
+          planHash: preview.planHash,
+          requiredConfirmations: preview.requiredConfirmations,
+        },
+      });
+      expect(detail.changes).toEqual(preview.changes);
       const historyRoot = join(userData, "history", "local-git");
       expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
       expect(await readdir(join(historyRoot, "assets"))).toHaveLength(1);

@@ -75,10 +75,28 @@ describe("DeploymentPlanSchema", () => {
 
 describe("DeploymentOperationSchema", () => {
   it("accepts explicit PRD deployment operation types", () => {
-    for (const deploymentType of ["copy", "symlink", "generated_file"] as const) {
-      expect(DeploymentOperationSchema.parse({ ...operation, deploymentType })).toMatchObject({
-        deploymentType,
-      });
+    expect(
+      DeploymentOperationSchema.parse({ ...operation, deploymentType: "generated_file" }),
+    ).toMatchObject({ deploymentType: "generated_file" });
+  });
+
+  it("requires source metadata for copy and symlink operations", () => {
+    const sourcePath = "/central-assets/rules/generated.mdc";
+    const sourceHash = `sha256:${"e".repeat(64)}`;
+
+    for (const deploymentType of ["copy", "symlink"] as const) {
+      expect(
+        DeploymentOperationSchema.parse({
+          ...operation,
+          deploymentType,
+          sourcePath,
+          sourceHash,
+        }),
+      ).toMatchObject({ deploymentType, sourcePath, sourceHash });
+
+      expect(DeploymentOperationSchema.safeParse({ ...operation, deploymentType }).success).toBe(
+        false,
+      );
     }
   });
 

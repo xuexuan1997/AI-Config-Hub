@@ -97,7 +97,9 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByText(/Confirm required migration actions: overwrite\./)).toBeVisible();
       await page.getByLabel("Overwrite existing target files.").check();
       await page.getByRole("button", { name: "Execute deployment" }).click();
-      await expect(page.getByText(/Deployment queued:/)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/deployment succeeded: 1 succeeded/)).toBeVisible({
+        timeout: 30_000,
+      });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
       expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor rule.");
@@ -110,7 +112,9 @@ test.describe("Desktop end to end", () => {
 
       await page.getByRole("button", { name: "Deployment" }).click();
       await page.getByRole("button", { name: "Execute rollback" }).click();
-      await expect(page.getByText(/Rollback queued:/)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/rollback succeeded: 1 succeeded/)).toBeVisible({
+        timeout: 30_000,
+      });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toBe("Existing Cursor rule.\n");
 

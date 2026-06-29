@@ -16,10 +16,13 @@ describe("command schemas", () => {
     expect([...API_COMMAND_NAMES].sort()).toEqual([
       "assets.get",
       "assets.list",
+      "assets.openSource",
       "deployment.execute",
       "deployment.rollback",
+      "diagnostics.export",
       "diagnostics.list",
       "effective.resolve",
+      "history.get",
       "history.list",
       "migration.preview",
       "scan.cancel",
@@ -72,6 +75,23 @@ describe("command schemas", () => {
     expect(commandChannel("scan.start")).toBe("ai-config-hub:v1:scan.start");
   });
 
+  it("validates diagnostic export time windows by instant", () => {
+    expect(
+      CommandRequestSchemas["diagnostics.export"].safeParse({
+        format: "markdown",
+        from: "2026-06-28T18:00:00+08:00",
+        to: "2026-06-28T11:00:00.000Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      CommandRequestSchemas["diagnostics.export"].safeParse({
+        format: "markdown",
+        from: "2026-06-28T12:00:00.000Z",
+        to: "2026-06-28T18:00:00+08:00",
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates a request and response fixture for every command", () => {
     const requests: Record<string, unknown> = {
       "scan.start": { mode: "full" },
@@ -79,12 +99,21 @@ describe("command schemas", () => {
       "scan.cancel": { taskId: "task-1" },
       "assets.list": {},
       "assets.get": { assetId: "asset-1" },
+      "assets.openSource": { assetId: "asset-1" },
       "effective.resolve": {
         toolKey: "codex",
         projectId: "project-1",
         targetScopeId: "scope-1",
       },
       "diagnostics.list": {},
+      "diagnostics.export": {
+        format: "markdown",
+        taskId: "task-1",
+        toolKeys: ["codex"],
+        severities: ["warning"],
+        from: now,
+        to: now,
+      },
       "migration.preview": {
         sourceAssetIds: ["asset-1"],
         targetToolKey: "cursor",
@@ -98,6 +127,7 @@ describe("command schemas", () => {
       },
       "deployment.rollback": { deploymentId: "deployment-1" },
       "history.list": {},
+      "history.get": { id: "deployment-1" },
       "settings.get": {},
       "settings.update": { patch: { theme: "dark" }, expectedRevision: 1 },
     };
@@ -146,6 +176,7 @@ describe("command schemas", () => {
         source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },
         redactions: [],
       },
+      "assets.openSource": { assetId: "asset-1", opened: true },
       "effective.resolve": {
         effective: { counts: { rule: 1 } },
         contributors: [{ assetId: "asset-1", action: "inherit", reasonCode: "PROJECT_SCOPE" }],
@@ -159,10 +190,37 @@ describe("command schemas", () => {
         countsBySeverity: diagnosticCounts,
         snapshotRevision: "revision-1",
       },
+      "diagnostics.export": {
+        format: "markdown",
+        generatedAt: now,
+        filters: {
+          taskId: "task-1",
+          toolKeys: ["codex"],
+          severities: ["warning"],
+          from: now,
+          to: now,
+        },
+        summary: { total: 1, info: 0, warning: 1, error: 0 },
+        items: [
+          {
+            id: "diagnostic-1",
+            code: "MISSING_REFERENCE",
+            severity: "warning",
+            message: "A referenced file is missing",
+            suggestedAction: "Create the referenced file or remove the reference",
+            blocking: false,
+            location: { pathDisplay: "~/project/AGENTS.md", line: 1 },
+          },
+        ],
+        redactions: [{ pointer: "/items/0/message", reason: "secret" }],
+        content:
+          "# Diagnostic report\n\n- warning MISSING_REFERENCE: A referenced file is missing\n",
+      },
       "migration.preview": {
         planId: "plan-1",
         planHash: hash,
         compatibility: "full",
+        fieldLosses: [],
         changes: [
           {
             operation: "create",
@@ -237,6 +295,35 @@ describe("command schemas", () => {
         ],
         nextCursor: null,
       },
+      "history.get": {
+        entry: {
+          id: "deployment-1",
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: now,
+          finishedAt: now,
+          snapshot: {
+            status: "recorded",
+            commitId: "abc123",
+            authoredAt: now,
+            message: "record deployment deployment-1",
+          },
+        },
+        plan: {
+          planId: "plan-1",
+          planHash: hash,
+          requiredConfirmations: ["overwrite"],
+        },
+        changes: [
+          {
+            operation: "replace",
+            pathDisplay: ".cursor/rules/repository-policy.mdc",
+            beforeHash: hash,
+            afterHash: hash,
+            diff: "- old\n+ new",
+          },
+        ],
+      },
       "settings.get": {
         values: { theme: "system" },
         revision: 1,
@@ -258,6 +345,45 @@ describe("command schemas", () => {
         `${name} response`,
       ).toBe(true);
     }
+  });
+
+  it("exposes structured field loss details in migration previews", () => {
+    expect(
+      CommandResponseSchemas["migration.preview"].safeParse({
+        planId: "plan-1",
+        planHash: hash,
+        compatibility: "partial",
+        fieldLosses: [
+          {
+            assetId: "asset-1",
+            droppedFields: ["/data/extensions", "/data/allowedTools"],
+            retainedFields: ["/kind", "/data/name", "/data/instructions"],
+            transformedFields: [
+              {
+                sourceField: "/data/globs",
+                targetField: "/frontmatter/globs",
+                reason: "Cursor stores rule globs in frontmatter.",
+              },
+            ],
+            warnings: ["Some source fields are not expressible in the target format."],
+          },
+        ],
+        changes: [
+          {
+            operation: "replace",
+            pathDisplay: ".cursor/rules/repository-policy.mdc",
+            beforeHash: hash,
+            afterHash: hash,
+            diff: "- old\n+ new",
+          },
+        ],
+        requiredConfirmations: ["partial_conversion", "overwrite"],
+        warnings: [],
+        sourceHashes: { "asset-1": hash },
+        targetHashes: { ".cursor/rules/repository-policy.mdc": hash },
+        expiresAt: now,
+      }).success,
+    ).toBe(true);
   });
 });
 

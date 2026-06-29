@@ -10,6 +10,7 @@ import type {
   AdapterReadApi,
   AdapterRegistration,
   Asset,
+  ConversionResult,
   DeploymentFilePort,
   DeploymentPlan,
   DeploymentRecord,
@@ -43,6 +44,7 @@ import {
   DiagnosticSeveritySchema,
   IsoDateTimeSchema,
   PaginationCursorSchema,
+  ProjectIdSchema,
   ResourceKindSchema,
   ScanRunIdSchema,
   SemVerSchema,
@@ -51,10 +53,17 @@ import {
   ToolIdSchema,
   type AbsolutePath,
   type ContentHash,
+  type ProjectId,
   type ScopeKind,
   type TaskId,
 } from "@ai-config-hub/shared";
-import type { ApiCommandName, CommandServiceMap } from "@ai-config-hub/api";
+import {
+  createDiagnosticReport,
+  type ApiCommandName,
+  type CommandRequest,
+  type CommandServiceMap,
+  type DiagnosticReportPathRoot,
+} from "@ai-config-hub/api";
 import { TaskEventSchema, type TaskEvent, type TaskPhase } from "@ai-config-hub/api";
 import { LocalHistoryService, SystemLocalGitPort } from "@ai-config-hub/git";
 import { createStorageRepositories, openDatabase } from "@ai-config-hub/storage";
@@ -65,6 +74,11 @@ export interface DesktopCommandServiceOptions {
   readonly cwd?: string;
   readonly homeDirectory?: string;
   readonly now?: () => string;
+  readonly sourceFileOpener?: SourceFileOpener;
+}
+
+export interface SourceFileOpener {
+  openPath(path: AbsolutePath): Promise<void>;
 }
 
 export interface DesktopCommandServiceRuntime {
@@ -84,10 +98,12 @@ export interface DesktopTaskEventPort {
 interface DesktopRuntime {
   readonly repositories: ReturnType<typeof createStorageRepositories>;
   readonly databaseRecovery: boolean;
+  readonly appDataRoot: AbsolutePath;
   readonly backupRoot: AbsolutePath;
   readonly historyRoot: AbsolutePath;
   readonly history: LocalHistoryService;
   readonly now: () => string;
+  readonly sourceFileOpener?: SourceFileOpener;
   close(): void;
 }
 
@@ -132,6 +148,7 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
   return {
     repositories,
     databaseRecovery: opened.mode === "read_only_recovery",
+    appDataRoot: AbsolutePathSchema.parse(options.userDataPath),
     backupRoot,
     historyRoot,
     history: new LocalHistoryService({
@@ -139,6 +156,9 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
       now: () => IsoDateTimeSchema.parse(options.now?.() ?? new Date().toISOString()),
     }),
     now: options.now ?? (() => new Date().toISOString()),
+    ...(options.sourceFileOpener === undefined
+      ? {}
+      : { sourceFileOpener: options.sourceFileOpener }),
     close() {
       repositories.database.close();
     },
@@ -275,10 +295,19 @@ function createServices(
       const request = payload as { readonly taskId: string };
       const task = await runtime.repositories.tasks.get(TaskIdSchema.parse(request.taskId));
       if (task === undefined) throw notFound("Task not found");
+      const effectiveAfterPhase = apiPhase(
+        task.summary === undefined ? (task.progress?.phase ?? task.status) : "completed",
+      );
+      taskEvents.record({
+        taskId: task.taskId,
+        emittedAt: now(runtime),
+        type: "cancel.requested",
+        payload: { reason: "user", effectiveAfterPhase },
+      });
       return {
         taskId: TaskIdSchema.parse(request.taskId),
         cancelRequested: true,
-        effectiveAfterPhase: apiPhase(task.progress?.phase ?? task.status),
+        effectiveAfterPhase,
       };
     },
     "assets.list": async (payload) => {
@@ -340,6 +369,26 @@ function createServices(
         redactions: [],
       };
     },
+    "assets.openSource": async (payload) => {
+      const request = payload as CommandRequest<"assets.openSource">;
+      const asset = await runtime.repositories.index.getAsset(AssetIdSchema.parse(request.assetId));
+      if (asset === undefined) throw notFound("Asset not found");
+      if (runtime.sourceFileOpener === undefined) {
+        throw unsupported("External editor integration is unavailable in this runtime");
+      }
+      try {
+        await runtime.sourceFileOpener.openPath(asset.canonicalSourcePath);
+      } catch (error) {
+        throw new AppError({
+          code: "INTERNAL_ERROR",
+          message: "The source file could not be opened in the external editor",
+          retryable: true,
+          suggestedActions: ["Check that the file exists and an editor is registered for it"],
+          cause: error,
+        });
+      }
+      return { assetId: asset.assetId, opened: true as const };
+    },
     "effective.resolve": (payload) => {
       const request = payload as {
         readonly toolKey: string;
@@ -377,12 +426,7 @@ function createServices(
       });
     },
     "diagnostics.list": async (payload) => {
-      const request = payload as {
-        readonly assetId?: string;
-        readonly severities?: readonly string[];
-        readonly cursor?: string;
-        readonly limit?: number;
-      };
+      const request = payload as CommandRequest<"diagnostics.list">;
       const page = await runtime.repositories.index.listDiagnostics({
         ...(request.assetId === undefined ? {} : { assetId: AssetIdSchema.parse(request.assetId) }),
         ...(request.severities === undefined
@@ -395,9 +439,62 @@ function createServices(
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
-        limit: request.limit ?? 50,
+        limit:
+          request.projectId === undefined &&
+          request.toolKeys === undefined &&
+          request.codes === undefined
+            ? (request.limit ?? 50)
+            : 10_000,
       });
-      return diagnosticsPage(page);
+      const context = diagnosticFilterContext(runtime, await diagnosticFilterAssets(runtime));
+      const filtered = page.items.filter((diagnostic) =>
+        includeDiagnostic(diagnostic, listFilterRequest(request), context, undefined),
+      );
+      return diagnosticsPage({
+        items: filtered.slice(0, request.limit ?? 50),
+        snapshotRevision: page.snapshotRevision,
+      });
+    },
+    "diagnostics.export": async (payload) => {
+      const request = payload as CommandRequest<"diagnostics.export">;
+      const page = await runtime.repositories.index.listDiagnostics({
+        ...(request.severities === undefined
+          ? {}
+          : {
+              severity: request.severities.map((severity) =>
+                DiagnosticSeveritySchema.parse(severity),
+              ),
+            }),
+        limit: 10_000,
+      });
+      const context = diagnosticFilterContext(runtime, await diagnosticFilterAssets(runtime));
+      const taskDiagnosticIds =
+        request.taskId === undefined
+          ? undefined
+          : new Set(
+              (await runtime.repositories.tasks.get(TaskIdSchema.parse(request.taskId)))?.summary
+                ?.diagnosticIds ?? [],
+            );
+      const items = page.items
+        .filter((diagnostic) => includeDiagnostic(diagnostic, request, context, taskDiagnosticIds))
+        .map(diagnosticView);
+      const filters = compact({
+        taskId: request.taskId === undefined ? undefined : TaskIdSchema.parse(request.taskId),
+        projectId:
+          request.projectId === undefined ? undefined : ProjectIdSchema.parse(request.projectId),
+        toolKeys: request.toolKeys,
+        severities: request.severities,
+        from: request.from,
+        to: request.to,
+      });
+      return createDiagnosticReport({
+        format: request.format,
+        generatedAt: now(runtime),
+        filters,
+        items,
+        homeDirectory,
+        pathRoots: diagnosticReportPathRoots(runtime, cwd),
+      });
     },
     "migration.preview": async (payload) => {
       const request = payload as {
@@ -451,7 +548,7 @@ function createServices(
         correlationId: CorrelationIdSchema.parse(`correlation:desktop:${randomUUID()}`),
         signal: AbortSignal.timeout(60_000),
       });
-      return migrationPreviewResponse(preview.plan, now(runtime));
+      return migrationPreviewResponse(preview.plan, preview.conversions, now(runtime));
     },
     "deployment.execute": async (payload) => {
       const request = payload as {
@@ -669,6 +766,16 @@ function createServices(
         nextCursor: page.nextCursor ?? null,
       };
     },
+    "history.get": async (payload) => {
+      const request = payload as { readonly id: string };
+      const recordId = DeploymentRecordIdSchema.parse(request.id);
+      const record = await runtime.repositories.deployments.getRecord(recordId);
+      if (record === undefined) throw notFound("Deployment record not found");
+      const plan = await runtime.repositories.deployments.getPlan(record.deploymentPlanId);
+      if (plan === undefined) throw notFound("Deployment plan not found");
+      const snapshots = await snapshotMetadataForRecords(runtime, [record]);
+      return historyDetail(record, plan, snapshots.get(record.deploymentRecordId));
+    },
     "settings.get": async (payload) => {
       const request = payload as { readonly keys?: readonly string[] };
       const current = await runtime.repositories.settings.getPublic();
@@ -786,7 +893,13 @@ export class DesktopTaskEvents implements DesktopTaskEventPort {
   record(input: {
     readonly taskId: string;
     readonly emittedAt: string;
-    readonly type: "accepted" | "phase.changed" | "progress" | "item.failed" | "completed";
+    readonly type:
+      | "accepted"
+      | "phase.changed"
+      | "progress"
+      | "item.failed"
+      | "cancel.requested"
+      | "completed";
     readonly payload: unknown;
   }): TaskEvent {
     const taskId = TaskIdSchema.parse(input.taskId);
@@ -1131,6 +1244,18 @@ function instrumentDeploymentFiles(
       recordWrite();
       return result;
     },
+    async copy(input) {
+      beginWrite();
+      const result = await port.copy(input);
+      recordWrite();
+      return result;
+    },
+    async createSymlink(input) {
+      beginWrite();
+      const result = await port.createSymlink(input);
+      recordWrite();
+      return result;
+    },
     async remove(input) {
       beginWrite();
       await port.remove(input);
@@ -1239,6 +1364,15 @@ function scanRegistrations(
   );
 }
 
+function compact<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => {
+      if (item === undefined) return false;
+      return !Array.isArray(item) || item.length > 0;
+    }),
+  ) as T;
+}
+
 function now(runtime: DesktopRuntime): string {
   return IsoDateTimeSchema.parse(runtime.now());
 }
@@ -1320,6 +1454,230 @@ function diagnosticView(item: Diagnostic) {
   };
 }
 
+type DiagnosticFilterRequest = Pick<
+  CommandRequest<"diagnostics.export">,
+  "from" | "projectId" | "taskId" | "to" | "toolKeys"
+> & {
+  readonly codes?: readonly string[];
+};
+
+interface DiagnosticFilterContext {
+  readonly assetsById: ReadonlyMap<string, Asset>;
+  readonly assetsByPath: ReadonlyMap<string, Asset>;
+  readonly scopeOwnership: readonly DiagnosticScopeOwnership[];
+  readonly diagnosticOwnership: ReadonlyMap<string, DiagnosticOwnership>;
+}
+
+interface DiagnosticScopeOwnership {
+  readonly rootPath: AbsolutePath;
+  readonly toolId: ReturnType<typeof ToolIdSchema.parse>;
+  readonly projectId: ProjectId | null;
+}
+
+interface DiagnosticOwnership {
+  readonly taskId?: ReturnType<typeof TaskIdSchema.parse>;
+  readonly toolId?: ReturnType<typeof ToolIdSchema.parse>;
+  readonly projectId?: ProjectId;
+}
+
+async function diagnosticFilterAssets(runtime: DesktopRuntime): Promise<readonly Asset[]> {
+  return (await runtime.repositories.index.listAssets({ limit: 10_000 })).items;
+}
+
+function diagnosticFilterContext(
+  runtime: DesktopRuntime,
+  assets: readonly Asset[],
+): DiagnosticFilterContext {
+  const diagnosticRows = runtime.repositories.database
+    .prepare(
+      `SELECT
+        diagnostics.id AS diagnostic_id,
+        scan_runs.task_id AS task_id,
+        scan_projects.domain_id AS scan_project_id,
+        asset_tools.tool_key AS asset_tool_key,
+        asset_projects.domain_id AS asset_project_id
+      FROM diagnostics
+      LEFT JOIN scan_runs ON scan_runs.id = diagnostics.scan_run_id
+      LEFT JOIN projects AS scan_projects ON scan_projects.id = scan_runs.project_id
+      LEFT JOIN assets ON assets.id = diagnostics.asset_id
+      LEFT JOIN tools AS asset_tools ON asset_tools.id = assets.tool_id
+      LEFT JOIN scopes AS asset_scopes ON asset_scopes.id = assets.scope_id
+      LEFT JOIN projects AS asset_projects ON asset_projects.id = asset_scopes.project_id`,
+    )
+    .all() as {
+    readonly diagnostic_id: string;
+    readonly task_id: string | null;
+    readonly scan_project_id: string | null;
+    readonly asset_tool_key: string | null;
+    readonly asset_project_id: string | null;
+  }[];
+  const scopeRows = runtime.repositories.database
+    .prepare(
+      `SELECT
+        scopes.root_path_normalized AS root_path,
+        tools.tool_key AS tool_key,
+        projects.domain_id AS project_id
+      FROM scopes
+      JOIN tools ON tools.id = scopes.tool_id
+      LEFT JOIN projects ON projects.id = scopes.project_id`,
+    )
+    .all() as {
+    readonly root_path: string;
+    readonly tool_key: string;
+    readonly project_id: string | null;
+  }[];
+  return {
+    assetsById: new Map(assets.map((asset) => [asset.assetId, asset])),
+    assetsByPath: new Map(assets.map((asset) => [asset.canonicalSourcePath, asset])),
+    diagnosticOwnership: new Map(
+      diagnosticRows.map((row) => [
+        row.diagnostic_id,
+        {
+          ...(row.task_id === null ? {} : { taskId: TaskIdSchema.parse(row.task_id) }),
+          ...(row.asset_tool_key === null
+            ? {}
+            : { toolId: ToolIdSchema.parse(row.asset_tool_key) }),
+          ...(row.asset_project_id === null && row.scan_project_id === null
+            ? {}
+            : { projectId: ProjectIdSchema.parse(row.asset_project_id ?? row.scan_project_id) }),
+        },
+      ]),
+    ),
+    scopeOwnership: scopeRows
+      .map((row) => ({
+        rootPath: AbsolutePathSchema.parse(row.root_path),
+        toolId: ToolIdSchema.parse(row.tool_key),
+        projectId: row.project_id === null ? null : ProjectIdSchema.parse(row.project_id),
+      }))
+      .sort((left, right) => right.rootPath.length - left.rootPath.length),
+  };
+}
+
+function includeDiagnostic(
+  diagnostic: Diagnostic,
+  request: DiagnosticFilterRequest,
+  context: DiagnosticFilterContext,
+  taskDiagnosticIds: ReadonlySet<string> | undefined,
+): boolean {
+  const ownership = diagnosticOwnership(diagnostic, context);
+  if (
+    taskDiagnosticIds !== undefined &&
+    ownership.taskId !== request.taskId &&
+    !taskDiagnosticIds.has(diagnostic.diagnosticId)
+  ) {
+    return false;
+  }
+  const createdAt = Date.parse(diagnostic.createdAt);
+  if (request.from !== undefined && createdAt < Date.parse(request.from)) return false;
+  if (request.to !== undefined && createdAt > Date.parse(request.to)) return false;
+  if (request.codes !== undefined && !request.codes.includes(diagnostic.code)) return false;
+  if (request.toolKeys !== undefined) {
+    const tools = new Set(request.toolKeys);
+    if (ownership.toolId === undefined || !tools.has(ownership.toolId)) return false;
+  }
+  if (request.projectId !== undefined) {
+    if (ownership.projectId !== request.projectId) return false;
+  }
+  return true;
+}
+
+function diagnosticOwnership(
+  diagnostic: Diagnostic,
+  context: DiagnosticFilterContext,
+): DiagnosticOwnership {
+  const stored = context.diagnosticOwnership.get(diagnostic.diagnosticId) ?? {};
+  const evidenced = evidenceDiagnosticOwnership(diagnostic);
+  const asset =
+    diagnostic.subject.kind === "asset"
+      ? context.assetsById.get(diagnostic.subject.id)
+      : diagnostic.location === undefined
+        ? undefined
+        : context.assetsByPath.get(diagnostic.location.path);
+  if (asset !== undefined) {
+    const scopedProjectId = scopeOwnershipForPath(asset.canonicalSourcePath, context)?.projectId;
+    const projectId = scopedProjectId ?? stored.projectId ?? evidenced.projectId;
+    return {
+      ...stored,
+      ...evidenced,
+      toolId: asset.toolId,
+      ...(projectId === undefined ? {} : { projectId }),
+    };
+  }
+  const scoped =
+    diagnostic.location === undefined
+      ? undefined
+      : scopeOwnershipForPath(diagnostic.location.path, context);
+  return {
+    ...stored,
+    ...evidenced,
+    ...(scoped === undefined ? {} : { toolId: scoped.toolId }),
+    ...(scoped?.projectId === undefined || scoped.projectId === null
+      ? {}
+      : { projectId: scoped.projectId }),
+  };
+}
+
+function evidenceDiagnosticOwnership(diagnostic: Diagnostic): DiagnosticOwnership {
+  const evidence = diagnostic.evidence;
+  const toolId =
+    typeof evidence["toolId"] === "string" ? ToolIdSchema.safeParse(evidence["toolId"]) : undefined;
+  const projectRoot =
+    typeof evidence["projectRoot"] === "string"
+      ? ProjectIdSchema.safeParse(evidence["projectRoot"])
+      : undefined;
+  return {
+    ...(toolId?.success === true ? { toolId: toolId.data } : {}),
+    ...(projectRoot?.success === true ? { projectId: projectRoot.data } : {}),
+  };
+}
+
+function scopeOwnershipForPath(
+  path: string,
+  context: DiagnosticFilterContext,
+): DiagnosticScopeOwnership | undefined {
+  return context.scopeOwnership.find(
+    (scope) => path === scope.rootPath || path.startsWith(`${scope.rootPath}/`),
+  );
+}
+
+function listFilterRequest(request: CommandRequest<"diagnostics.list">): DiagnosticFilterRequest {
+  return {
+    ...(request.projectId === undefined
+      ? {}
+      : { projectId: ProjectIdSchema.parse(request.projectId) }),
+    ...(request.toolKeys === undefined ? {} : { toolKeys: request.toolKeys }),
+    ...(request.codes === undefined ? {} : { codes: request.codes }),
+  };
+}
+
+function diagnosticReportPathRoots(
+  runtime: DesktopRuntime,
+  cwd: AbsolutePath,
+): readonly DiagnosticReportPathRoot[] {
+  const projectRows = runtime.repositories.database
+    .prepare("SELECT root_path_normalized FROM projects")
+    .all() as { readonly root_path_normalized: string }[];
+  const roots = [
+    { label: "<project>", path: cwd },
+    ...projectRows.map((row) => ({ label: "<project>", path: row.root_path_normalized })),
+    { label: "<backup-root>", path: runtime.backupRoot },
+    { label: "<app-data>", path: runtime.appDataRoot },
+  ];
+  return uniqueReportPathRoots(roots);
+}
+
+function uniqueReportPathRoots(
+  roots: readonly DiagnosticReportPathRoot[],
+): readonly DiagnosticReportPathRoot[] {
+  const seen = new Set<string>();
+  return roots.filter((root) => {
+    const key = `${root.label}\0${root.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function effectiveConfigs(runtime: DesktopRuntime): readonly EffectiveConfig[] {
   const rows = runtime.repositories.database
     .prepare("SELECT effective_configs_json FROM scan_runs ORDER BY started_at DESC")
@@ -1344,13 +1702,29 @@ function reasonCode(reason: string): string {
     .slice(0, 100);
 }
 
-function migrationPreviewResponse(plan: DeploymentPlan, generatedAt: string) {
+function migrationPreviewResponse(
+  plan: DeploymentPlan,
+  conversions: readonly ConversionResult[],
+  generatedAt: string,
+) {
   return {
     planId: plan.deploymentPlanId,
     planHash: plan.planHash,
     compatibility: plan.requiredConfirmations.includes("partial_conversion")
       ? ("partial" as const)
       : ("full" as const),
+    fieldLosses: conversions
+      .filter(
+        (conversion): conversion is Extract<ConversionResult, { readonly level: "partial" }> =>
+          conversion.level === "partial",
+      )
+      .map((conversion) => ({
+        assetId: conversion.sourceAssetId,
+        droppedFields: conversion.droppedFields,
+        retainedFields: conversion.retainedFields,
+        transformedFields: conversion.transformedFields,
+        warnings: conversion.warnings,
+      })),
     requiredConfirmations: plan.requiredConfirmations,
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
@@ -1493,6 +1867,31 @@ function historyEntry(record: DeploymentRecord, snapshot: SnapshotMetadata | und
     },
     cancellable: false,
     ...(snapshot === undefined ? {} : { snapshot }),
+  };
+}
+
+function historyDetail(
+  record: DeploymentRecord,
+  plan: DeploymentPlan,
+  snapshot: SnapshotMetadata | undefined,
+) {
+  return {
+    entry: historyEntry(record, snapshot),
+    plan: {
+      planId: plan.deploymentPlanId,
+      planHash: plan.planHash,
+      requiredConfirmations: plan.requiredConfirmations,
+    },
+    changes: plan.operations.map((operation) => {
+      const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
+      return {
+        operation: operation.kind,
+        pathDisplay: operation.targetPath,
+        beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
+        afterHash: operation.kind === "delete" ? null : contentHash(operation.nextText),
+        diff: diff?.unifiedText ?? "",
+      };
+    }),
   };
 }
 

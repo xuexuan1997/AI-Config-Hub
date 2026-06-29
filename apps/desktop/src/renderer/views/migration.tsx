@@ -109,6 +109,39 @@ export function MigrationView(props: {
               ))}
             </ul>
           )}
+          {props.state.preview.fieldLosses.length === 0 ? null : (
+            <section className="field-loss-panel" aria-label="Field loss details">
+              <h2>Field loss</h2>
+              {props.state.preview.fieldLosses.map((loss) => (
+                <div key={loss.assetId} className="field-loss-detail">
+                  <h3>{loss.assetId}</h3>
+                  <dl>
+                    <dt>Dropped</dt>
+                    <dd>
+                      {loss.droppedFields.length === 0 ? "none" : loss.droppedFields.join(", ")}
+                    </dd>
+                    <dt>Retained</dt>
+                    <dd>
+                      {loss.retainedFields.length === 0 ? "none" : loss.retainedFields.join(", ")}
+                    </dd>
+                    <dt>Transformed</dt>
+                    <dd>
+                      {loss.transformedFields.length === 0
+                        ? "none"
+                        : loss.transformedFields
+                            .map(
+                              (field) =>
+                                `${field.sourceField} -> ${field.targetField}: ${field.reason}`,
+                            )
+                            .join("; ")}
+                    </dd>
+                    <dt>Warnings</dt>
+                    <dd>{loss.warnings.length === 0 ? "none" : loss.warnings.join("; ")}</dd>
+                  </dl>
+                </div>
+              ))}
+            </section>
+          )}
           {driftRows.length === 0 ? null : (
             <section className="drift-panel" aria-label="Source drift warnings">
               <h2>Source drift</h2>

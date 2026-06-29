@@ -4,8 +4,13 @@ export function AssetsView(props: {
   readonly state: AppState;
   readonly onRefresh: () => void;
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
+  readonly onLoadEffective: () => void;
+  readonly onOpenSource: () => void;
+  readonly onRescanAfterEdit: () => void;
+  readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   const detail = props.state.assetDetail;
+  const effective = props.state.effective;
   return (
     <>
       <h1>Assets</h1>
@@ -55,6 +60,17 @@ export function AssetsView(props: {
       {detail === undefined ? null : (
         <section className="detail-panel" aria-label="Asset detail">
           <h2>{detail.asset.logicalKey}</h2>
+          <div className="detail-actions">
+            <button type="button" onClick={props.onOpenSource}>
+              Open source
+            </button>
+            <button type="button" onClick={props.onRescanAfterEdit}>
+              Rescan after edit
+            </button>
+            <button type="button" onClick={props.onLoadEffective}>
+              Load effective configuration
+            </button>
+          </div>
           <dl>
             <dt>Tool</dt>
             <dd>{detail.asset.toolKey}</dd>
@@ -83,6 +99,53 @@ export function AssetsView(props: {
               <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
             </>
           )}
+          {effective === undefined ? null : (
+            <>
+              <h3>Effective configuration</h3>
+              <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
+              <h3>Contributors</h3>
+              {effective.contributors.length === 0 ? (
+                <p>No contributing assets.</p>
+              ) : (
+                <ul>
+                  {effective.contributors.map((contributor) => (
+                    <li
+                      key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
+                    >
+                      {contributor.assetId} {contributor.action} {contributor.reasonCode}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <h3>Ignored assets</h3>
+              {effective.ignored.length === 0 ? (
+                <p>No ignored assets.</p>
+              ) : (
+                <ul>
+                  {effective.ignored.map((ignored) => (
+                    <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
+                      {ignored.assetId} {ignored.reasonCode}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <h3>Effective diagnostics</h3>
+              {effective.diagnostics.length === 0 ? (
+                <p>No effective diagnostics.</p>
+              ) : (
+                <ul className="diagnostic-list">
+                  {effective.diagnostics.map((diagnostic) => (
+                    <li key={diagnostic.id}>
+                      <strong>
+                        {diagnostic.severity} {diagnostic.code}
+                      </strong>
+                      <span>{diagnostic.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </section>
       )}
       {props.state.diagnostics.length === 0 ? null : (
@@ -95,12 +158,38 @@ export function AssetsView(props: {
                   {diagnostic.severity} {diagnostic.code}
                 </strong>
                 <span>{diagnostic.message}</span>
+                {diagnostic.location === undefined ? null : (
+                  <small>
+                    {diagnostic.location.pathDisplay}
+                    {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
+                    {diagnostic.location.column === undefined
+                      ? ""
+                      : `:${diagnostic.location.column}`}
+                  </small>
+                )}
                 <small>{diagnostic.suggestedAction}</small>
+                {diagnostic.assetId === undefined ? null : (
+                  <LocateDiagnosticButton
+                    assetId={diagnostic.assetId}
+                    onLocate={props.onLocateDiagnostic}
+                  />
+                )}
               </li>
             ))}
           </ul>
         </section>
       )}
     </>
+  );
+}
+
+function LocateDiagnosticButton(props: {
+  readonly assetId: AppState["assets"][number]["id"];
+  readonly onLocate: (assetId: AppState["assets"][number]["id"]) => void;
+}) {
+  return (
+    <button type="button" onClick={() => props.onLocate(props.assetId)}>
+      Locate
+    </button>
   );
 }

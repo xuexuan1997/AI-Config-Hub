@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -72,6 +72,17 @@ export abstract class BaseToolAdapter implements ToolAdapter {
       ),
     )) {
       context.signal.throwIfAborted();
+      if (!context.tool.configRoots.some((root) => containsPath(root, asset.canonicalSourcePath))) {
+        diagnostics.push(
+          adapterDiagnostic(
+            "RESOURCE_OUTSIDE_CONFIG_ROOT",
+            "error",
+            `Resource ${asset.locator} is outside detected ${this.toolId} configuration roots`,
+            true,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
       const first = firstByLocator.get(asset.locator);
       if (first === undefined) {
         firstByLocator.set(asset.locator, asset);
@@ -115,6 +126,47 @@ export abstract class BaseToolAdapter implements ToolAdapter {
             "error",
             "MCP configuration contains non-deployable secret values",
             true,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
+
+      if (resourceInstructions(asset.resource)?.trim() === "") {
+        diagnostics.push(
+          adapterDiagnostic(
+            "RESOURCE_INSTRUCTIONS_EMPTY",
+            "error",
+            `${asset.resource.kind} resource has empty instructions after trimming whitespace`,
+            true,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
+
+      if (hasLiteralMcpSecretRisk(asset.resource)) {
+        diagnostics.push(
+          adapterDiagnostic(
+            "MCP_LITERAL_SECRET_RISK",
+            "warning",
+            "MCP configuration appears to contain a literal secret; prefer an environment reference",
+            false,
+            { path: asset.canonicalSourcePath },
+          ),
+        );
+      }
+    }
+
+    if (context.effectiveConfigDraft !== undefined) {
+      const byAssetId = new Map(context.assets.map((asset) => [asset.assetId, asset]));
+      for (const assetId of [...context.effectiveConfigDraft.ignoredAssetIds].sort()) {
+        const asset = byAssetId.get(assetId);
+        if (asset === undefined) continue;
+        diagnostics.push(
+          adapterDiagnostic(
+            "RESOURCE_IGNORED_BY_EFFECTIVE_CONFIG",
+            "info",
+            `Resource ${asset.locator} is ignored by the effective configuration resolution`,
+            false,
             { path: asset.canonicalSourcePath },
           ),
         );
@@ -428,6 +480,56 @@ function hasNonDeployableMcpSecret(
       (!transport.endpoint.userInfo.username.deployable ||
         transport.endpoint.userInfo.password?.deployable === false)) ||
     Object.values(transport.headers).some((item) => !item.deployable)
+  );
+}
+
+function resourceInstructions(
+  resource: Parameters<typeof resolveAssetsByScope>[0]["assets"][number]["resource"],
+): string | undefined {
+  if (resource.kind === "mcp") return undefined;
+  return resource.data.instructions;
+}
+
+function hasLiteralMcpSecretRisk(
+  resource: Parameters<typeof resolveAssetsByScope>[0]["assets"][number]["resource"],
+): boolean {
+  if (resource.kind !== "mcp") return false;
+  const transport = resource.data.transport;
+  if (transport.kind === "stdio") {
+    return (
+      transport.args.some((item) => item.kind === "literal" && looksSecretish("", item.value)) ||
+      Object.entries(transport.env).some(
+        ([key, item]) => item.kind === "literal" && looksSecretish(key, item.value),
+      )
+    );
+  }
+  return (
+    (transport.endpoint.baseUrl.kind === "literal" &&
+      looksSecretish("url", transport.endpoint.baseUrl.value)) ||
+    Object.entries(transport.endpoint.query).some(([key, values]) =>
+      values.some((item) => item.kind === "literal" && looksSecretish(key, item.value)),
+    ) ||
+    (transport.endpoint.userInfo !== undefined &&
+      ((transport.endpoint.userInfo.username.kind === "literal" &&
+        looksSecretish("username", transport.endpoint.userInfo.username.value)) ||
+        (transport.endpoint.userInfo.password?.kind === "literal" &&
+          looksSecretish("password", transport.endpoint.userInfo.password.value)))) ||
+    Object.entries(transport.headers).some(
+      ([key, item]) => item.kind === "literal" && looksSecretish(key, item.value),
+    )
+  );
+}
+
+function looksSecretish(key: string, value: string): boolean {
+  const haystack = `${key} ${value}`.toLowerCase();
+  return /token|secret|password|passwd|api[_-]?key|authorization|bearer/.test(haystack);
+}
+
+function containsPath(root: AbsolutePath, candidate: AbsolutePath): boolean {
+  const difference = relative(root, candidate);
+  return (
+    difference === "" ||
+    (difference !== ".." && !difference.startsWith(`..${sep}`) && !isAbsolute(difference))
   );
 }
 

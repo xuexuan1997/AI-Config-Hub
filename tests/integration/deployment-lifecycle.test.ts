@@ -1,4 +1,13 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -107,6 +116,48 @@ class RealTextFiles implements DeploymentFilePort {
     await mkdir(dirname(input.target), { recursive: true });
     await writeFile(input.target, input.text, "utf8");
     return { resultingHash: hash(input.text) };
+  }
+  async copy(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }) {
+    const source = await this.snapshots.snapshot({
+      path: input.source,
+      allowedRoots: [input.source],
+    });
+    if (source?.contentHash !== input.expectedSourceHash) throw new Error("stale copy source");
+    const current = await this.snapshots.snapshot({
+      path: input.target,
+      allowedRoots: [input.target],
+    });
+    if ((current?.contentHash ?? "absent") !== input.expectedHash)
+      throw new Error("stale copy target");
+    await mkdir(dirname(input.target), { recursive: true });
+    await copyFile(input.source, input.target);
+    return { resultingHash: source.contentHash };
+  }
+  async createSymlink(input: {
+    readonly source: AbsolutePath;
+    readonly target: AbsolutePath;
+    readonly expectedSourceHash: ContentHash;
+    readonly expectedHash: ContentHash | "absent";
+  }) {
+    const source = await this.snapshots.snapshot({
+      path: input.source,
+      allowedRoots: [input.source],
+    });
+    if (source?.contentHash !== input.expectedSourceHash) throw new Error("stale symlink source");
+    const current = await this.snapshots.snapshot({
+      path: input.target,
+      allowedRoots: [input.target],
+    });
+    if ((current?.contentHash ?? "absent") !== input.expectedHash)
+      throw new Error("stale symlink target");
+    await mkdir(dirname(input.target), { recursive: true });
+    await symlink(input.source, input.target);
+    return { resultingHash: source.contentHash };
   }
   async remove(input: { readonly target: AbsolutePath; readonly expectedHash: ContentHash }) {
     const current = await this.snapshots.snapshot({
