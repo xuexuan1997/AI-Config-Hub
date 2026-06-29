@@ -109,6 +109,10 @@ describe("release evidence scripts", () => {
     assert.match(releaseWorkflow, /windows-x64-release-candidate/);
     assert.match(releaseWorkflow, /macos-x64-release-candidate/);
     assert.match(releaseWorkflow, /macos-arm64-release-candidate/);
+    assert.match(releaseWorkflow, /linux-x64-SHA256SUMS/);
+    assert.match(releaseWorkflow, /windows-x64-SHA256SUMS/);
+    assert.match(releaseWorkflow, /macos-x64-SHA256SUMS/);
+    assert.match(releaseWorkflow, /macos-arm64-SHA256SUMS/);
     assert.match(releaseWorkflow, /gh release upload "\$GITHUB_REF_NAME"/);
     assert.match(releaseWorkflow, /--clobber/);
   });

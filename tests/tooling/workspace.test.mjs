@@ -115,10 +115,11 @@ describe("workspace contract", () => {
     assert.match(workflow, /AI-Config-Hub-\*-windows-x64\.exe/);
     assert.match(workflow, /AI-Config-Hub-\*-macos-x64\.dmg/);
     assert.match(workflow, /AI-Config-Hub-\*-macos-arm64\.dmg/);
-    assert.match(workflow, /release\/linux-x64\/elf-compatibility\.json/);
-    assert.match(workflow, /release\/windows-x64\/version-manifest\.json/);
-    assert.match(workflow, /release\/macos-x64\/version-manifest\.json/);
-    assert.match(workflow, /release\/macos-arm64\/version-manifest\.json/);
+    assert.match(workflow, /linux-x64-version-manifest\.json/);
+    assert.match(workflow, /windows-x64-version-manifest\.json/);
+    assert.match(workflow, /macos-x64-version-manifest\.json/);
+    assert.match(workflow, /macos-arm64-version-manifest\.json/);
+    assert.match(workflow, /linux-x64-elf-compatibility\.json/);
     assert.match(workflow, /--repo "\$GITHUB_REPOSITORY"/);
     assert.match(workflow, /--verify-tag/);
   });

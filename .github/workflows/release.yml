@@ -48,7 +48,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=(
+          source_assets=(
             release/linux-x64/AI-Config-Hub-*-x86_64.AppImage
             release/linux-x64/SHA256SUMS
             release/linux-x64/version-manifest.json
@@ -67,9 +67,31 @@ jobs:
             release/macos-arm64/version-manifest.json
             release/macos-arm64/sbom.cdx.json
           )
-          for asset in "${assets[@]}"; do
+          for asset in "${source_assets[@]}"; do
             test -f "$asset"
           done
+
+          publish_dir=release/publish-assets
+          mkdir -p "$publish_dir"
+          cp release/linux-x64/AI-Config-Hub-*-x86_64.AppImage "$publish_dir/"
+          cp release/linux-x64/SHA256SUMS "$publish_dir/linux-x64-SHA256SUMS"
+          cp release/linux-x64/version-manifest.json "$publish_dir/linux-x64-version-manifest.json"
+          cp release/linux-x64/sbom.cdx.json "$publish_dir/linux-x64-sbom.cdx.json"
+          cp release/linux-x64/elf-compatibility.json "$publish_dir/linux-x64-elf-compatibility.json"
+          cp release/windows-x64/AI-Config-Hub-*-windows-x64.exe "$publish_dir/"
+          cp release/windows-x64/SHA256SUMS "$publish_dir/windows-x64-SHA256SUMS"
+          cp release/windows-x64/version-manifest.json "$publish_dir/windows-x64-version-manifest.json"
+          cp release/windows-x64/sbom.cdx.json "$publish_dir/windows-x64-sbom.cdx.json"
+          cp release/macos-x64/AI-Config-Hub-*-macos-x64.dmg "$publish_dir/"
+          cp release/macos-x64/SHA256SUMS "$publish_dir/macos-x64-SHA256SUMS"
+          cp release/macos-x64/version-manifest.json "$publish_dir/macos-x64-version-manifest.json"
+          cp release/macos-x64/sbom.cdx.json "$publish_dir/macos-x64-sbom.cdx.json"
+          cp release/macos-arm64/AI-Config-Hub-*-macos-arm64.dmg "$publish_dir/"
+          cp release/macos-arm64/SHA256SUMS "$publish_dir/macos-arm64-SHA256SUMS"
+          cp release/macos-arm64/version-manifest.json "$publish_dir/macos-arm64-version-manifest.json"
+          cp release/macos-arm64/sbom.cdx.json "$publish_dir/macos-arm64-sbom.cdx.json"
+          assets=("$publish_dir"/*)
+
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
