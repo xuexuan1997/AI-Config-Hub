@@ -339,10 +339,23 @@ function createServices(
         readonly resourceTypes?: Parameters<
           typeof runtime.repositories.index.listAssets
         >[0]["resourceKinds"];
+        readonly scopeKinds?: readonly string[];
+        readonly diagnosticSeverity?: string;
         readonly query?: string;
         readonly cursor?: string;
         readonly limit?: number;
       };
+      const requestedLimit = request.limit ?? 50;
+      const requestedScopeKinds =
+        request.scopeKinds === undefined
+          ? undefined
+          : new Set(request.scopeKinds.map((scopeKind) => ScopeKindSchema.parse(scopeKind)));
+      const diagnosticSeverity =
+        request.diagnosticSeverity === undefined
+          ? undefined
+          : DiagnosticSeveritySchema.parse(request.diagnosticSeverity);
+      const requiresPostFilter =
+        requestedScopeKinds !== undefined || diagnosticSeverity !== undefined;
       const page = await runtime.repositories.index.listAssets({
         ...(request.toolKeys === undefined ? {} : { toolIds: request.toolKeys }),
         ...(request.resourceTypes === undefined ? {} : { resourceKinds: request.resourceTypes }),
@@ -350,11 +363,21 @@ function createServices(
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
-        limit: request.limit ?? 50,
+        limit: requiresPostFilter ? 10_000 : requestedLimit,
       });
       const scopeKinds = scopeKindsForAssets(runtime, page.items);
+      const filtered = page.items.filter((asset) => {
+        const scopeKind = scopeKinds.get(asset.scopeId) ?? "project";
+        if (requestedScopeKinds !== undefined && !requestedScopeKinds.has(scopeKind)) return false;
+        if (diagnosticSeverity !== undefined && asset.diagnosticSummary[diagnosticSeverity] === 0) {
+          return false;
+        }
+        return true;
+      });
+      const items = filtered.slice(0, requestedLimit);
+      const last = items.at(-1);
       return {
-        items: page.items.map((asset) => ({
+        items: items.map((asset) => ({
           id: asset.assetId,
           toolKey: asset.toolId,
           resourceType: asset.resource.kind,
@@ -363,7 +386,10 @@ function createServices(
           contentHash: asset.contentHash,
           diagnosticCounts: asset.diagnosticSummary,
         })),
-        nextCursor: page.nextCursor ?? null,
+        nextCursor:
+          requiresPostFilter && filtered.length > items.length && last !== undefined
+            ? PaginationCursorSchema.parse(last.assetId)
+            : (page.nextCursor ?? null),
         snapshotRevision: page.snapshotRevision,
         stale: false,
       };

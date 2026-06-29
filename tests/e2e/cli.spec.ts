@@ -49,7 +49,7 @@ test.setTimeout(120_000);
 test.beforeAll(async ({ browserName }, testInfo) => {
   testInfo.annotations.push({ type: "browser", description: browserName });
   testInfo.setTimeout(120_000);
-  await execFileAsync("pnpm", ["build"], {
+  await execFileAsync("pnpm", ["--filter", "@ai-config-hub/cli...", "build"], {
     cwd: process.cwd(),
     env: process.env,
     timeout: 120_000,
@@ -64,7 +64,7 @@ test.describe("CLI end to end", () => {
       const scan = await runCli(workspace.userData, ["scan", workspace.projectRoot, "--json"]);
       expect(scan.exitCode).toBe(0);
       expect(scan.json.ok).toBe(true);
-      expect(readDataRecord(scan.json)["status"]).toBe("queued");
+      expect(readDataRecord(scan.json)["status"]).toBe("succeeded");
 
       const assets = await runCli(workspace.userData, ["assets", "list", "--json"]);
       expect(assets.exitCode).toBe(0);
@@ -86,7 +86,7 @@ test.describe("CLI end to end", () => {
       ]);
       expect(scan.exitCode).toBe(0);
       expect(scan.json.ok).toBe(true);
-      expect(readDataRecord(scan.json)["status"]).toBe("queued");
+      expect(readDataRecord(scan.json)["status"]).toBe("succeeded");
 
       const assets = await runCli(workspace.userData, ["assets", "list", "--json"]);
       expect(assets.exitCode).toBe(0);
@@ -150,6 +150,7 @@ test.describe("CLI end to end", () => {
         plan.planHash,
         "--confirm",
         "overwrite",
+        "--yes",
         "--json",
       ]);
       const deployment = readDeploymentData(deploy.json);
@@ -172,6 +173,7 @@ test.describe("CLI end to end", () => {
       const rollback = await runCli(workspace.userData, [
         "rollback",
         deployment.deploymentId,
+        "--yes",
         "--json",
       ]);
       const rollbackRecord = readRollbackData(rollback.json);
@@ -317,18 +319,30 @@ function readMigrationPreviewData(response: CliJsonResponse): MigrationPreviewDa
 
 function readDeploymentData(response: CliJsonResponse): DeploymentData {
   const data = readDataRecord(response);
-  const deploymentId = data["deploymentId"];
+  const entry = data["entry"];
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    throw new TypeError("Deployment response must contain a history entry");
+  }
+  const deploymentId = (entry as Record<string, unknown>)["id"];
+  const kind = (entry as Record<string, unknown>)["kind"];
   if (typeof deploymentId !== "string") {
     throw new TypeError("Deployment response must contain deploymentId");
   }
+  if (kind !== "deployment") throw new TypeError("Deployment response must be a deployment entry");
   return { deploymentId };
 }
 
 function readRollbackData(response: CliJsonResponse): RollbackData {
   const data = readDataRecord(response);
-  const rollbackId = data["rollbackId"];
+  const entry = data["entry"];
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    throw new TypeError("Rollback response must contain a history entry");
+  }
+  const rollbackId = (entry as Record<string, unknown>)["id"];
+  const kind = (entry as Record<string, unknown>)["kind"];
   if (typeof rollbackId !== "string")
     throw new TypeError("Rollback response must contain rollbackId");
+  if (kind !== "rollback") throw new TypeError("Rollback response must be a rollback entry");
   return { rollbackId };
 }
 

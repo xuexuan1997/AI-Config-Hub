@@ -130,6 +130,71 @@ describe("CLI command service composition", () => {
     }
   });
 
+  it("filters listed assets by scope kind and diagnostic severity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-asset-filters-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".agents", "skills", "release"), { recursive: true });
+    await mkdir(home);
+    await writeUserConfigFixtures(home);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(
+      join(project, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\nreferences: missing.md\n---\nRun checks.\n",
+      "utf8",
+    );
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      homeDirectory: home,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+
+      const projectAssets = await runtime.services["assets.list"]({
+        scopeKinds: ["project"],
+        limit: 50,
+      });
+      expect(projectAssets.items.length).toBeGreaterThan(0);
+      expect(new Set(projectAssets.items.map(({ scopeKind }) => scopeKind))).toEqual(
+        new Set(["project"]),
+      );
+
+      const userAssets = await runtime.services["assets.list"]({
+        scopeKinds: ["user"],
+        limit: 50,
+      });
+      expect(userAssets.items.length).toBeGreaterThan(0);
+      expect(new Set(userAssets.items.map(({ scopeKind }) => scopeKind))).toEqual(
+        new Set(["user"]),
+      );
+
+      const warningAssets = await runtime.services["assets.list"]({
+        diagnosticSeverity: "warning",
+        limit: 50,
+      });
+      expect(warningAssets.items.length).toBeGreaterThan(0);
+      expect(
+        warningAssets.items.every(({ diagnosticCounts }) => diagnosticCounts.warning > 0),
+      ).toBe(true);
+      expect(warningAssets.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            logicalKey: expect.stringContaining("release"),
+            scopeKind: "project",
+          }),
+        ]),
+      );
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("passes changed paths through to incremental scans", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-incremental-"));
     temporaryDirectories.push(root);

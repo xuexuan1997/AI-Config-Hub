@@ -2,7 +2,9 @@ import type {
   AdapterDiagnostic,
   AdapterReadApi,
   AdapterRegistration,
+  Asset,
   CancellationSignal,
+  Diagnostic,
   DiscoveredResource,
   FileSnapshot,
   FileSnapshotPort,
@@ -296,6 +298,7 @@ export class ScanService {
     const diagnostics = uniqueAdapterDiagnostics(allAdapterDiagnostics).map((diagnostic) =>
       normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
     );
+    const assetsWithDiagnosticSummaries = summarizeAssetDiagnostics(assetsForCommit, diagnostics);
     const succeededCount = parsedItems.filter(({ status }) => status === "parsed").length;
     const failedCount = parsedItems.length - succeededCount;
     const status =
@@ -308,7 +311,7 @@ export class ScanService {
       scanRunId,
       tools: uniqueTools(tools),
       scopes,
-      assets: assetsForCommit,
+      assets: assetsWithDiagnosticSummaries,
       effectiveConfigs,
       diagnostics,
     };
@@ -389,6 +392,48 @@ function uniqueAdapterDiagnostics(
     unique.push(diagnostic);
   }
   return unique;
+}
+
+function summarizeAssetDiagnostics(
+  assets: readonly Asset[],
+  diagnostics: readonly Diagnostic[],
+): readonly Asset[] {
+  const diagnosticsByAsset = new Map(
+    assets.map((asset) => [
+      asset.assetId,
+      { info: 0, warning: 0, error: 0 } satisfies Asset["diagnosticSummary"],
+    ]),
+  );
+  const assetsByPath = new Map<string, Asset[]>();
+  for (const asset of assets) {
+    const current = assetsByPath.get(asset.canonicalSourcePath) ?? [];
+    current.push(asset);
+    assetsByPath.set(asset.canonicalSourcePath, current);
+  }
+
+  for (const diagnostic of diagnostics) {
+    const paths = new Set<string>();
+    if (diagnostic.location?.path !== undefined) paths.add(diagnostic.location.path);
+    const sourcePath = diagnostic.evidence.sourcePath;
+    if (typeof sourcePath === "string") paths.add(sourcePath);
+
+    const countedAssetIds = new Set<string>();
+    for (const path of paths) {
+      for (const asset of assetsByPath.get(path) ?? []) {
+        if (countedAssetIds.has(asset.assetId)) continue;
+        countedAssetIds.add(asset.assetId);
+        const summary = diagnosticsByAsset.get(asset.assetId);
+        if (summary !== undefined) summary[diagnostic.severity] += 1;
+      }
+    }
+  }
+
+  return assets.map((asset) =>
+    AssetSchema.parse({
+      ...asset,
+      diagnosticSummary: diagnosticsByAsset.get(asset.assetId) ?? asset.diagnosticSummary,
+    }),
+  );
 }
 
 function scopeId(installationId: string, parsed: ParsedAsset): string {

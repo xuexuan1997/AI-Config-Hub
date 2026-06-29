@@ -215,8 +215,9 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
 }
 
 describe("CLI program", () => {
-  it("maps scan to scan.start and prints a JSON API envelope", async () => {
+  it("maps scan to scan.start and prints a CLI JSON envelope with final status", async () => {
     const calls: unknown[] = [];
+    const statusCalls: unknown[] = [];
     const output: string[] = [];
     const result = await runCli(
       createCliProgram({
@@ -229,6 +230,25 @@ describe("CLI program", () => {
               acceptedAt: now,
             });
           },
+          "scan.status": (payload) => {
+            statusCalls.push(payload);
+            return Promise.resolve({
+              taskId: TaskIdSchema.parse("task-1"),
+              status: "succeeded",
+              phase: "completed",
+              progress: { phase: "completed", completed: 1, total: 1, unit: "items" },
+              resultSummary: {
+                succeededCount: 1,
+                failedCount: 0,
+                skippedCount: 0,
+                diagnosticIds: [],
+              },
+              lastSequence: 2,
+              cancellable: false,
+              startedAt: now,
+              finishedAt: now,
+            });
+          },
         }),
         stdout: (text) => output.push(text),
         stderr: () => undefined,
@@ -238,10 +258,13 @@ describe("CLI program", () => {
 
     expect(result).toEqual({ exitCode: 0 });
     expect(calls).toEqual([{ mode: "full", roots: ["/workspace/project"], toolKeys: ["codex"] }]);
+    expect(statusCalls).toEqual([{ taskId: "task-1" }]);
     expect(JSON.parse(output.join(""))).toMatchObject({
-      apiVersion: 1,
+      schemaVersion: 1,
+      command: "scan",
       ok: true,
-      data: { taskId: "task-1", status: "queued" },
+      data: { taskId: "task-1", status: "succeeded", phase: "completed" },
+      meta: { partialSuccess: false },
     });
   });
 
@@ -298,14 +321,23 @@ describe("CLI program", () => {
     ) as CommandServiceMap;
 
     for (const argv of [
-      ["assets", "list", "--tool", "codex"],
+      ["assets", "--tool", "codex"],
       ["assets", "get", "asset-1"],
-      ["effective", "resolve", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
+      ["effective", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
       ["diagnose", "--severity", "warning", "--code", "UNRESOLVED_SKILL_REFERENCE"],
       ["diagnose", "export", "--tool", "codex", "--severity", "warning", "--format", "markdown"],
-      ["migrate", "--dry-run", "--source", "asset-1", "--target", "cursor", "--scope", "scope-1"],
-      ["deploy", "deployment-plan-1", "--plan-hash", hash, "--confirm", "overwrite"],
-      ["rollback", "deployment-1"],
+      ["migrate", "--dry-run", "--asset", "asset-1", "--to", "cursor", "--scope", "scope-1"],
+      [
+        "deploy",
+        "--plan",
+        "deployment-plan-1",
+        "--plan-hash",
+        hash,
+        "--confirm",
+        "overwrite",
+        "--yes",
+      ],
+      ["rollback", "deployment-1", "--yes"],
       [
         "history",
         "--kind",
@@ -337,7 +369,9 @@ describe("CLI program", () => {
       "diagnostics.export",
       "migration.preview",
       "deployment.execute",
+      "history.get",
       "deployment.rollback",
+      "history.get",
       "history.list",
     ]);
     const diagnoseCall = calls.find((call) => call.startsWith("diagnostics.list:"));
@@ -372,7 +406,7 @@ describe("CLI program", () => {
     });
   });
 
-  it("returns a failed JSON envelope and non-zero exit code for invalid command payloads", async () => {
+  it("returns a failed CLI JSON envelope and validation exit code for invalid command payloads", async () => {
     const output: string[] = [];
     const result = await runCli(
       createCliProgram({
@@ -383,12 +417,115 @@ describe("CLI program", () => {
       ["assets", "list", "--limit", "201", "--json"],
     );
 
-    expect(result).toEqual({ exitCode: 1 });
+    expect(result).toEqual({ exitCode: 2 });
     expect(JSON.parse(output.join(""))).toMatchObject({
-      apiVersion: 1,
+      schemaVersion: 1,
+      command: "assets.list",
+      ok: false,
+      error: { code: "VALIDATION_FAILED" },
+      meta: { partialSuccess: false },
+    });
+  });
+
+  it("wraps invalid invoke JSON without leaking a stack trace", async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services(),
+        stdout: (text) => output.push(text),
+        stderr: (text) => errors.push(text),
+      }),
+      ["invoke", "scan.start", "--payload", "not-json", "--json"],
+    );
+
+    expect(result).toEqual({ exitCode: 2 });
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).not.toContain("SyntaxError");
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      schemaVersion: 1,
+      command: "invoke",
       ok: false,
       error: { code: "VALIDATION_FAILED" },
     });
+  });
+
+  it("requires migrate --dry-run so preview is explicit", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services(),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["migrate", "--asset", "asset-1", "--to", "cursor", "--scope", "scope-1", "--json"],
+    );
+
+    expect(result).toEqual({ exitCode: 2 });
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      command: "migrate",
+      ok: false,
+      error: { code: "VALIDATION_FAILED" },
+    });
+  });
+
+  it("requires --yes before non-interactive deployment and rollback", async () => {
+    const output: string[] = [];
+    const program = createCliProgram({
+      services: services(),
+      stdout: (text) => output.push(text),
+      stderr: () => undefined,
+    });
+
+    const deploy = await runCli(program, [
+      "deploy",
+      "--plan",
+      "deployment-plan-1",
+      "--plan-hash",
+      hash,
+      "--json",
+    ]);
+    const rollback = await runCli(
+      createCliProgram({
+        services: services(),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["rollback", "deployment-1", "--json"],
+    );
+
+    expect(deploy).toEqual({ exitCode: 4 });
+    expect(rollback).toEqual({ exitCode: 4 });
+    expect(output.map((text) => JSON.parse(text))).toEqual([
+      expect.objectContaining({
+        command: "deploy",
+        ok: false,
+        error: expect.objectContaining({ code: "USER_CANCELLED" }),
+      }),
+      expect.objectContaining({
+        command: "rollback",
+        ok: false,
+        error: expect.objectContaining({ code: "USER_CANCELLED" }),
+      }),
+    ]);
+  });
+
+  it("prints useful text summaries for list commands", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services(),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["assets"],
+    );
+
+    expect(result).toEqual({ exitCode: 0 });
+    expect(output.join("")).toContain("asset-1");
+    expect(output.join("")).toContain("codex");
+    expect(output.join("")).toContain("AGENTS.md");
+    expect(output.join("")).toContain("warnings:1");
   });
 
   it("prints snapshot commit metadata in history text output", async () => {

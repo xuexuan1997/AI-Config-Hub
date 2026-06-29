@@ -77,7 +77,7 @@ type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 | `READ_ONLY_RECOVERY` | 数据库迁移失败后处于只读恢复模式 |
 | `STALE_INDEX` | 索引与磁盘哈希不一致 |
 | `STALE_PREVIEW` | 预览后的源或目标发生变化 |
-| `USER_CANCELLED` | 用户在 desktop 原生模态确认或 CLI 命令边界取消操作；未创建任务或授权 |
+| `USER_CANCELLED` | 用户在 desktop 确认流程或 CLI 命令边界取消操作；未创建任务或授权 |
 | `TASK_NOT_CANCELLABLE` | 任务已越过取消点 |
 | `INTERNAL_ERROR` | 已脱敏的未知内部错误 |
 
@@ -86,18 +86,18 @@ type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 MVP 是单用户本地应用，没有远程账号授权。这里的“权限”是能力与信任边界：
 
 - renderer 只能调用 preload 明确列出的业务方法，不能选择任意 IPC channel。
-- main process 负责路径允许根、符号链接、当前模式、进程内 `ConfirmationGrant`、哈希、file identity 和共享 SQLite deployment lease/fence 校验，不能信任 renderer 已校验的结果。
+- main process 负责路径允许根、符号链接、当前模式、确认上下文、哈希、file identity 和共享 SQLite deployment lease/fence 校验，不能信任 renderer 已校验的结果。
 - CLI 以启动它的操作系统用户身份运行，但仍执行相同 allowed roots、只读恢复和部署确认规则。
 - 读取命令可在正常模式和有限的只读恢复模式运行；写命令仅在正常模式、目标可写且调用具备有效确认上下文时运行。
 - 设置分为 `public` 与 `privileged`。MVP renderer 只能读写公开产品设置；路径登记、日志目录、备份根和安全策略由专门业务流程或 CLI 管理，不能经 `settings.update` 任意改写。
 
 ### 4.1 确认授权不跨信任边界
 
-`migration.preview` 只返回不可变 `planId`、`planHash`、差异和哈希，不返回任何执行凭据。renderer 直接调用一次 `deployment.execute({ planId })`；main handler 重新读取并验证持久计划、来源/目标哈希、调用窗口和当前权限，然后在**同一个 handler** 内打开 Electron 原生模态确认，展示目标、差异、兼容警告和漂移状态。用户确认后，main 才在内存创建绑定 `action = "deployment.execute"`、`planId`、`planHash` 和窗口会话的单次 `ConfirmationGrant`，并在该 handler 内立即消费 grant、提交执行任务和返回 `taskId`。用户取消时返回 `USER_CANCELLED`，不创建 task 或 grant。
+`migration.preview` 只返回不可变 `planId`、`planHash`、差异、来源/目标哈希和 `requiredConfirmations`，不返回任何执行凭据。调用方在各自边界展示预览并收集明确确认；`deployment.execute` 请求必须带 `{ planId, confirmedPlanHash, confirmations }`。handler 重新读取并验证持久计划、预览哈希、来源/目标哈希、调用窗口和当前权限；确认缺失、哈希不匹配或用户取消时返回稳定业务错误，不创建 deployment 任务。
 
-`deployment.rollback({ deploymentId })` 使用相同闭环：main handler 重新读取原 deployment、已验证备份和回滚计划，在同一 handler 内打开原生模态确认；确认后创建并立即消费绑定回滚计划哈希的单次 grant，取消则返回 `USER_CANCELLED` 且不创建 task/grant。renderer 永远不接收 token/grant，也不存在独立确认 IPC 或“确认后再次调用 execute/rollback”的第二步。
+`deployment.rollback({ deploymentId })` 使用相同闭环：调用方在自身边界确认，handler 重新读取原 deployment、已验证备份和回滚计划，并只按该 deployment 登记的路径执行恢复。用户取消时不调用写入口；CLI 取消时返回 `USER_CANCELLED` 且不创建 task。
 
-CLI 在单次命令边界内展示同一计划并 prompt；用户交互确认，或自动化明确提供 `--yes --plan <planId>` 后，CLI 进程创建同样的内存单次 grant 并立即消费以调用核心用例。非交互模式缺少显式 `--yes` 必须失败。CLI rollback 同样在该命令边界完成 prompt、grant 创建和消费；grant 不持久化、不输出，也不跨命令复用。
+CLI 在单次命令边界内展示同一计划并 prompt；用户交互确认，或自动化明确提供 `--yes --plan <planId> --plan-hash <hash>` 后，CLI 才调用核心用例。非交互模式缺少显式 `--yes` 必须失败。CLI rollback 同样要求交互确认或 `--yes`；确认不持久化、不输出，也不跨命令复用。
 
 ### 4.2 跨进程部署协调
 
@@ -323,18 +323,18 @@ type TaskEvent =
 | 请求 | `{ sourceAssetIds: string[], targetToolKey: string, targetScopeId: string, conflictPolicy: "fail" | "replace" | "merge" }` |
 | 响应 | `{ planId, planHash, compatibility, changes: PlannedChange[], warnings: DiagnosticSummary[], sourceHashes, targetHashes, expiresAt }`；不返回执行凭据 |
 | 错误码 | `VALIDATION_FAILED`、`NOT_FOUND`、`STALE_INDEX`、`UNSUPPORTED_CONVERSION`、`TARGET_CONFLICT`、`PERMISSION_DENIED` |
-| 权限边界 | 只读磁盘；目标必须在已授权且适配器声明的配置根；计划本身不授权执行，grant 仅由后续 desktop execute handler 的原生模态确认或 CLI 命令边界确认创建并立即消费 |
+| 权限边界 | 只读磁盘；目标必须在已授权且适配器声明的配置根；计划本身不授权执行，后续执行仍需提供匹配的 `confirmedPlanHash` 和所需确认集合 |
 | 事件 | 无；预览是有界同步用例，超出限制返回 `PREVIEW_TOO_LARGE` 而不是隐式后台执行 |
 
 ### 6.9 `deployment.execute`
 
 | 项目 | 契约 |
 | --- | --- |
-| 用途 | 在同一 main handler 内验证计划、完成原生模态确认并执行预检、备份、原子写入和验证；失败时回滚 |
-| 请求 | `{ planId: string }`；renderer 只传计划 ID，不传差异、`planHash` 或任何执行凭据 |
-| 响应 | `{ taskId: string, deploymentId: string, status: "queued", acceptedAt: string }` |
+| 用途 | 验证计划与确认上下文，并执行预检、备份、原子写入和验证；失败时回滚 |
+| 请求 | `{ planId: string, confirmedPlanHash: string, confirmations: ("partial_conversion" | "overwrite" | "delete")[] }`；调用方不传差异或任何执行凭据 |
+| 响应 | `{ taskId: string, deploymentId: string, status: "queued", acceptedAt: string, snapshot?: SnapshotMetadata }` |
 | 错误码 | `VALIDATION_FAILED`、`NOT_FOUND`、`USER_CANCELLED`、`STALE_PREVIEW`、`TARGET_LOCKED`、`FENCE_REJECTED`、`READ_ONLY_RECOVERY`、`PERMISSION_DENIED` |
-| 权限边界 | 唯一常规文件写入口；main handler 从持久计划重建内容并复核 canonical path、symlink、源/目标哈希、file identity、SQLite lease/fence 和写权限，在 handler 内打开原生模态确认，确认后创建并立即消费绑定 `planId + planHash` 的单次 `ConfirmationGrant`；renderer 不持有 grant |
+| 权限边界 | 唯一常规文件写入口；handler 从持久计划重建内容并复核 canonical path、symlink、源/目标哈希、file identity、SQLite lease/fence、写权限、`confirmedPlanHash` 和确认集合；调用方不持有 grant |
 | 事件 | `accepted`；`preflight`、`backing_up`、`writing`、`verifying` 或 `rolling_back` 事件；最终 `completed` 的领域状态为 `succeeded`、`rolled_back` 或 `failed`，必要时另设 `systemRecoveryLock: true` |
 
 ### 6.10 `deployment.rollback`
@@ -342,19 +342,19 @@ type TaskEvent =
 | 项目 | 契约 |
 | --- | --- |
 | 用途 | 使用已验证备份恢复某次部署影响的目标 |
-| 请求 | `{ deploymentId: string }`；renderer 不传 grant、备份路径或回滚计划 |
-| 响应 | `{ taskId: string, rollbackId: string, status: "queued", acceptedAt: string }` |
+| 请求 | `{ deploymentId: string }`；调用方不传备份路径或回滚计划 |
+| 响应 | `{ taskId: string, rollbackId: string, status: "queued", acceptedAt: string, snapshot?: SnapshotMetadata }` |
 | 错误码 | `VALIDATION_FAILED`、`NOT_FOUND`、`USER_CANCELLED`、`BACKUP_MISSING`、`BACKUP_HASH_MISMATCH`、`STALE_TARGET`、`TARGET_LOCKED`、`FENCE_REJECTED`、`READ_ONLY_RECOVERY`、`PERMISSION_DENIED` |
-| 权限边界 | main handler 只读取该 deployment 登记的路径、已验证备份和回滚计划，在同一 handler 内打开原生模态确认；确认后创建并立即消费单次 grant。默认目标已漂移时拒绝，renderer 不能选择任意备份/目标路径或取得 grant |
+| 权限边界 | handler 只读取该 deployment 登记的路径、已验证备份和回滚计划；默认目标已漂移时拒绝，调用方不能选择任意备份或目标路径 |
 | 事件 | `accepted`；`preflight`、`restoring`、`verifying`；最终 `completed` 使用 `rolled_back` 或 `failed`，无法自动恢复时通过 `systemRecoveryLock: true` 和未恢复操作 ID 表达 |
 
 ### 6.11 `history.list`
 
 | 项目 | 契约 |
 | --- | --- |
-| 用途 | 分页查询扫描、迁移预览、部署和回滚审计历史 |
-| 请求 | `{ taskId?: string, kinds?: ("scan" | "preview" | "deployment" | "rollback")[], projectId?: string, statuses?: string[], from?: string, to?: string, cursor?: string, limit?: number }`；提供 `taskId` 时返回该任务的活动或终态条目 |
-| 响应 | `{ items: HistoryEntry[], nextCursor: string | null }`；活动长任务条目包含 `{ phase, progress, lastSequence, cancellable }` 快照 |
+| 用途 | 分页查询部署和回滚审计历史 |
+| 请求 | `{ taskId?: string, kinds?: ("deployment" | "rollback")[], projectId?: string, statuses?: string[], from?: string, to?: string, cursor?: string, limit?: number }` |
+| 响应 | `{ items: HistoryEntry[], nextCursor: string | null }` |
 | 错误码 | `VALIDATION_FAILED`、`NOT_FOUND`、`CURSOR_INVALID` |
 | 权限边界 | 只读；计划和错误上下文脱敏，不返回备份正文、凭据或补偿 payload 的秘密字段 |
 | 事件 | 无 |
@@ -385,7 +385,7 @@ type TaskEvent =
 
 CLI 可执行文件名为 `ai-config-hub`。所有命令调用与 IPC 相同的用例；人类输出写 `stdout`，进度在 TTY 中动态展示，错误摘要写 `stderr`。使用 `--json` 时 `stdout` 只输出一个 JSON 文档，不输出进度动画；日志仍写日志文件或 `stderr`，且不能污染 JSON。
 
-稳定退出码：`0` 成功，`2` 参数/Schema 错误，`3` 部分成功，`4` 业务冲突、陈旧状态或用户取消（`USER_CANCELLED`），`5` 权限/路径安全错误，`6` 部署或回滚失败，`7` 只读恢复，`10` 已脱敏内部错误。用户在 prompt 取消时不创建 task 或 grant。
+稳定退出码：`0` 成功，`2` 参数/Schema 错误，`3` 部分成功，`4` 业务冲突、陈旧状态或用户取消（`USER_CANCELLED`），`5` 权限/路径安全错误，`6` 部署或回滚失败，`7` 只读恢复，`10` 已脱敏内部错误。用户在 prompt 取消时不创建 task。
 
 所有 `--json` 输出共享 envelope：
 
@@ -413,10 +413,10 @@ type CliJson<T> =
 
 ### 7.1 `scan`
 
-映射：`scan.start`，前台等待时轮询 `scan.status`；`--detach` 只返回 `taskId`。
+映射：`scan.start`，随后轮询 `scan.status` 并输出终态快照。
 
 ```text
-$ ai-config-hub scan --project ./demo
+$ ai-config-hub scan ./demo
 扫描完成（部分成功）
 发现 42 个文件：成功 40，失败 2，跳过 0
 任务：scn_01JZ8M2Y6S7Q
@@ -429,17 +429,17 @@ $ ai-config-hub scan --project ./demo
 
 ### 7.2 `assets`
 
-映射：`assets.list`；`--id` 时映射 `assets.get`。
+映射：`assets` 或 `assets list` 调用 `assets.list`；`assets get <asset-id>` 调用 `assets.get`。
 
 ```text
-$ ai-config-hub assets --tool codex --type rule
+$ ai-config-hub assets --tool codex --resource rule
 ID              工具    类型   作用域   名称                 状态
 ast_01JZ8N1A    codex   rule   project  repository-policy    正常
 共 1 项
 ```
 
 ```json
-{"schemaVersion":1,"command":"assets","ok":true,"data":{"items":[{"id":"ast_01JZ8N1A","toolKey":"codex","resourceType":"rule","scopeKind":"project","logicalKey":"repository-policy","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","diagnosticCounts":{"error":0,"warning":0,"info":0}}],"nextCursor":null,"snapshotRevision":"idx_1042","stale":false},"meta":{"generatedAt":"2026-06-21T08:01:00.000Z","partialSuccess":false}}
+{"schemaVersion":1,"command":"assets.list","ok":true,"data":{"items":[{"id":"ast_01JZ8N1A","toolKey":"codex","resourceType":"rule","scopeKind":"project","logicalKey":"repository-policy","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","diagnosticCounts":{"error":0,"warning":0,"info":0}}],"nextCursor":null,"snapshotRevision":"idx_1042","stale":false},"meta":{"generatedAt":"2026-06-21T08:01:00.000Z","partialSuccess":false}}
 ```
 
 ### 7.3 `effective`
@@ -462,7 +462,7 @@ repository-policy  来自 project  覆盖 user/repository-policy
 映射：`diagnostics.list`；需要最新结果时先显式运行 `scan`，本命令不隐式写索引。
 
 ```text
-$ ai-config-hub diagnose --severity error,warning
+$ ai-config-hub diagnose --severity error --severity warning
 ERROR    CFG_PARSE_INVALID       .cursor/rules/team.mdc:12
 WARNING  REFERENCE_UNRESOLVED    AGENTS.md:8
 共 2 项：1 error，1 warning
@@ -485,29 +485,29 @@ $ ai-config-hub migrate --dry-run --asset ast_01JZ8N1A --to cursor --scope proje
 ```
 
 ```json
-{"schemaVersion":1,"command":"migrate --dry-run","ok":true,"data":{"planId":"pln_01JZ8Q5","planHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","compatibility":"partial","changes":[{"operation":"create","pathDisplay":".cursor/rules/repository-policy.mdc","beforeHash":null,"afterHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"warnings":[{"code":"FIELD_DROPPED","field":"permissions"}],"sourceHashes":{"ast_01JZ8N1A":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"targetHashes":{".cursor/rules/repository-policy.mdc":null},"expiresAt":"2026-06-21T08:34:00.000Z"},"meta":{"generatedAt":"2026-06-21T08:04:00.000Z","partialSuccess":true}}
+{"schemaVersion":1,"command":"migrate","ok":true,"data":{"planId":"pln_01JZ8Q5","planHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","compatibility":"partial","fieldLosses":[{"assetId":"ast_01JZ8N1A","droppedFields":["/data/permissions"],"retainedFields":["/data/instructions"],"transformedFields":[],"warnings":["permissions is not expressible in the target format"]}],"changes":[{"operation":"create","pathDisplay":".cursor/rules/repository-policy.mdc","beforeHash":null,"afterHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"requiredConfirmations":["partial_conversion"],"warnings":[],"sourceHashes":{"ast_01JZ8N1A":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"targetHashes":{".cursor/rules/repository-policy.mdc":null},"expiresAt":"2026-06-21T08:34:00.000Z"},"meta":{"generatedAt":"2026-06-21T08:04:00.000Z","partialSuccess":false}}
 ```
 
-`planId` 和 `planHash` 只标识不可变计划，不是执行授权。CLI 不写出、持久化或传递执行凭据；CLI 在单次命令边界 prompt，确认后创建并立即消费 `ConfirmationGrant`，grant 只存在于当前 CLI 进程内。
+`planId` 和 `planHash` 只标识不可变计划，不是执行授权。CLI 不写出、持久化或传递执行凭据；CLI 只在单次命令边界 prompt 或收到显式 `--yes` 后调用写入口。
 
 ### 7.6 `deploy`
 
-映射：`deployment.execute`。交互终端在该命令边界显示差异摘要并 prompt；非交互模式必须显式传 `--yes --plan <planId>`，且计划仍需有效。确认后 CLI 立即创建并消费进程内 grant，再用 `planId` 调用核心用例；不存在跨命令 grant 或第二次确认调用。用户取消返回 `USER_CANCELLED`，不创建 task/grant。
+映射：`deployment.execute`，成功后用 `history.get` 读回部署记录。交互终端在该命令边界显示摘要并 prompt；非交互模式必须显式传 `--yes --plan <planId> --plan-hash <hash>`，且计划仍需有效。用户取消返回 `USER_CANCELLED`，不创建 task。
 
 ```text
-$ ai-config-hub deploy --plan pln_01JZ8Q5
+$ ai-config-hub deploy --plan pln_01JZ8Q5 --plan-hash sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 已验证预览和目标哈希
 备份 1/1；写入 1/1；验证 1/1
 部署成功：dep_01JZ8R2
 ```
 
 ```json
-{"schemaVersion":1,"command":"deploy","ok":true,"data":{"taskId":"dep_01JZ8R2","deploymentId":"dep_01JZ8R2","status":"succeeded","counts":{"planned":1,"backedUp":1,"written":1,"verified":1,"failed":0},"backupIds":["bkp_01JZ8R3"],"verification":{"status":"passed","scanRunId":"scn_01JZ8R4"}},"meta":{"generatedAt":"2026-06-21T08:05:00.000Z","partialSuccess":false}}
+{"schemaVersion":1,"command":"deploy","ok":true,"data":{"entry":{"id":"dep_01JZ8R2","kind":"deployment","status":"succeeded","createdAt":"2026-06-21T08:05:00.000Z","snapshot":{"status":"recorded","commitId":"abc123","authoredAt":"2026-06-21T08:05:01.000Z","message":"record deployment dep_01JZ8R2"}},"plan":{"planId":"pln_01JZ8Q5","planHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","requiredConfirmations":["partial_conversion"]},"changes":[{"operation":"create","pathDisplay":".cursor/rules/repository-policy.mdc","beforeHash":null,"afterHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]},"meta":{"generatedAt":"2026-06-21T08:05:00.000Z","partialSuccess":false}}
 ```
 
 ### 7.7 `rollback`
 
-映射：`deployment.rollback`。交互模式在该命令边界 prompt 并显示将恢复的路径数；非交互模式要求 `--yes`。确认后 CLI 立即创建并消费绑定回滚计划哈希的进程内 grant，再调用核心回滚用例；用户取消返回 `USER_CANCELLED`，不创建 task/grant。
+映射：`deployment.rollback`，成功后用 `history.get` 读回回滚记录。交互模式在该命令边界 prompt 并显示将恢复的路径数；非交互模式要求 `--yes`。用户取消返回 `USER_CANCELLED`，不创建 task。
 
 ```text
 $ ai-config-hub rollback dep_01JZ8R2
@@ -517,7 +517,7 @@ $ ai-config-hub rollback dep_01JZ8R2
 ```
 
 ```json
-{"schemaVersion":1,"command":"rollback","ok":true,"data":{"taskId":"rbk_01JZ8S1","rollbackId":"rbk_01JZ8S1","deploymentId":"dep_01JZ8R2","status":"succeeded","counts":{"planned":1,"restored":1,"verified":1,"failed":0},"verification":{"status":"passed","scanRunId":"scn_01JZ8S2"}},"meta":{"generatedAt":"2026-06-21T08:06:00.000Z","partialSuccess":false}}
+{"schemaVersion":1,"command":"rollback","ok":true,"data":{"entry":{"id":"rbk_01JZ8S1","kind":"rollback","status":"succeeded","createdAt":"2026-06-21T08:06:00.000Z","snapshot":{"status":"recorded","commitId":"def456","authoredAt":"2026-06-21T08:06:01.000Z","message":"record deployment rbk_01JZ8S1"}},"plan":{"planId":"pln_01JZ8Q5","planHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","requiredConfirmations":["partial_conversion"]},"changes":[{"operation":"restore","pathDisplay":".cursor/rules/repository-policy.mdc","beforeHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","afterHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]},"meta":{"generatedAt":"2026-06-21T08:06:00.000Z","partialSuccess":false}}
 ```
 
 ### 7.8 `history`
@@ -525,7 +525,7 @@ $ ai-config-hub rollback dep_01JZ8R2
 映射：`history.list`。
 
 ```text
-$ ai-config-hub history --kind deployment,rollback
+$ ai-config-hub history --kind deployment --kind rollback
 时间                 类型        状态       ID
 2026-06-21 16:06     rollback    succeeded  rbk_01JZ8S1
 2026-06-21 16:05     deployment  succeeded  dep_01JZ8R2

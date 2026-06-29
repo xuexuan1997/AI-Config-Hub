@@ -166,15 +166,11 @@ const DeploymentRollbackRequestSchema = z
   .object({ deploymentId: DeploymentRecordIdSchema })
   .strict()
   .readonly();
+const HistoryKindSchema = z.enum(["deployment", "rollback"]);
 const HistoryListRequestSchema = z
   .object({
     taskId: TaskIdSchema.optional(),
-    kinds: z
-      .array(z.enum(["scan", "preview", "deployment", "rollback"]))
-      .min(1)
-      .max(4)
-      .optional()
-      .readonly(),
+    kinds: z.array(HistoryKindSchema).min(1).max(2).optional().readonly(),
     projectId: ProjectIdSchema.optional(),
     statuses: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional().readonly(),
     from: IsoDateTimeSchema.optional(),
@@ -519,7 +515,7 @@ const RollbackAcceptedSchema = z
 const HistoryEntrySchema = z
   .object({
     id: z.string().trim().min(1).max(200),
-    kind: z.enum(["scan", "preview", "deployment", "rollback"]),
+    kind: HistoryKindSchema,
     status: z.string().trim().min(1).max(100),
     taskId: TaskIdSchema.optional(),
     projectId: ProjectIdSchema.optional(),

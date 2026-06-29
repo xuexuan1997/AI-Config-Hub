@@ -93,10 +93,6 @@ export function HistoryView(props: {
 
 function historyKindLabel(kind: AppState["history"][number]["kind"]): string {
   switch (kind) {
-    case "scan":
-      return "Scan";
-    case "preview":
-      return "Preview";
     case "deployment":
       return "Deployment";
     case "rollback":

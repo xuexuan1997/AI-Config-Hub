@@ -71,6 +71,22 @@ describe("command schemas", () => {
     ).toBe(true);
   });
 
+  it("limits history records to supported deployment record kinds", () => {
+    expect(
+      CommandRequestSchemas["history.list"].safeParse({ kinds: ["deployment", "rollback"] })
+        .success,
+    ).toBe(true);
+    expect(CommandRequestSchemas["history.list"].safeParse({ kinds: ["scan"] }).success).toBe(
+      false,
+    );
+    expect(
+      CommandResponseSchemas["history.list"].safeParse({
+        items: [{ id: "scan-1", kind: "scan", status: "succeeded", createdAt: now }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
+  });
+
   it("uses stable, versioned IPC channels", () => {
     expect(commandChannel("scan.start")).toBe("ai-config-hub:v1:scan.start");
   });

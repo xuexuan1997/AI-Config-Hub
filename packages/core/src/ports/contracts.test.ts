@@ -85,12 +85,12 @@ describe("core use cases", () => {
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("changes");
   });
 
-  it("requires a process-local confirmation grant for write use cases", () => {
+  it("requires preview hash confirmation for deployment execution", () => {
     expectTypeOf<UseCaseContractMap["deployment.execute"]["input"]>().toHaveProperty(
-      "confirmationGrant",
+      "confirmedPlanHash",
     );
     expectTypeOf<UseCaseContractMap["deployment.rollback"]["input"]>().toHaveProperty(
-      "confirmationGrant",
+      "deploymentRecordId",
     );
   });
 });

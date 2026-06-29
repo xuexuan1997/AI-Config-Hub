@@ -155,34 +155,14 @@ export interface MigrationPreviewRequest {
   readonly targetRoot: AbsolutePath;
 }
 
-interface ConfirmationGrantBase {
-  readonly grantId: string;
-  readonly issuedBy: "desktop-main" | "cli";
-  readonly sessionId: string;
-  readonly issuedAt: IsoDateTime;
-  readonly expiresAt: IsoDateTime;
-}
-
-export interface DeploymentExecuteConfirmationGrant extends ConfirmationGrantBase {
-  readonly action: "deployment.execute";
-  readonly deploymentPlanId: DeploymentPlanId;
-  readonly planHash: ContentHash;
-}
-
-export interface DeploymentRollbackConfirmationGrant extends ConfirmationGrantBase {
-  readonly action: "deployment.rollback";
-  readonly deploymentRecordId: DeploymentRecordId;
-  readonly rollbackPlanHash: ContentHash;
-}
-
 export interface DeploymentExecuteRequest {
   readonly deploymentPlanId: DeploymentPlanId;
-  readonly confirmationGrant: DeploymentExecuteConfirmationGrant;
+  readonly confirmedPlanHash: ContentHash;
+  readonly confirmations: readonly DeploymentPlan["requiredConfirmations"][number][];
 }
 
 export interface DeploymentRollbackRequest {
   readonly deploymentRecordId: DeploymentRecordId;
-  readonly confirmationGrant: DeploymentRollbackConfirmationGrant;
 }
 
 export interface HistoryListRequest {
