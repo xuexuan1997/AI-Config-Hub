@@ -130,6 +130,41 @@ describe("CLI command service composition", () => {
     }
   });
 
+  it("passes changed paths through to incremental scans", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-incremental-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".codex", "agents"), { recursive: true });
+    const changedPath = join(project, "AGENTS.md");
+    await writeFile(changedPath, "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(join(project, ".codex", "agents", "broken.toml"), "not = [valid\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const incremental = await runtime.services["scan.start"]({
+        mode: "incremental",
+        roots: [project],
+        changedPaths: [changedPath],
+      });
+      const status = await runtime.services["scan.status"]({ taskId: incremental.taskId });
+
+      expect(status).toMatchObject({
+        status: "succeeded",
+        resultSummary: { failedCount: 0 },
+      });
+      expect(status.resultSummary?.succeededCount).toBeGreaterThan(0);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("records local Git snapshots for successful deployments and rollbacks", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-history-"));
     temporaryDirectories.push(root);

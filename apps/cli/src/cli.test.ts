@@ -245,6 +245,46 @@ describe("CLI program", () => {
     });
   });
 
+  it("maps incremental scan changed paths to scan.start", async () => {
+    const calls: unknown[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services({
+          "scan.start": (payload) => {
+            calls.push(payload);
+            return Promise.resolve({
+              taskId: TaskIdSchema.parse("task-1"),
+              status: "queued",
+              acceptedAt: now,
+            });
+          },
+        }),
+        stdout: () => undefined,
+        stderr: () => undefined,
+      }),
+      [
+        "scan",
+        "/workspace/project",
+        "--mode",
+        "incremental",
+        "--changed-path",
+        "/workspace/project/AGENTS.md",
+        "--changed-path",
+        "/workspace/project/.codex/config.toml",
+        "--json",
+      ],
+    );
+
+    expect(result).toEqual({ exitCode: 0 });
+    expect(calls).toEqual([
+      {
+        mode: "incremental",
+        roots: ["/workspace/project"],
+        changedPaths: ["/workspace/project/AGENTS.md", "/workspace/project/.codex/config.toml"],
+      },
+    ]);
+  });
+
   it("maps the friendly command set onto the stable API catalog", async () => {
     const calls: string[] = [];
     const proxied = Object.fromEntries(

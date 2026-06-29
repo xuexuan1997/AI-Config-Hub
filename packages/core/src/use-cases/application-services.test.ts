@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AssetIdSchema, DeploymentRecordIdSchema } from "@ai-config-hub/shared";
 
 import { createCoreUseCases, type ApplicationServices } from "./application-services.js";
 
@@ -37,17 +38,23 @@ describe("ApplicationServices", () => {
       useCases["scan.start"]({ mode: "full", readOnly: false, roots: [] }),
     ).resolves.toEqual({ taskId: "task-1", scanRunId: "scan-1" });
     expect(start).toHaveBeenCalledWith({ mode: "full", readOnly: false, roots: [] });
-    await expect(useCases["history.get"]({ id: "deployment-1" })).resolves.toMatchObject({
+    await expect(
+      useCases["history.get"]({ id: DeploymentRecordIdSchema.parse("deployment-1") }),
+    ).resolves.toMatchObject({
       entry: { id: "deployment-1" },
       plan: { planId: "deployment-plan-1" },
       changes: [],
     });
-    expect(getHistory).toHaveBeenCalledWith({ id: "deployment-1" });
-    await expect(useCases["assets.openSource"]({ assetId: "asset-1" })).resolves.toEqual({
+    expect(getHistory).toHaveBeenCalledWith({
+      id: DeploymentRecordIdSchema.parse("deployment-1"),
+    });
+    await expect(
+      useCases["assets.openSource"]({ assetId: AssetIdSchema.parse("asset-1") }),
+    ).resolves.toEqual({
       assetId: "asset-1",
       opened: true,
     });
-    expect(openSource).toHaveBeenCalledWith({ assetId: "asset-1" });
+    expect(openSource).toHaveBeenCalledWith({ assetId: AssetIdSchema.parse("asset-1") });
     expect(Object.keys(useCases)).toEqual([
       "scan.start",
       "scan.status",

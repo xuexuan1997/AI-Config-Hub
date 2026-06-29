@@ -2,7 +2,7 @@
 
 本清单基于当前仓库代码与 PRD 阶段目标的静态检查整理，记录尚未实现、尚未接入真实入口，或仅有底层雏形但未形成可用产品能力的事项。
 
-状态更新于 2026-06-29：P0 已完成并保留在本节作为验收索引；P1 及之后仍按优先级排序。仍保留 `[ ]` 的条目可能已有底层实现或部分接线，但尚未满足该条目的完整产品验收面。
+状态更新于 2026-06-29：P0、P1、P2 已完成并保留在本节作为验收索引；P3 及之后仍按优先级排序。仍保留 `[ ]` 的条目可能已有底层实现或部分接线，但尚未满足该条目的完整产品验收面。
 
 优先级口径：
 
@@ -73,15 +73,23 @@
 
 ## P2：持续使用、变更响应与验收证据
 
-- [ ] 实现跨平台文件监听。
-  - 编辑器临时文件事件去抖与合并。
-  - 部署写入事件抑制，避免循环扫描。
-  - 监听溢出或不稳定环境下退化为定时扫描或手工刷新。
-- [ ] 完整接入增量扫描。
-  - 从 changed paths 推导依赖闭包。
-  - 更新漂移诊断和生效配置。
-- [ ] 为 Phase 3 及之后阶段补充 implementation evidence。
-- [ ] 将 PRD 第三至第六阶段的完成状态与测试证据保持同步。
+- [x] 实现跨平台文件监听。
+  - `WatchService` 对编辑器临时文件事件去抖、过滤与合并，`NodeFileWatcher` 以 Node `fs.watch` 接入平台文件事件。
+  - 桌面端在扫描后按 `fileWatching` 设置启动监听；监听变更触发增量扫描，不稳定 watcher 信号触发完整刷新。
+  - 部署与回滚写入目标路径在执行期间进入 watcher suppression，避免写入事件造成循环扫描。
+  - 覆盖证据：`packages/scanner/src/watch-service.test.ts`、`apps/desktop/src/main/composition.test.ts`。
+- [x] 完整接入增量扫描。
+  - CLI 和桌面端均将 `changedPaths` 规范化为扫描器使用的 canonical path 后传入 `ScanService`。
+  - 扫描器从 changed paths 推导受影响候选文件并重新解析、重新生成对应生效配置和诊断。
+  - SQLite 索引使用 `mergeIncrementalIndex` 合并 changed paths，删除或替换变更路径资产，同时保留未受影响资产。
+  - 覆盖证据：`packages/scanner/src/scan-service.test.ts`、`packages/storage/src/repositories.test.ts`、`apps/cli/src/app-services.test.ts`、`apps/desktop/src/main/composition.test.ts`。
+- [x] 为 Phase 3 及之后阶段补充 implementation evidence。
+  - 已补充 Phase 3、Phase 4、Phase 5、Phase 6 evidence 文档；Phase 5 和 Phase 6 明确标记为部分实现，不声明 P3/P4 剩余能力完成。
+  - 覆盖证据：`docs/implementation/phase-3-evidence.md`、`docs/implementation/phase-4-evidence.md`、`docs/implementation/phase-5-evidence.md`、`docs/implementation/phase-6-evidence.md`。
+- [x] 将 PRD 第三至第六阶段的完成状态与测试证据保持同步。
+  - `docs/implementation/phase-status.md` 汇总 PRD 第三至第六阶段状态、证据文档、已完成范围和剩余 TODO bucket。
+  - `docs/PRD.md` 第 24 节链接实现状态索引；`docs/README.md` 文档地图列出阶段证据文档。
+  - 覆盖证据：`docs/implementation/phase-status.md`、`docs/PRD.md`、`docs/README.md`。
 
 ## P3：中央资产、Git 与 Preset
 

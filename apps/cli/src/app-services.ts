@@ -143,16 +143,23 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
     "scan.start": async (payload) => {
       const request = payload as {
+        readonly changedPaths?: readonly string[];
+        readonly mode?: "full" | "incremental";
         readonly roots?: readonly string[];
         readonly toolKeys?: readonly string[];
       };
       const allowedRoots = scanRoots(request.roots, cwd, homeDirectory);
+      const changedPaths = changedScanPaths(request.changedPaths, cwd);
       const taskId = TaskIdSchema.parse(`task:scan:${randomUUID()}`);
       const scanRunId = ScanRunIdSchema.parse(`scan:${randomUUID()}`);
       const acceptedAt = now(runtime);
       await runtime.repositories.tasks.create({ taskId, scanRunId, status: "queued" });
 
       const access = await createNodeFileAccess({ allowedRoots, platform: platform() });
+      const canonicalChangedPaths =
+        changedPaths === undefined
+          ? undefined
+          : await Promise.all(changedPaths.map((path) => access.read.realpath(path)));
       const scanner = new ScanService({
         registrations: scanRegistrations(registry.registrations, request.toolKeys),
         read: access.read,
@@ -164,6 +171,9 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
       const summary = await scanner.scan({
         scanRunId,
         candidateRoots: allowedRoots,
+        ...(request.mode === "incremental" && canonicalChangedPaths !== undefined
+          ? { changedPaths: canonicalChangedPaths }
+          : {}),
         homeDirectory,
         platform: scannerPlatform(),
         signal: cancellation.signal,
@@ -1001,6 +1011,14 @@ function scanRoots(
     return uniquePaths((requestRoots ?? []).map((root) => AbsolutePathSchema.parse(resolve(root))));
   }
   return uniquePaths([cwd, homeDirectory]);
+}
+
+function changedScanPaths(
+  requestPaths: readonly string[] | undefined,
+  cwd: AbsolutePath,
+): readonly AbsolutePath[] | undefined {
+  if (requestPaths === undefined || requestPaths.length === 0) return undefined;
+  return uniquePaths(requestPaths.map((path) => AbsolutePathSchema.parse(resolve(cwd, path))));
 }
 
 function uniquePaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {

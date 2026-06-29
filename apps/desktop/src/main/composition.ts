@@ -30,7 +30,10 @@ import {
 import {
   createCancellationController,
   createNodeFileAccess,
+  NodeFileWatcher,
   ScanService,
+  WatchService,
+  type WatchBatch,
 } from "@ai-config-hub/scanner";
 import {
   AbsolutePathSchema,
@@ -75,6 +78,7 @@ export interface DesktopCommandServiceOptions {
   readonly homeDirectory?: string;
   readonly now?: () => string;
   readonly sourceFileOpener?: SourceFileOpener;
+  readonly watchService?: WatchService;
 }
 
 export interface SourceFileOpener {
@@ -104,6 +108,8 @@ interface DesktopRuntime {
   readonly history: LocalHistoryService;
   readonly now: () => string;
   readonly sourceFileOpener?: SourceFileOpener;
+  readonly watchService: WatchService;
+  readonly fileWatchers: Set<NodeFileWatcher>;
   close(): void;
 }
 
@@ -145,7 +151,7 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
     appVersion: options.appVersion,
   });
   const repositories = createStorageRepositories(opened);
-  return {
+  const runtime: DesktopRuntime = {
     repositories,
     databaseRecovery: opened.mode === "read_only_recovery",
     appDataRoot: AbsolutePathSchema.parse(options.userDataPath),
@@ -159,10 +165,14 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
     ...(options.sourceFileOpener === undefined
       ? {}
       : { sourceFileOpener: options.sourceFileOpener }),
+    watchService: options.watchService ?? new WatchService(),
+    fileWatchers: new Set<NodeFileWatcher>(),
     close() {
+      closeFileWatchers(runtime);
       repositories.database.close();
     },
   };
+  return runtime;
 }
 
 async function ensurePrivateDirectory(path: string): Promise<AbsolutePath> {
@@ -183,10 +193,13 @@ function createServices(
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
     "scan.start": async (payload) => {
       const request = payload as {
+        readonly changedPaths?: readonly string[];
+        readonly mode?: "full" | "incremental";
         readonly roots?: readonly string[];
         readonly toolKeys?: readonly string[];
       };
       const allowedRoots = scanRoots(request.roots, cwd, homeDirectory);
+      const changedPaths = changedScanPaths(request.changedPaths, cwd);
       const taskId = TaskIdSchema.parse(`task:scan:${randomUUID()}`);
       const scanRunId = ScanRunIdSchema.parse(`scan:${randomUUID()}`);
       const acceptedAt = now(runtime);
@@ -199,6 +212,10 @@ function createServices(
       await runtime.repositories.tasks.create({ taskId, scanRunId, status: "queued" });
 
       const access = await createNodeFileAccess({ allowedRoots, platform: platform() });
+      const canonicalChangedPaths =
+        changedPaths === undefined
+          ? undefined
+          : await Promise.all(changedPaths.map((path) => access.read.realpath(path)));
       const scanner = new ScanService({
         registrations: scanRegistrations(registry.registrations, request.toolKeys),
         read: access.read,
@@ -218,6 +235,9 @@ function createServices(
       const summary = await scanner.scan({
         scanRunId,
         candidateRoots: allowedRoots,
+        ...(request.mode === "incremental" && canonicalChangedPaths !== undefined
+          ? { changedPaths: canonicalChangedPaths }
+          : {}),
         homeDirectory,
         platform: scannerPlatform(),
         signal: cancellation.signal,
@@ -240,6 +260,7 @@ function createServices(
         },
       });
       await runtime.repositories.tasks.finish(summary.summary);
+      await syncFileWatcher(runtime, allowedRoots, services);
       taskEvents.record({
         taskId,
         emittedAt: now(runtime),
@@ -596,6 +617,8 @@ function createServices(
       recorder.accept();
       recorder.changePhase("preflight");
       recorder.progress(0);
+      const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
+      runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
       let record: DeploymentRecord;
       try {
         record = await service.execute({
@@ -608,6 +631,8 @@ function createServices(
       } catch (error) {
         recorder.fail(error, found.deploymentRecordId);
         throw taskScopedError(error, taskId, "Deployment failed");
+      } finally {
+        runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
       }
       if (record.status !== "succeeded") {
         recorder.failStatus(
@@ -696,6 +721,8 @@ function createServices(
         ),
         locks: new PathLockManager(),
       });
+      const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
+      runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
       let record: DeploymentRecord;
       try {
         record = await rollbackService.execute({
@@ -706,6 +733,8 @@ function createServices(
       } catch (error) {
         recorder.fail(error, rollbackRecordId);
         throw taskScopedError(error, taskId, "Rollback failed");
+      } finally {
+        runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
       }
       if (record.status === "succeeded") {
         finishRollbackWork(recorder);
@@ -1319,6 +1348,45 @@ function finishRollbackWork(recorder: DesktopOperationTaskRecorder): void {
   if (recorder.phase === "verifying") recorder.progress(recorder.operationTotal);
 }
 
+async function syncFileWatcher(
+  runtime: DesktopRuntime,
+  roots: readonly AbsolutePath[],
+  services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>,
+): Promise<void> {
+  const settings = await runtime.repositories.settings.getPublic();
+  closeFileWatchers(runtime);
+  if (!settings.settings.fileWatching || roots.length === 0) return;
+  const watcher = new NodeFileWatcher({
+    roots,
+    platform: scannerPlatform(),
+    service: runtime.watchService,
+    onBatch: (batch) => handleWatchBatch(batch, roots, services),
+  });
+  runtime.fileWatchers.add(watcher);
+  await watcher.start();
+}
+
+function closeFileWatchers(runtime: DesktopRuntime): void {
+  for (const watcher of runtime.fileWatchers) watcher.close();
+  runtime.fileWatchers.clear();
+}
+
+async function handleWatchBatch(
+  batch: WatchBatch,
+  roots: readonly AbsolutePath[],
+  services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>,
+): Promise<void> {
+  if (batch.kind === "changes") {
+    await services["scan.start"]({
+      mode: "incremental",
+      roots,
+      changedPaths: batch.changedPaths,
+    });
+    return;
+  }
+  await services["scan.start"]({ mode: "full", roots });
+}
+
 function scanRoots(
   requestRoots: readonly string[] | undefined,
   cwd: AbsolutePath,
@@ -1328,6 +1396,14 @@ function scanRoots(
     return uniquePaths((requestRoots ?? []).map((root) => AbsolutePathSchema.parse(resolve(root))));
   }
   return uniquePaths([cwd, homeDirectory]);
+}
+
+function changedScanPaths(
+  requestPaths: readonly string[] | undefined,
+  cwd: AbsolutePath,
+): readonly AbsolutePath[] | undefined {
+  if (requestPaths === undefined || requestPaths.length === 0) return undefined;
+  return uniquePaths(requestPaths.map((path) => AbsolutePathSchema.parse(resolve(cwd, path))));
 }
 
 function uniquePaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {

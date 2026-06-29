@@ -23,6 +23,7 @@ interface GlobalOptions {
 interface ScanOptions extends GlobalOptions {
   readonly mode?: "full" | "incremental";
   readonly tool?: string[];
+  readonly changedPath?: string[];
 }
 
 interface ListOptions extends GlobalOptions {
@@ -98,11 +99,17 @@ export function createCliProgram(options: CliProgramOptions): Command {
     .argument("[roots...]", "authorized roots to scan")
     .option("--mode <mode>", "scan mode", parseChoice(["full", "incremental"]), "full")
     .option("--tool <tool>", "tool key to include", collect, [])
+    .option("--changed-path <path>", "changed path for incremental scans", collect, [])
     .option("--json", "print a JSON API envelope")
     .action(async (roots: string[], flags: ScanOptions) => {
       await invoke(
         "scan.start",
-        compact({ mode: flags.mode ?? "full", roots, toolKeys: flags.tool }),
+        compact({
+          mode: flags.mode ?? "full",
+          roots,
+          changedPaths: flags.changedPath,
+          toolKeys: flags.tool,
+        }),
         flags,
       );
     });

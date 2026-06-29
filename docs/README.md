@@ -27,6 +27,11 @@
 | [测试策略](development/testing-strategy.md) | 哪些测试与质量门禁保证交付？ | 测试与应用工程师 | MVP 技术基线 |
 | [构建、发布与兼容性](operations/build-release-and-compatibility.md) | 三平台产物如何可靠发布？ | 发布工程师 | MVP 技术基线 |
 | [可观测性与恢复](operations/observability-and-recovery.md) | 如何诊断、备份和恢复本地故障？ | 支持与运维工程师 | MVP 技术基线 |
+| [PRD 阶段实现状态](implementation/phase-status.md) | PRD 第三至第六阶段当前完成到哪里？ | 产品、工程与测试负责人 | 实现证据索引 |
+| [Phase 3 证据](implementation/phase-3-evidence.md) | 诊断阶段由哪些测试和命令证明？ | 测试与应用工程师 | 实现证据 |
+| [Phase 4 证据](implementation/phase-4-evidence.md) | 转换和部署阶段由哪些测试和命令证明？ | 测试与应用工程师 | 实现证据 |
+| [Phase 5 证据](implementation/phase-5-evidence.md) | 中央资产和 Git 阶段已完成和未完成什么？ | 产品与应用工程师 | 部分实现证据 |
+| [Phase 6 证据](implementation/phase-6-evidence.md) | 产品界面和分发阶段已完成和未完成什么？ | 产品、桌面与发布工程师 | 部分实现证据 |
 | [ADR-0001：模块化单体](adr/0001-modular-monolith.md) | 为什么选择 TypeScript pnpm 模块化 Monorepo？ | 架构评审人员 | 已接受 |
 | [ADR-0002：Electron 安全边界](adr/0002-electron-security-boundary.md) | 特权能力为何只存在于主进程？ | 桌面与安全工程师 | 已接受 |
 | [ADR-0003：文件为事实来源](adr/0003-files-as-source-of-truth.md) | 为什么配置由文件权威管理，而 SQLite 区分派生与非派生记录？ | 核心与数据工程师 | 已接受 |

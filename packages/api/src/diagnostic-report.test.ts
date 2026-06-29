@@ -37,17 +37,19 @@ describe("createDiagnosticReport", () => {
     });
 
     expect(report.content).toContain("<project>/AGENTS.md");
-    expect(report.items[0].suggestedAction).toContain("<backup-root>/snapshot.txt");
-    expect(report.items[0].suggestedAction).toContain("<external>/config.json#");
+    const item = report.items[0];
+    if (item === undefined) throw new Error("Expected exported diagnostic item");
+    expect(item.suggestedAction).toContain("<backup-root>/snapshot.txt");
+    expect(item.suggestedAction).toContain("<external>/config.json#");
     expect(JSON.stringify(report.items)).not.toContain(privateHome);
     expect(JSON.stringify(report.items)).not.toContain(appData);
     expect(JSON.stringify(report.items)).not.toContain("/private/tmp/outside");
     expect(JSON.stringify(report.items)).not.toContain("sk-live-secret");
     expect(JSON.stringify(report.items)).not.toContain("top-secret-canary");
     expect(JSON.stringify(report.items)).not.toContain("plain-secret");
-    expect(report.items[0].message).toContain("TOKEN=[REDACTED]");
-    expect(report.items[0].message).toContain("Authorization: [REDACTED]");
-    expect(report.items[0].suggestedAction).toContain("apiKey=[REDACTED]");
+    expect(item.message).toContain("TOKEN=[REDACTED]");
+    expect(item.message).toContain("Authorization: [REDACTED]");
+    expect(item.suggestedAction).toContain("apiKey=[REDACTED]");
     expect(report.redactions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ pointer: "/items/0/message", reason: "path" }),

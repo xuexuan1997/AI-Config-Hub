@@ -8,6 +8,7 @@ import type {
   FileSnapshotPort,
   IndexRepository,
   ParsedAsset,
+  Scope,
   ScanRunSummary,
   ToolAdapter,
   ToolInstallation,
@@ -23,6 +24,7 @@ import {
   DiagnosticIdSchema,
   EffectiveConfigIdSchema,
   IsoDateTimeSchema,
+  PaginationCursorSchema,
   ProjectIdSchema,
   ScanRunIdSchema,
   ScopeIdSchema,
@@ -52,6 +54,7 @@ export interface ScanServiceOptions {
 export interface ScanInput {
   readonly scanRunId: string;
   readonly candidateRoots: readonly AbsolutePath[];
+  readonly changedPaths?: readonly AbsolutePath[];
   readonly homeDirectory: AbsolutePath;
   readonly platform: "linux" | "darwin" | "win32";
   readonly signal: CancellationSignal;
@@ -120,36 +123,47 @@ export class ScanService {
         for (const candidate of discovery.candidates) work.push({ adapter, tool, candidate });
       }
     }
-    work.sort((left, right) =>
+    const changedPaths = input.changedPaths;
+    const affectedInstallationIds =
+      changedPaths === undefined ? undefined : affectedInstallations(tools, work, changedPaths);
+    const narrowedWork =
+      changedPaths === undefined
+        ? work
+        : work.filter((item) => pathMatchesAnyChangedPath(item.candidate.sourcePath, changedPaths));
+    narrowedWork.sort((left, right) =>
       `${left.tool.installationId}:${left.candidate.sourcePath}:${left.candidate.resourceKindHint ?? ""}`.localeCompare(
         `${right.tool.installationId}:${right.candidate.sourcePath}:${right.candidate.resourceKindHint ?? ""}`,
       ),
     );
 
     this.phase(input, "reading");
-    const readItems = await mapLimit(work, this.maxConcurrency, async (item): Promise<ReadItem> => {
-      input.signal.throwIfAborted();
-      try {
-        const snapshot = await this.options.snapshots.snapshot({
-          path: item.candidate.sourcePath,
-          allowedRoots: item.tool.configRoots,
-        });
-        return snapshot === undefined ? item : { ...item, snapshot };
-      } catch {
-        return {
-          ...item,
-          readDiagnostic: {
-            code: "SCAN_READ_FAILED",
-            severity: "error",
-            message: "The configuration file could not be read safely",
-            location: { path: item.candidate.sourcePath },
-            evidence: {},
-            suggestedActions: ["Check file permissions and retry the scan"],
-            blocking: true,
-          },
-        };
-      }
-    });
+    const readItems = await mapLimit(
+      narrowedWork,
+      this.maxConcurrency,
+      async (item): Promise<ReadItem> => {
+        input.signal.throwIfAborted();
+        try {
+          const snapshot = await this.options.snapshots.snapshot({
+            path: item.candidate.sourcePath,
+            allowedRoots: item.tool.configRoots,
+          });
+          return snapshot === undefined ? item : { ...item, snapshot };
+        } catch {
+          return {
+            ...item,
+            readDiagnostic: {
+              code: "SCAN_READ_FAILED",
+              severity: "error",
+              message: "The configuration file could not be read safely",
+              location: { path: item.candidate.sourcePath },
+              evidence: {},
+              suggestedActions: ["Check file permissions and retry the scan"],
+              blocking: true,
+            },
+          };
+        }
+      },
+    );
 
     this.phase(input, "parsing");
     const parsedItems = await mapLimit(
@@ -187,8 +201,8 @@ export class ScanService {
         item.diagnostics.map((diagnostic) => withDiagnosticOwnership(diagnostic, item)),
       ),
     ];
-    const scopes = buildScopes(parsedItems);
-    const assets = parsedItems
+    const parsedScopes = buildScopes(parsedItems);
+    const parsedAssets = parsedItems
       .flatMap((item) =>
         item.parsedAssets.map((parsed) =>
           AssetSchema.parse({
@@ -217,11 +231,25 @@ export class ScanService {
         ),
       )
       .sort((left, right) => left.assetId.localeCompare(right.assetId));
+    const cached =
+      changedPaths === undefined || affectedInstallationIds === undefined
+        ? { assets: [], scopes: [] }
+        : await cachedClosure({
+            repository: this.options.indexRepository,
+            changedPaths,
+            affectedInstallationIds,
+          });
+    const scopes = uniqueScopes([...cached.scopes, ...parsedScopes]);
+    const assetsForResolution = uniqueAssets([...cached.assets, ...parsedAssets]);
+    const assetsForCommit = changedPaths === undefined ? assetsForResolution : parsedAssets;
     const effectiveConfigs = [];
-    const resolvedInstallations = uniqueResolutionTargets(parsedItems);
+    const resolvedInstallations =
+      affectedInstallationIds === undefined
+        ? uniqueResolutionTargets(parsedItems)
+        : uniqueDetectedResolutionTargets(adapters, tools, affectedInstallationIds);
     for (const { adapter, tool } of resolvedInstallations) {
       input.signal.throwIfAborted();
-      const toolAssets = assets.filter(({ toolId }) => toolId === tool.toolId);
+      const toolAssets = assetsForResolution.filter(({ toolId }) => toolId === tool.toolId);
       const toolScopes = scopes.filter(({ toolId }) => toolId === tool.toolId);
       for (const targetPath of tool.configRoots) {
         const resolution = await adapter.resolveEffective({
@@ -276,14 +304,21 @@ export class ScanService {
     input.signal.throwIfAborted();
     this.phase(input, "committing");
     input.signal.throwIfAborted();
-    const committed = await this.options.indexRepository.replaceDerivedIndex({
+    const replacement = {
       scanRunId,
       tools: uniqueTools(tools),
       scopes,
-      assets,
+      assets: assetsForCommit,
       effectiveConfigs,
       diagnostics,
-    });
+    };
+    const committed =
+      input.changedPaths === undefined
+        ? await this.options.indexRepository.replaceDerivedIndex(replacement)
+        : await this.options.indexRepository.mergeIncrementalIndex({
+            ...replacement,
+            changedPaths: input.changedPaths,
+          });
     const summary = ScanRunSummarySchema.parse({
       scanRunId,
       status,
@@ -393,6 +428,92 @@ function uniqueTools(tools: readonly ToolInstallation[]): readonly ToolInstallat
   );
 }
 
+function uniqueScopes(scopes: readonly Scope[]): readonly Scope[] {
+  return [...new Map(scopes.map((scope) => [scope.scopeId, scope])).values()].sort((left, right) =>
+    left.scopeId.localeCompare(right.scopeId),
+  );
+}
+
+function uniqueAssets<T extends { readonly assetId: string }>(assets: readonly T[]): readonly T[] {
+  return [...new Map(assets.map((asset) => [asset.assetId, asset])).values()].sort((left, right) =>
+    left.assetId.localeCompare(right.assetId),
+  );
+}
+
+async function cachedClosure(input: {
+  readonly repository: IndexRepository;
+  readonly changedPaths: readonly AbsolutePath[];
+  readonly affectedInstallationIds: ReadonlySet<string>;
+}) {
+  const changed = new Set(input.changedPaths.map(normalizePath));
+  const scopes = (await input.repository.listScopes()).filter((scope) => {
+    const installationId = scope.discoveryEvidence["installationId"];
+    return typeof installationId === "string" && input.affectedInstallationIds.has(installationId);
+  });
+  const scopeIds = new Set(scopes.map(({ scopeId }) => scopeId));
+  const assets = (await listAllAssets(input.repository)).filter(
+    (asset) =>
+      scopeIds.has(asset.scopeId) && !changed.has(normalizePath(asset.canonicalSourcePath)),
+  );
+  return { assets, scopes };
+}
+
+async function listAllAssets(repository: IndexRepository) {
+  const assets = [];
+  let cursor: ReturnType<typeof PaginationCursorSchema.parse> | undefined;
+  for (;;) {
+    const page = await repository.listAssets({
+      ...(cursor === undefined ? {} : { cursor }),
+      limit: 200,
+    });
+    assets.push(...page.items);
+    if (page.nextCursor === undefined) return assets;
+    cursor = PaginationCursorSchema.parse(page.nextCursor);
+  }
+}
+
+function affectedInstallations(
+  tools: readonly ToolInstallation[],
+  work: readonly WorkItem[],
+  changedPaths: readonly AbsolutePath[],
+): ReadonlySet<string> {
+  const result = new Set<string>();
+  for (const item of work) {
+    if (pathMatchesAnyChangedPath(item.candidate.sourcePath, changedPaths)) {
+      result.add(item.tool.installationId);
+    }
+  }
+  for (const tool of tools) {
+    if (
+      changedPaths.some((changedPath) =>
+        tool.configRoots.some((root) => pathWithinRoot(changedPath, root)),
+      )
+    ) {
+      result.add(tool.installationId);
+    }
+  }
+  return result;
+}
+
+function pathMatchesAnyChangedPath(
+  candidatePath: AbsolutePath,
+  changedPaths: readonly AbsolutePath[],
+): boolean {
+  return changedPaths.some(
+    (changedPath) => normalizePath(changedPath) === normalizePath(candidatePath),
+  );
+}
+
+function normalizePath(path: AbsolutePath): string {
+  return path.replaceAll("\\", "/");
+}
+
+function pathWithinRoot(path: AbsolutePath, root: AbsolutePath): boolean {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(root);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
 function uniqueResolutionTargets(items: readonly ParsedItem[]) {
   return [
     ...new Map(
@@ -402,6 +523,21 @@ function uniqueResolutionTargets(items: readonly ParsedItem[]) {
       ]),
     ).values(),
   ].sort((left, right) => left.tool.installationId.localeCompare(right.tool.installationId));
+}
+
+function uniqueDetectedResolutionTargets(
+  adapters: readonly ToolAdapter[],
+  tools: readonly ToolInstallation[],
+  affectedInstallationIds: ReadonlySet<string>,
+) {
+  const adaptersByToolId = new Map(adapters.map((adapter) => [adapter.toolId, adapter]));
+  return tools
+    .filter((tool) => affectedInstallationIds.has(tool.installationId))
+    .flatMap((tool) => {
+      const adapter = adaptersByToolId.get(tool.toolId);
+      return adapter === undefined ? [] : [{ adapter, tool }];
+    })
+    .sort((left, right) => left.tool.installationId.localeCompare(right.tool.installationId));
 }
 
 async function mapLimit<T, R>(

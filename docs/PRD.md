@@ -3339,6 +3339,8 @@ CLI 不依赖桌面环境和 WebKitGTK。
 
 # 24. 实施优先级
 
+当前实现状态与测试证据由 `docs/implementation/phase-status.md` 同步维护。该文件只记录实现进度，不改变本节产品需求范围。
+
 ## 第一阶段：核心模型和扫描
 
 实现：
@@ -3653,4 +3655,4 @@ AI Config Hub 解决的不是单个 AI IDE 的配置问题，而是随着 AI Cod
 + 老旧系统兼容
 ```
 
-产品最终希望让用户能够自由选择和切换 AI Coding 工具，而不需要反复重建已经积累的 Rules、Agents、Skills 和 MCP 配置资产。 
+产品最终希望让用户能够自由选择和切换 AI Coding 工具，而不需要反复重建已经积累的 Rules、Agents、Skills 和 MCP 配置资产。

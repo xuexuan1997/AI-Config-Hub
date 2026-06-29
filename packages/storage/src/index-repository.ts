@@ -7,10 +7,12 @@ import {
   DiagnosticSchema,
   EffectiveConfigSchema,
   ScopeSchema,
+  type DerivedIndexIncrementalReplacement,
   type DerivedIndexReplacement,
   type IndexRepository,
 } from "@ai-config-hub/core";
 import {
+  AbsolutePathSchema,
   AppError,
   PaginationCursorSchema,
   SemVerSchema,
@@ -57,17 +59,43 @@ export class SqliteIndexRepository implements IndexRepository {
       const assetIds = insertAssets(this.database, prepared, toolIds, scopeIds, scanId);
       insertReferences(this.database, prepared, assetIds);
       insertDiagnostics(this.database, prepared, assetIds, scanId);
-      const current = Number(
-        (this.database.prepare("PRAGMA user_version").get() as { user_version: number })
-          .user_version,
-      );
-      const next = current + 1;
-      this.database.exec(`PRAGMA user_version = ${String(next)}`);
+      const next = bumpRevision(this.database);
       this.database.exec("COMMIT");
       return Promise.resolve({ revision: String(next) });
     } catch (error) {
       this.database.exec("ROLLBACK");
       return Promise.reject(error instanceof Error ? error : new Error("Index replacement failed"));
+    }
+  }
+
+  mergeIncrementalIndex(
+    replacement: DerivedIndexIncrementalReplacement,
+  ): Promise<{ readonly revision: string }> {
+    if (this.readOnly) return Promise.reject(readOnlyError());
+    let prepared: ReturnType<typeof prepareReplacement>;
+    let changedPaths: readonly ReturnType<typeof AbsolutePathSchema.parse>[];
+    try {
+      prepared = prepareReplacement(replacement);
+      changedPaths = replacement.changedPaths.map((path) => AbsolutePathSchema.parse(path));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error("Index validation failed"));
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const scanId = ensureScanRun(this.database, prepared, "incremental");
+      const toolIds = insertTools(this.database, prepared);
+      const projectIds = insertProjects(this.database, prepared);
+      const scopeIds = insertScopes(this.database, prepared, toolIds, projectIds);
+      deleteChangedPathRows(this.database, changedPaths);
+      const assetIds = insertAssets(this.database, prepared, toolIds, scopeIds, scanId);
+      insertReferences(this.database, prepared, assetIds);
+      insertDiagnostics(this.database, prepared, assetIds, scanId);
+      const next = bumpRevision(this.database);
+      this.database.exec("COMMIT");
+      return Promise.resolve({ revision: String(next) });
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      return Promise.reject(error instanceof Error ? error : new Error("Index merge failed"));
     }
   }
 
@@ -134,6 +162,54 @@ export class SqliteIndexRepository implements IndexRepository {
       if (found !== undefined) return Promise.resolve(found);
     }
     return Promise.resolve(undefined);
+  }
+
+  listScopes(): ReturnType<IndexRepository["listScopes"]> {
+    const rows = this.database
+      .prepare(
+        `SELECT
+          scopes.domain_id AS scope_id,
+          scopes.scope_kind AS scope_kind,
+          scopes.root_path_normalized AS root_path,
+          scopes.depth AS depth,
+          scopes.precedence AS precedence,
+          parent.domain_id AS parent_scope_id,
+          projects.domain_id AS project_id,
+          tools.tool_key AS tool_key,
+          tools.tool_installation_id AS installation_id
+        FROM scopes
+        JOIN tools ON tools.id = scopes.tool_id
+        LEFT JOIN scopes AS parent ON parent.id = scopes.parent_scope_id
+        LEFT JOIN projects ON projects.id = scopes.project_id`,
+      )
+      .all() as {
+      readonly scope_id: string;
+      readonly scope_kind: string;
+      readonly root_path: string;
+      readonly depth: number;
+      readonly precedence: number;
+      readonly parent_scope_id: string | null;
+      readonly project_id: string | null;
+      readonly tool_key: string;
+      readonly installation_id: string;
+    }[];
+    return Promise.resolve(
+      rows
+        .map((row) =>
+          ScopeSchema.parse({
+            scopeId: row.scope_id,
+            toolId: row.tool_key,
+            scopeKind: row.scope_kind,
+            canonicalRootPath: row.root_path,
+            ...(row.project_id === null ? {} : { projectId: row.project_id }),
+            ...(row.parent_scope_id === null ? {} : { parentScopeId: row.parent_scope_id }),
+            depth: row.depth,
+            precedence: row.precedence,
+            discoveryEvidence: { installationId: row.installation_id },
+          }),
+        )
+        .sort((left, right) => left.scopeId.localeCompare(right.scopeId)),
+    );
   }
 
   listDiagnostics(
@@ -207,7 +283,11 @@ function prepareReplacement(replacement: DerivedIndexReplacement) {
   return { ...replacement, tools, scopes, assets, effectiveConfigs, diagnostics };
 }
 
-function ensureScanRun(database: DatabaseSync, replacement: ReturnType<typeof prepareReplacement>) {
+function ensureScanRun(
+  database: DatabaseSync,
+  replacement: ReturnType<typeof prepareReplacement>,
+  kind: "incremental" | "targeted" = "targeted",
+) {
   const existing = database
     .prepare("SELECT id FROM scan_runs WHERE domain_id = ?")
     .get(replacement.scanRunId) as { id: string } | undefined;
@@ -215,9 +295,15 @@ function ensureScanRun(database: DatabaseSync, replacement: ReturnType<typeof pr
   if (existing === undefined) {
     database
       .prepare(
-        `INSERT INTO scan_runs(id, domain_id, scan_kind, status, phase, requested_roots_json, started_at, effective_configs_json) VALUES(?, ?, 'targeted', 'indexing', 'committing', '[]', ?, ?)`,
+        `INSERT INTO scan_runs(id, domain_id, scan_kind, status, phase, requested_roots_json, started_at, effective_configs_json) VALUES(?, ?, ?, 'indexing', 'committing', '[]', ?, ?)`,
       )
-      .run(id, replacement.scanRunId, Date.now(), serializeJson(replacement.effectiveConfigs));
+      .run(
+        id,
+        replacement.scanRunId,
+        kind,
+        Date.now(),
+        serializeJson(replacement.effectiveConfigs),
+      );
   } else {
     database
       .prepare("UPDATE scan_runs SET effective_configs_json = ?, phase = 'committing' WHERE id = ?")
@@ -260,7 +346,25 @@ function insertProjects(
   const result = new Map<string, string>();
   for (const scope of replacement.scopes.filter(({ projectId }) => projectId !== undefined)) {
     if (scope.projectId === undefined || result.has(scope.projectId)) continue;
-    const id = randomUUID();
+    const existing = database
+      .prepare("SELECT id FROM projects WHERE domain_id = ?")
+      .get(scope.projectId) as { id: string } | undefined;
+    const id = existing?.id ?? randomUUID();
+    if (existing !== undefined) {
+      database
+        .prepare(
+          "UPDATE projects SET root_path_display = ?, root_path_normalized = ?, name = ?, last_seen_at = ? WHERE id = ?",
+        )
+        .run(
+          scope.canonicalRootPath,
+          scope.canonicalRootPath,
+          basename(scope.canonicalRootPath),
+          Date.now(),
+          id,
+        );
+      result.set(scope.projectId, id);
+      continue;
+    }
     database
       .prepare(
         "INSERT INTO projects(id, domain_id, root_path_display, root_path_normalized, name, first_seen_at, last_seen_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
@@ -300,7 +404,30 @@ function insertScopes(
     const toolId = installation === undefined ? undefined : toolIds.get(installation);
     if (toolId === undefined)
       throw new Error(`Scope has no matching tool installation: ${scope.scopeId}`);
-    const id = randomUUID();
+    const existing = database
+      .prepare("SELECT id FROM scopes WHERE domain_id = ?")
+      .get(scope.scopeId) as { id: string } | undefined;
+    const id = existing?.id ?? randomUUID();
+    if (existing !== undefined) {
+      database
+        .prepare(
+          "UPDATE scopes SET tool_id = ?, project_id = ?, parent_scope_id = ?, scope_kind = ?, root_path_display = ?, root_path_normalized = ?, depth = ?, precedence = ?, adapter_scope_key = ? WHERE id = ?",
+        )
+        .run(
+          toolId,
+          scope.projectId === undefined ? null : (projectIds.get(scope.projectId) ?? null),
+          scope.parentScopeId === undefined ? null : (result.get(scope.parentScopeId) ?? null),
+          scope.scopeKind,
+          scope.canonicalRootPath,
+          scope.canonicalRootPath,
+          scope.depth,
+          scope.precedence,
+          scope.scopeId,
+          id,
+        );
+      result.set(scope.scopeId, id);
+      continue;
+    }
     database
       .prepare(
         "INSERT INTO scopes(id, domain_id, tool_id, project_id, parent_scope_id, scope_kind, root_path_display, root_path_normalized, depth, precedence, adapter_scope_key) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -321,6 +448,46 @@ function insertScopes(
     result.set(scope.scopeId, id);
   }
   return result;
+}
+
+function deleteChangedPathRows(database: DatabaseSync, changedPaths: readonly string[]): void {
+  if (changedPaths.length === 0) return;
+  const changed = new Set(changedPaths);
+  for (const path of changed) {
+    const assets = database
+      .prepare("SELECT id FROM assets WHERE source_path_normalized = ?")
+      .all(path) as { id: string }[];
+    for (const asset of assets)
+      database.prepare("DELETE FROM diagnostics WHERE asset_id = ?").run(asset.id);
+    database.prepare("DELETE FROM assets WHERE source_path_normalized = ?").run(path);
+  }
+
+  const diagnostics = database.prepare("SELECT id, evidence_json FROM diagnostics").all() as {
+    id: string;
+    evidence_json: string;
+  }[];
+  for (const row of diagnostics) {
+    const diagnostic = parseJson(DiagnosticSchema, row.evidence_json);
+    const evidenceSource =
+      typeof diagnostic.evidence["sourcePath"] === "string"
+        ? diagnostic.evidence["sourcePath"]
+        : undefined;
+    if (
+      (diagnostic.location?.path !== undefined && changed.has(diagnostic.location.path)) ||
+      (evidenceSource !== undefined && changed.has(evidenceSource))
+    ) {
+      database.prepare("DELETE FROM diagnostics WHERE id = ?").run(row.id);
+    }
+  }
+}
+
+function bumpRevision(database: DatabaseSync): number {
+  const current = Number(
+    (database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+  );
+  const next = current + 1;
+  database.exec(`PRAGMA user_version = ${String(next)}`);
+  return next;
 }
 
 function insertAssets(

@@ -34,8 +34,15 @@ export interface DerivedIndexReplacement {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+export interface DerivedIndexIncrementalReplacement extends DerivedIndexReplacement {
+  readonly changedPaths: readonly AbsolutePath[];
+}
+
 export interface IndexRepository {
   replaceDerivedIndex(replacement: DerivedIndexReplacement): Promise<{ readonly revision: string }>;
+  mergeIncrementalIndex(
+    replacement: DerivedIndexIncrementalReplacement,
+  ): Promise<{ readonly revision: string }>;
   listAssets(query: {
     readonly toolIds?: readonly ToolId[];
     readonly scopeIds?: readonly ScopeId[];
@@ -48,6 +55,7 @@ export interface IndexRepository {
   getEffectiveConfig(
     id: EffectiveConfig["effectiveConfigId"],
   ): Promise<EffectiveConfig | undefined>;
+  listScopes(): Promise<readonly Scope[]>;
   listDiagnostics(query: {
     readonly assetId?: AssetId;
     readonly severity?: readonly Diagnostic["severity"][];

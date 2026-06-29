@@ -108,6 +108,39 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("merges incremental changed paths without dropping unrelated assets", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    await repositories.index.replaceDerivedIndex(
+      replacement("scan-full", [asset("asset-a", "A"), asset("asset-b", "B")]),
+    );
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-incremental-update", [asset("asset-b", "B2")]),
+      changedPaths: [AbsolutePathSchema.parse("/project/asset-b.md")],
+    });
+
+    const updated = await repositories.index.listAssets({ limit: 20 });
+    expect(updated.items.map(({ assetId }) => assetId)).toEqual(["asset-a", "asset-b"]);
+    expect(
+      updated.items.map(({ resource }) => {
+        if (resource.kind !== "rule") throw new Error("Expected rule fixture");
+        return resource.data.instructions;
+      }),
+    ).toEqual(["A", "B2"]);
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-incremental-delete", []),
+      changedPaths: [AbsolutePathSchema.parse("/project/asset-b.md")],
+    });
+
+    expect(
+      (await repositories.index.listAssets({ limit: 20 })).items.map(({ assetId }) => assetId),
+    ).toEqual(["asset-a"]);
+    opened.database.close();
+  });
+
   it("persists settings and task progress across reopen with optimistic revisions", async () => {
     const databasePath = path();
     const first = await openDatabase({ path: databasePath, appVersion: "0.1.0" });

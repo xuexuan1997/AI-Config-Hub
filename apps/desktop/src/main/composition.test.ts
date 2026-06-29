@@ -13,12 +13,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createTaskEventCursor, type TaskEvent } from "@ai-config-hub/api";
+import { WatchService } from "@ai-config-hub/scanner";
 import { ContentHashSchema } from "@ai-config-hub/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createDesktopCommandServices, DesktopTaskEvents } from "./composition.js";
 
 const temporaryDirectories: string[] = [];
+
+class RecordingWatchService extends WatchService {
+  readonly suppressed: string[][] = [];
+  readonly cleared: string[][] = [];
+
+  override suppressDeploymentPaths(paths: Parameters<WatchService["suppressDeploymentPaths"]>[0]) {
+    this.suppressed.push([...paths]);
+    super.suppressDeploymentPaths(paths);
+  }
+
+  override clearDeploymentSuppression(
+    paths: Parameters<WatchService["clearDeploymentSuppression"]>[0],
+  ) {
+    this.cleared.push([...paths]);
+    super.clearDeploymentSuppression(paths);
+  }
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -231,6 +249,41 @@ describe("desktop command service composition", () => {
       expect(events.find((event) => event.type === "cancel.requested")).toMatchObject({
         payload: { reason: "user", effectiveAfterPhase: "completed" },
       });
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("passes changed paths through to incremental scans", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-incremental-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".codex", "agents"), { recursive: true });
+    const changedPath = join(project, "AGENTS.md");
+    await writeFile(changedPath, "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(join(project, ".codex", "agents", "broken.toml"), "not = [valid\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const incremental = await runtime.services["scan.start"]({
+        mode: "incremental",
+        roots: [project],
+        changedPaths: [changedPath],
+      });
+      const status = await runtime.services["scan.status"]({ taskId: incremental.taskId });
+
+      expect(status).toMatchObject({
+        status: "succeeded",
+        resultSummary: { failedCount: 0 },
+      });
+      expect(status.resultSummary?.succeededCount).toBeGreaterThan(0);
     } finally {
       runtime.close();
     }
@@ -505,6 +558,50 @@ describe("desktop command service composition", () => {
       ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     } finally {
       await chmod(cursorRules, 0o700).catch(() => undefined);
+      runtime.close();
+    }
+  });
+
+  it("suppresses deployment target paths while desktop file watching is active", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-watch-suppression-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    const watchService = new RecordingWatchService();
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+      watchService,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: project,
+        conflictPolicy: "replace",
+      });
+
+      await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: preview.requiredConfirmations,
+      });
+
+      const targetPaths = preview.changes.map((change) => change.pathDisplay);
+      expect(watchService.suppressed).toContainEqual(targetPaths);
+      expect(watchService.cleared).toContainEqual(targetPaths);
+    } finally {
       runtime.close();
     }
   });

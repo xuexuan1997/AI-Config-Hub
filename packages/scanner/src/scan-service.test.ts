@@ -5,6 +5,7 @@ import type {
   IndexRepository,
   ToolAdapter,
 } from "@ai-config-hub/core";
+import { AssetSchema, ScopeSchema } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
   AdapterIdSchema,
@@ -130,13 +131,66 @@ function adapter(): AdapterRegistration {
   };
 }
 
-function repository() {
+const scopeFixture = ScopeSchema.parse({
+  scopeId: "scope-project",
+  toolId: "codex",
+  scopeKind: "project",
+  canonicalRootPath: root,
+  projectId: "project-1",
+  depth: 0,
+  precedence: 100,
+  discoveryEvidence: { installationId: "codex-project" },
+});
+
+const cachedAsset = AssetSchema.parse({
+  assetId: "asset-cached",
+  toolId: "codex",
+  resource: {
+    kind: "rule",
+    data: {
+      name: "cached",
+      instructions: "Cached rule",
+      globs: [],
+      extensions: {},
+    },
+  },
+  scopeId: scopeFixture.scopeId,
+  canonicalSourcePath: "/project/cached.md",
+  locator: "rule:cached",
+  sourceFormat: "markdown",
+  contentHash: `sha256:${"d".repeat(64)}`,
+  normalizedSchemaVersion: "1.0.0",
+  adapterId: "fake-codex",
+  adapterVersion: "0.1.0",
+  discoveredAt: "2026-06-21T08:00:00.000Z",
+  references: [],
+  diagnosticSummary: { info: 0, warning: 0, error: 0 },
+});
+
+function repository(
+  seed: {
+    readonly assets?: readonly ReturnType<typeof AssetSchema.parse>[];
+    readonly scopes?: readonly ReturnType<typeof ScopeSchema.parse>[];
+  } = {},
+) {
   const calls: Parameters<IndexRepository["replaceDerivedIndex"]>[0][] = [];
   const index = {
     replaceDerivedIndex: (replacement: Parameters<IndexRepository["replaceDerivedIndex"]>[0]) => {
       calls.push(replacement);
       return Promise.resolve({ revision: String(calls.length) });
     },
+    mergeIncrementalIndex: (
+      replacement: Parameters<IndexRepository["mergeIncrementalIndex"]>[0],
+    ) => {
+      calls.push(replacement);
+      return Promise.resolve({ revision: String(calls.length) });
+    },
+    listAssets: () =>
+      Promise.resolve({
+        items: seed.assets ?? [],
+        snapshotRevision: "seed",
+      }),
+    listScopes: () => Promise.resolve(seed.scopes ?? []),
   } as unknown as IndexRepository;
   return { index, calls };
 }
@@ -221,7 +275,7 @@ describe("ScanService", () => {
   });
 
   it("honors cancellation immediately before commit and preserves the previous snapshot", async () => {
-    const target = repository();
+    const target = repository({ assets: [cachedAsset], scopes: [scopeFixture] });
     const controller = createCancellationController();
     const service = new ScanService({
       registrations: [adapter()],
@@ -242,5 +296,111 @@ describe("ScanService", () => {
       }),
     ).rejects.toMatchObject({ code: "USER_CANCELLED" });
     expect(target.calls).toHaveLength(0);
+  });
+
+  it("narrows incremental read and parse work to changed candidate files while resolving affected tools", async () => {
+    const target = repository({ assets: [cachedAsset], scopes: [scopeFixture] });
+    const snapshotPaths: string[] = [];
+    const parsePaths: string[] = [];
+    const resolvingTargets: string[] = [];
+    const registration = adapter();
+    const created = registration.create({ logger: { debug() {}, warn() {} } });
+    const trackingRegistration: AdapterRegistration = {
+      ...registration,
+      create: () => ({
+        ...created,
+        parse: (context: Parameters<ToolAdapter["parse"]>[0]) => {
+          parsePaths.push(context.candidate.sourcePath);
+          return created.parse(context);
+        },
+        resolveEffective: (context: Parameters<ToolAdapter["resolveEffective"]>[0]) => {
+          resolvingTargets.push(context.targetPath);
+          return created.resolveEffective(context);
+        },
+      }),
+    };
+    const service = new ScanService({
+      registrations: [trackingRegistration],
+      read,
+      snapshots: {
+        snapshot: (request) => {
+          snapshotPaths.push(request.path);
+          return snapshots.snapshot(request);
+        },
+      },
+      indexRepository: target.index,
+    });
+
+    const result = await service.scan({
+      scanRunId: "scan-incremental",
+      candidateRoots: [root],
+      changedPaths: [AbsolutePathSchema.parse("/project/good.md")],
+      homeDirectory: root,
+      platform: "linux",
+      signal: createCancellationController().signal,
+    });
+
+    expect(snapshotPaths).toEqual(["/project/good.md"]);
+    expect(parsePaths).toEqual(["/project/good.md"]);
+    expect(resolvingTargets).toEqual(["/project"]);
+    expect(target.calls[0]?.assets).toHaveLength(1);
+    expect(target.calls[0]?.effectiveConfigs).toHaveLength(1);
+    const resources = target.calls[0]?.effectiveConfigs[0]?.resolvedResources ?? [];
+    expect(
+      resources.map((resource) => {
+        if (resource.kind !== "rule") throw new Error("Expected rule resource");
+        return resource.data.instructions;
+      }),
+    ).toEqual(["Cached rule", "Use tests."]);
+    expect(result.summary).toMatchObject({
+      status: "succeeded",
+      succeededCount: 1,
+      failedCount: 0,
+    });
+  });
+
+  it("commits a consistent zero-work summary when incremental paths match no candidate files", async () => {
+    const target = repository();
+    const snapshotPaths: string[] = [];
+    const service = new ScanService({
+      registrations: [adapter()],
+      read,
+      snapshots: {
+        snapshot: (request) => {
+          snapshotPaths.push(request.path);
+          return snapshots.snapshot(request);
+        },
+      },
+      indexRepository: target.index,
+    });
+
+    const result = await service.scan({
+      scanRunId: "scan-incremental-empty",
+      candidateRoots: [root],
+      changedPaths: [AbsolutePathSchema.parse("/project/notes.txt")],
+      homeDirectory: root,
+      platform: "linux",
+      signal: createCancellationController().signal,
+    });
+
+    expect(snapshotPaths).toEqual([]);
+    expect(target.calls).toHaveLength(1);
+    expect(target.calls[0]).toMatchObject({
+      tools: [
+        {
+          installationId: "codex-project",
+        },
+      ],
+      scopes: [],
+      assets: [],
+      diagnostics: [],
+    });
+    expect(target.calls[0]?.effectiveConfigs).toHaveLength(1);
+    expect(target.calls[0]?.effectiveConfigs[0]?.resolvedResources).toEqual([]);
+    expect(result.summary).toMatchObject({
+      status: "succeeded",
+      succeededCount: 0,
+      failedCount: 0,
+    });
   });
 });

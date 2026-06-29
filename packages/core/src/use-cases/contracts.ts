@@ -45,6 +45,8 @@ export type CoreCommandName = (typeof CORE_COMMAND_NAMES)[number];
 
 export interface StartScanRequest {
   readonly roots: readonly AbsolutePath[];
+  readonly projectId?: ProjectId;
+  readonly changedPaths?: readonly AbsolutePath[];
   readonly toolIds?: readonly ToolId[];
   readonly mode: "full" | "incremental";
   readonly readOnly: boolean;
