@@ -19,20 +19,25 @@ describe("desktop IPC handlers", () => {
       }),
     });
     const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents();
 
     registerIpcHandlers({
       ipcMain: ipcMain as never,
       services,
       appVersion: () => "0.2.0-test",
       dialog: { selectDirectory: () => Promise.resolve(undefined) },
-      webContents: () => [],
+      webContents: () => [sender as never],
     });
 
-    const response = await ipcMain.invoke(commandChannel("scan.start"), {
-      apiVersion: 1,
-      requestId: "request:desktop-ipc",
-      payload: { mode: "full" },
-    });
+    const response = await ipcMain.invoke(
+      commandChannel("scan.start"),
+      {
+        apiVersion: 1,
+        requestId: "request:desktop-ipc",
+        payload: { mode: "full" },
+      },
+      trustedEvent(sender),
+    );
 
     expect(response).toMatchObject({
       ok: true,
@@ -41,10 +46,49 @@ describe("desktop IPC handlers", () => {
     expect(services["scan.start"]).toHaveBeenCalledWith({ mode: "full" });
   });
 
+  it("rejects API commands from unknown senders and subframes", async () => {
+    const services = commandServices({
+      "scan.start": vi.fn().mockResolvedValue({
+        taskId: TaskIdSchema.parse("task:desktop-ipc"),
+        status: "queued",
+        acceptedAt: "2026-06-28T08:00:00.000Z",
+      }),
+    });
+    const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents();
+    const unknownSender = fakeWebContents();
+
+    registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services,
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    const request = {
+      apiVersion: 1,
+      requestId: "request:desktop-ipc",
+      payload: { mode: "full" },
+    };
+
+    await expect(
+      ipcMain.invoke(commandChannel("scan.start"), request, trustedEvent(unknownSender)),
+    ).rejects.toThrow("Untrusted IPC sender");
+    await expect(
+      ipcMain.invoke(commandChannel("scan.start"), request, {
+        sender,
+        senderFrame: { frameId: 2 },
+      }),
+    ).rejects.toThrow("Untrusted IPC sender");
+    expect(services["scan.start"]).not.toHaveBeenCalled();
+  });
+
   it("replays task events to the subscribing sender and removes subscriptions", async () => {
     const sent: unknown[] = [];
     const unsubscribe = vi.fn();
     const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents((channel, payload) => sent.push({ channel, payload }));
     const taskEvent: TaskEvent = {
       apiVersion: 1,
       eventVersion: 1,
@@ -72,15 +116,19 @@ describe("desktop IPC handlers", () => {
       },
       appVersion: () => "0.2.0-test",
       dialog: { selectDirectory: () => Promise.resolve(undefined) },
-      webContents: () => [],
+      webContents: () => [sender as never],
     });
 
     await ipcMain.invoke(
       "ai-config-hub:v1:task.subscribe",
       { taskId: "task:event-bridge", afterSequence: 0 },
-      { sender: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } },
+      trustedEvent(sender),
     );
-    await ipcMain.invoke("ai-config-hub:v1:task.unsubscribe", { taskId: "task:event-bridge" });
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.unsubscribe",
+      { taskId: "task:event-bridge" },
+      trustedEvent(sender),
+    );
 
     expect(sent).toEqual([{ channel: TASK_EVENT_CHANNEL, payload: taskEvent }]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -99,9 +147,18 @@ function fakeIpcMain() {
     invoke(channel: string, payload?: unknown, event: unknown = {}) {
       const handler = handlers.get(channel);
       if (handler === undefined) throw new Error(`Missing handler: ${channel}`);
-      return handler(event, payload);
+      return Promise.resolve().then(() => handler(event, payload));
     },
   };
+}
+
+function fakeWebContents(send: (channel: string, payload: unknown) => void = vi.fn()) {
+  const mainFrame = { frameId: 1 };
+  return { mainFrame, send };
+}
+
+function trustedEvent(sender: ReturnType<typeof fakeWebContents>) {
+  return { sender, senderFrame: sender.mainFrame };
 }
 
 function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceMap {

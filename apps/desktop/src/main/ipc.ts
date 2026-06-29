@@ -36,13 +36,21 @@ export function registerIpcHandlers(input: {
   const handlers = createCommandHandlers(input.services);
   const taskSubscriptions = new Map<string, () => void>();
   for (const name of API_COMMAND_NAMES) {
-    input.ipcMain.handle(commandChannel(name), (_event, request: unknown) =>
-      handlers[name](request),
-    );
+    input.ipcMain.handle(commandChannel(name), (event, request: unknown) => {
+      assertTrustedIpcSender(event, input.webContents());
+      return handlers[name](request);
+    });
   }
-  input.ipcMain.handle(SELECT_PROJECT_ROOT_CHANNEL, () => input.dialog.selectDirectory());
-  input.ipcMain.handle(APP_VERSION_CHANNEL, () => input.appVersion());
+  input.ipcMain.handle(SELECT_PROJECT_ROOT_CHANNEL, (event) => {
+    assertTrustedIpcSender(event, input.webContents());
+    return input.dialog.selectDirectory();
+  });
+  input.ipcMain.handle(APP_VERSION_CHANNEL, (event) => {
+    assertTrustedIpcSender(event, input.webContents());
+    return input.appVersion();
+  });
   input.ipcMain.handle(TASK_SUBSCRIBE_CHANNEL, (event, payload: unknown) => {
+    assertTrustedIpcSender(event, input.webContents());
     if (input.taskEvents === undefined) return false;
     const request = taskSubscriptionPayload(payload);
     const unsubscribe = input.taskEvents.subscribe(
@@ -53,7 +61,8 @@ export function registerIpcHandlers(input: {
     taskSubscriptions.set(request.taskId, unsubscribe);
     return true;
   });
-  input.ipcMain.handle(TASK_UNSUBSCRIBE_CHANNEL, (_event, payload: unknown) => {
+  input.ipcMain.handle(TASK_UNSUBSCRIBE_CHANNEL, (event, payload: unknown) => {
+    assertTrustedIpcSender(event, input.webContents());
     const request = taskUnsubscribePayload(payload);
     taskSubscriptions.get(request.taskId)?.();
     taskSubscriptions.delete(request.taskId);
@@ -70,6 +79,20 @@ export function registerIpcHandlers(input: {
     input.ipcMain.removeHandler(TASK_UNSUBSCRIBE_CHANNEL);
     void input.webContents;
   };
+}
+
+function assertTrustedIpcSender(
+  event: IpcMainInvokeEvent,
+  trustedWebContents: readonly WebContents[],
+): void {
+  const sender = event.sender;
+  if (!trustedWebContents.includes(sender)) throw new Error("Untrusted IPC sender");
+
+  const senderFrame = (event as { readonly senderFrame?: unknown }).senderFrame;
+  const mainFrame = (sender as { readonly mainFrame?: unknown }).mainFrame;
+  if (senderFrame !== undefined && mainFrame !== undefined && senderFrame !== mainFrame) {
+    throw new Error("Untrusted IPC sender");
+  }
 }
 
 function taskSubscriptionPayload(payload: unknown): {

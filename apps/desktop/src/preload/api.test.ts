@@ -38,6 +38,17 @@ describe("Desktop preload API", () => {
     });
     expect(off).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects unsupported command names before invoking IPC", async () => {
+    const invoke = vi.fn();
+    const transport: PreloadTransport = { invoke, on: vi.fn(), off: vi.fn() };
+    const api = createDesktopApi(transport, { requestId: () => "request-1" });
+
+    await expect(api.invoke("node:fs" as never, {} as never)).rejects.toThrow(
+      "Unsupported API command",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });
 
 function fakeTransport(): PreloadTransport {

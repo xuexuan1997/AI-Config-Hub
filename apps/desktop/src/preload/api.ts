@@ -5,7 +5,7 @@ import type {
   CommandResponse,
   TaskEvent,
 } from "@ai-config-hub/api";
-import { commandChannel, TASK_EVENT_CHANNEL } from "@ai-config-hub/api";
+import { API_COMMAND_NAMES, commandChannel, TASK_EVENT_CHANNEL } from "@ai-config-hub/api";
 
 import {
   APP_VERSION_CHANNEL,
@@ -13,6 +13,8 @@ import {
   TASK_SUBSCRIBE_CHANNEL,
   TASK_UNSUBSCRIBE_CHANNEL,
 } from "../main/ipc.js";
+
+const supportedCommandNames = new Set<string>(API_COMMAND_NAMES);
 
 export interface DesktopApi {
   invoke<Name extends ApiCommandName>(
@@ -46,7 +48,7 @@ export function createDesktopApi(
     name: Name,
     payload: CommandRequest<Name>,
   ): Promise<ApiResponse<CommandResponse<Name>>> {
-    return (await transport.invoke(commandChannel(name), {
+    return (await transport.invoke(commandChannelFor(name), {
       apiVersion: 1,
       requestId: options.requestId(),
       payload,
@@ -79,4 +81,9 @@ export function createDesktopApi(
       return transport.invoke(APP_VERSION_CHANNEL) as Promise<string>;
     },
   });
+}
+
+function commandChannelFor(name: ApiCommandName): string {
+  if (!supportedCommandNames.has(name)) throw new Error("Unsupported API command");
+  return commandChannel(name);
 }

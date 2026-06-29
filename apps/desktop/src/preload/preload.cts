@@ -10,6 +10,25 @@ const APP_VERSION_CHANNEL = "ai-config-hub:v1:app.version";
 const TASK_EVENT_CHANNEL = "ai-config-hub:v1:task.event";
 const TASK_SUBSCRIBE_CHANNEL = "ai-config-hub:v1:task.subscribe";
 const TASK_UNSUBSCRIBE_CHANNEL = "ai-config-hub:v1:task.unsubscribe";
+const API_COMMAND_NAMES = [
+  "scan.start",
+  "scan.status",
+  "scan.cancel",
+  "assets.list",
+  "assets.get",
+  "assets.openSource",
+  "effective.resolve",
+  "diagnostics.list",
+  "diagnostics.export",
+  "migration.preview",
+  "deployment.execute",
+  "deployment.rollback",
+  "history.list",
+  "history.get",
+  "settings.get",
+  "settings.update",
+] as const;
+const supportedCommandNames = new Set<string>(API_COMMAND_NAMES);
 
 interface ContextBridgePort {
   exposeInMainWorld(apiKey: string, api: unknown): void;
@@ -37,7 +56,7 @@ contextBridge.exposeInMainWorld("aiConfigHub", createDesktopApi(ipcRenderer));
 function createDesktopApi(transport: IpcRendererPort): DesktopApi {
   return Object.freeze({
     invoke(name: string, payload: unknown) {
-      return transport.invoke(commandChannel(name), {
+      return transport.invoke(commandChannelFor(name), {
         apiVersion: 1,
         requestId: nextRequestId(),
         payload,
@@ -63,7 +82,8 @@ function createDesktopApi(transport: IpcRendererPort): DesktopApi {
   });
 }
 
-function commandChannel(name: string): string {
+function commandChannelFor(name: string): string {
+  if (!supportedCommandNames.has(name)) throw new Error("Unsupported API command");
   return `ai-config-hub:v1:${name}`;
 }
 
