@@ -106,6 +106,7 @@ interface DesktopRuntime {
   readonly backupRoot: AbsolutePath;
   readonly historyRoot: AbsolutePath;
   readonly history: LocalHistoryService;
+  readonly pathLocks: PathLockManager;
   readonly now: () => string;
   readonly sourceFileOpener?: SourceFileOpener;
   readonly watchService: WatchService;
@@ -161,6 +162,7 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
       git: new SystemLocalGitPort(),
       now: () => IsoDateTimeSchema.parse(options.now?.() ?? new Date().toISOString()),
     }),
+    pathLocks: new PathLockManager(),
     now: options.now ?? (() => new Date().toISOString()),
     ...(options.sourceFileOpener === undefined
       ? {}
@@ -610,7 +612,7 @@ function createServices(
         },
         snapshots: access.snapshots,
         deploymentFiles,
-        locks: new PathLockManager(),
+        locks: runtime.pathLocks,
         registry,
         read: instrumentDeploymentRead(access.read, recorder),
       });
@@ -696,7 +698,7 @@ function createServices(
             allowedRoots: roots,
             backupRoot: runtime.backupRoot,
           }),
-          locks: new PathLockManager(),
+          locks: runtime.pathLocks,
         });
         plan = await service.preview(originalId);
       } catch (error) {
@@ -719,7 +721,7 @@ function createServices(
           recorder,
           "rollback",
         ),
-        locks: new PathLockManager(),
+        locks: runtime.pathLocks,
       });
       const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
       runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);

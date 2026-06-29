@@ -80,6 +80,7 @@ interface CliRuntime {
   readonly backupRoot: AbsolutePath;
   readonly historyRoot: AbsolutePath;
   readonly history: LocalHistoryService;
+  readonly pathLocks: PathLockManager;
   readonly now: () => string;
   close(): void;
 }
@@ -128,6 +129,7 @@ async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
       git: new SystemLocalGitPort(),
       now: () => IsoDateTimeSchema.parse(options.now?.() ?? new Date().toISOString()),
     }),
+    pathLocks: new PathLockManager(),
     now: options.now ?? (() => new Date().toISOString()),
     close() {
       repositories.database.close();
@@ -485,7 +487,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           allowedRoots: roots,
           backupRoot: runtime.backupRoot,
         }),
-        locks: new PathLockManager(),
+        locks: runtime.pathLocks,
         registry,
         read: access.read,
       });
@@ -531,7 +533,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           allowedRoots: roots,
           backupRoot: runtime.backupRoot,
         }),
-        locks: new PathLockManager(),
+        locks: runtime.pathLocks,
       });
       const plan = await service.preview(originalId);
       const record = await service.execute({
