@@ -12,7 +12,7 @@ AI Config Hub aims to provide unified local scanning, diagnostics, conversion, p
 
 ### Overview
 
-This repository is a modular TypeScript Monorepo. It contains a shared core, tool adapters, scanner, deployer, storage layer, Git history support, plus both CLI and Electron desktop entry points.
+This repository is a modular TypeScript Monorepo. It contains a shared core, tool adapters, scanner, deployer, storage layer, central asset library, Git history and remote asset-repository support, plus CLI, Electron desktop, and local Web UI entry points.
 
 Core principles:
 
@@ -30,10 +30,13 @@ Core principles:
 - Diagnostics and reporting for parsing, compatibility, permissions, conflicts, drift, deployment, and verification issues.
 - Conversion and migration preview with explicit full, partial, and unsupported outcomes, including retained, dropped, and transformed fields.
 - Transactional deployment with structured operations, diffs, backups, atomic writes, verification, and verifiable rollback.
+- Central asset library and Presets with a personal filesystem library, asset import, Preset definition, preview, apply, source tracking, and rollback records.
+- Git asset repository workflows for clone, pull, commit, push, tag, restore, history, conflict status, and recovery guidance.
+- Declarative custom tool configuration with safe internal tool IDs and declarative scan rules for Rules, Agents, Skills, or MCP configuration.
 - Local history and Git evidence for deployment, rollback, and snapshot audit trails.
-- Dual entry points through the `apps/cli` Node.js CLI and the `apps/desktop` Electron + React desktop app.
+- Multiple entry points through the `apps/cli` Node.js CLI, the `apps/desktop` Electron + React desktop app, and the `apps/web` local Web UI over the Local API.
 
-See [docs/implementation/phase-status.md](./docs/implementation/phase-status.md) for the current implementation status. Diagnostics, conversion, and deployment are complete for the MVP scope; the central asset library, remote Git workflows, and local Web UI are still tracked as later work.
+See [docs/implementation/phase-status.md](./docs/implementation/phase-status.md) for the current implementation status. Diagnostics, conversion, deployment, the central asset library, Git asset repository primitives, Local API, local Web UI, and three-platform packaging are covered for the current tracked scope; team identity, approval flows, hosted collaboration services, and online sharing markets remain outside the MVP boundary.
 
 ### Development Setup
 
@@ -91,8 +94,11 @@ pnpm package:linux:x64
 - `packages/deployer`: diffs, drift checks, backups, atomic writes, verification, and rollback.
 - `packages/storage`: SQLite repositories, migrations, and transaction boundaries.
 - `packages/git`: local Git snapshots, history, and recovery evidence.
+- `packages/asset-library`: personal central asset library, Presets, and asset source tracking.
+- `packages/local-api`: local HTTP/SSE API, authentication, and origin restrictions.
 - `apps/cli`: Node.js CLI over the shared core use cases.
 - `apps/desktop`: Electron + React desktop application.
+- `apps/web`: local Web UI that reaches core capabilities through the Local API.
 
 ### Documentation
 

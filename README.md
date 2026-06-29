@@ -12,7 +12,7 @@ AI Config Hub 的目标是在不接管工具原生文件、不执行第三方配
 
 ### 项目概述
 
-当前仓库是一个 TypeScript 模块化 Monorepo，包含共享核心、适配器、扫描器、部署器、存储层、Git 历史能力，以及 CLI 和 Electron 桌面端两个入口。
+当前仓库是一个 TypeScript 模块化 Monorepo，包含共享核心、适配器、扫描器、部署器、存储层、中央资产库、Git 历史与远程资产库能力，以及 CLI、Electron 桌面端和本地 Web UI 入口。
 
 核心设计原则：
 
@@ -30,10 +30,13 @@ AI Config Hub 的目标是在不接管工具原生文件、不执行第三方配
 - 诊断与报告：定位解析、兼容、权限、冲突、漂移、部署和验证问题，并支持导出诊断。
 - 转换与迁移预览：评估跨工具转换结果，区分完整支持、部分支持和不支持，并展示字段保留、丢弃和变换信息。
 - 事务式部署：生成结构化操作和 diff，在确认后执行备份、原子写入、验证和可验证回滚。
+- 中央资产库与 Preset：提供个人文件系统资产库、资产导入、Preset 定义、预览、应用、来源追踪和回滚记录。
+- Git 资产库工作流：支持远程资产库 clone、pull、commit、push、tag、restore、history，以及冲突状态提示和恢复引导。
+- 自定义工具声明式配置：支持安全的内部工具 ID 和声明式扫描规则，用于发现 Rules、Agents、Skills 或 MCP 配置。
 - 本地历史与 Git 证据：记录部署、回滚和本地快照证据，为后续审计和恢复提供依据。
-- 双入口体验：提供 `apps/cli` 命令行入口和 `apps/desktop` Electron + React 桌面入口。
+- 多入口体验：提供 `apps/cli` 命令行入口、`apps/desktop` Electron + React 桌面入口，以及通过 Local API 连接的 `apps/web` 本地 Web UI。
 
-当前实现状态见 [docs/implementation/phase-status.md](./docs/implementation/phase-status.md)。其中诊断、转换和部署已覆盖 MVP 范围；中央资产库、远程 Git 工作流、本地 Web UI 等能力仍在后续阶段推进。
+当前实现状态见 [docs/implementation/phase-status.md](./docs/implementation/phase-status.md)。诊断、转换、部署、中央资产库、Git 资产库基础工作流、本地 API、本地 Web UI 和三平台打包均已覆盖当前 tracked scope；团队身份、审批流、托管协作服务和在线分享市场仍在 MVP 边界外。
 
 ### 开发环境准备
 
@@ -91,8 +94,11 @@ pnpm package:linux:x64
 - `packages/deployer`：差异、漂移检查、备份、原子写入、验证和回滚。
 - `packages/storage`：SQLite 仓储、迁移和事务边界。
 - `packages/git`：本地 Git 快照、历史和恢复证据。
+- `packages/asset-library`：个人中央资产库、Preset 和资产来源追踪。
+- `packages/local-api`：本机 HTTP/SSE API、认证和来源限制。
 - `apps/cli`：共享核心用例的 Node.js CLI。
 - `apps/desktop`：Electron + React 桌面应用。
+- `apps/web`：通过 Local API 连接核心能力的本地 Web UI。
 
 ### 相关文档
 
