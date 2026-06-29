@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import type { AppState, Route } from "../model.js";
 
@@ -17,6 +17,13 @@ export function AppShell(props: {
   readonly onUseProjectPath: (path: string) => void;
   readonly children: ReactNode;
 }) {
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+    window.scrollTo({ top: 0, left: 0 });
+  }, [props.state.route]);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -34,40 +41,42 @@ export function AppShell(props: {
           ))}
         </nav>
       </aside>
-      <main>
+      <main data-route={props.state.route} key={props.state.route} ref={mainRef}>
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Project</p>
-            <strong>{props.state.projectRoot ?? "No project selected"}</strong>
-          </div>
-          <div className="project-actions">
+          <div className="project-topbar-main">
+            <div className="project-summary">
+              <p className="eyebrow">Project</p>
+              <strong className="project-root-value" title={props.state.projectRoot}>
+                {props.state.projectRoot ?? "No project selected"}
+              </strong>
+            </div>
             <button type="button" onClick={props.onSelectProject}>
               Select project
             </button>
-            <form
-              className="project-path-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                const projectPath = form.get("projectPath");
-                props.onUseProjectPath(typeof projectPath === "string" ? projectPath : "");
-              }}
-            >
-              <input
-                aria-label="Project path"
-                defaultValue={props.state.projectRoot ?? ""}
-                key={props.state.projectRoot ?? "empty-project"}
-                name="projectPath"
-                placeholder="/path/to/project"
-              />
-              <button type="submit">Use path</button>
-            </form>
           </div>
+          <form
+            className="project-path-editor"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const formData = new FormData(form);
+              const projectPath = formData.get("projectPath");
+              props.onUseProjectPath(typeof projectPath === "string" ? projectPath : "");
+              form.reset();
+            }}
+          >
+            <input aria-label="Project path" name="projectPath" placeholder="/path/to/project" />
+            <button className="project-path-submit" type="submit">
+              Use path
+            </button>
+          </form>
         </header>
         {props.state.message === undefined ? null : (
           <div className="status-banner">{props.state.message}</div>
         )}
-        <section className="workspace">{props.children}</section>
+        <section className="workspace" data-route={props.state.route}>
+          {props.children}
+        </section>
       </main>
     </div>
   );

@@ -11,23 +11,26 @@ export function AssetsView(props: {
 }) {
   const detail = props.state.assetDetail;
   const effective = props.state.effective;
+  const diagnosticScope = diagnosticScopeFor(detail);
+  const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
   return (
     <>
       <h1>Assets</h1>
       <button type="button" onClick={props.onRefresh}>
         Refresh assets
       </button>
-      <div className="cards">
+      <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
+      <div className="cards" aria-label={diagnosticScope.cardsLabel}>
         <article>
-          <span>Diagnostics</span>
-          <strong>{props.state.diagnosticCounts.error} errors</strong>
+          <span>{diagnosticScope.diagnosticsLabel}</span>
+          <strong>{formatErrorCount(props.state.diagnosticCounts.error)}</strong>
         </article>
         <article>
-          <span>Warnings</span>
+          <span>{diagnosticScope.warningsLabel}</span>
           <strong>{props.state.diagnosticCounts.warning}</strong>
         </article>
         <article>
-          <span>Info</span>
+          <span>{diagnosticScope.infoLabel}</span>
           <strong>{props.state.diagnosticCounts.info}</strong>
         </article>
       </div>
@@ -44,10 +47,10 @@ export function AssetsView(props: {
         <tbody>
           {props.state.assets.map((asset) => (
             <tr key={asset.id}>
-              <td>{asset.toolKey}</td>
-              <td>{asset.resourceType}</td>
+              <td>{toolLabel(asset.toolKey)}</td>
+              <td>{resourceTypeLabel(asset.resourceType)}</td>
               <td>{asset.logicalKey}</td>
-              <td>{asset.diagnosticCounts.error} errors</td>
+              <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
               <td>
                 <button type="button" onClick={() => props.onInspect(asset.id)}>
                   Inspect
@@ -73,15 +76,15 @@ export function AssetsView(props: {
           </div>
           <dl>
             <dt>Tool</dt>
-            <dd>{detail.asset.toolKey}</dd>
+            <dd>{toolLabel(detail.asset.toolKey)}</dd>
             <dt>Resource</dt>
-            <dd>{detail.asset.resourceType}</dd>
+            <dd>{resourceTypeLabel(detail.asset.resourceType)}</dd>
             <dt>Scope</dt>
             <dd>{detail.asset.scopeId}</dd>
             <dt>Source</dt>
             <dd>{detail.source.pathDisplay}</dd>
             <dt>Observed</dt>
-            <dd>{detail.source.observedAt}</dd>
+            <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
           {detail.asset.references === undefined || detail.asset.references.length === 0 ? null : (
             <>
@@ -112,7 +115,8 @@ export function AssetsView(props: {
                     <li
                       key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
                     >
-                      {contributor.assetId} {contributor.action} {contributor.reasonCode}
+                      <strong>{assetLabel(contributor.assetId, assetLabels)}</strong>{" "}
+                      <span>{contributionLabel(contributor.action, contributor.reasonCode)}</span>
                     </li>
                   ))}
                 </ul>
@@ -124,7 +128,8 @@ export function AssetsView(props: {
                 <ul>
                   {effective.ignored.map((ignored) => (
                     <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
-                      {ignored.assetId} {ignored.reasonCode}
+                      <strong>{assetLabel(ignored.assetId, assetLabels)}</strong>{" "}
+                      <span>Ignored because {reasonLabel(ignored.reasonCode)}.</span>
                     </li>
                   ))}
                 </ul>
@@ -136,9 +141,7 @@ export function AssetsView(props: {
                 <ul className="diagnostic-list">
                   {effective.diagnostics.map((diagnostic) => (
                     <li key={diagnostic.id}>
-                      <strong>
-                        {diagnostic.severity} {diagnostic.code}
-                      </strong>
+                      <strong>{diagnosticLabel(diagnostic)}</strong>
                       <span>{diagnostic.message}</span>
                     </li>
                   ))}
@@ -149,14 +152,12 @@ export function AssetsView(props: {
         </section>
       )}
       {props.state.diagnostics.length === 0 ? null : (
-        <section className="detail-panel" aria-label="Diagnostics">
-          <h2>Diagnostics</h2>
+        <section className="detail-panel" aria-label={diagnosticScope.panelLabel}>
+          <h2>{diagnosticScope.panelHeading}</h2>
           <ul className="diagnostic-list">
             {props.state.diagnostics.map((diagnostic) => (
               <li key={diagnostic.id}>
-                <strong>
-                  {diagnostic.severity} {diagnostic.code}
-                </strong>
+                <strong>{diagnosticLabel(diagnostic)}</strong>
                 <span>{diagnostic.message}</span>
                 {diagnostic.location === undefined ? null : (
                   <small>
@@ -183,12 +184,153 @@ export function AssetsView(props: {
   );
 }
 
+function formatErrorCount(count: number): string {
+  return `${count} ${count === 1 ? "error" : "errors"}`;
+}
+
+function formatDiagnosticCounts(counts: AppState["diagnosticCounts"]): string {
+  const parts = [
+    counts.error > 0 ? formatSeverityCount(counts.error, "error") : undefined,
+    counts.warning > 0 ? formatSeverityCount(counts.warning, "warning") : undefined,
+    counts.info > 0 ? `${counts.info} info` : undefined,
+  ].filter((part) => part !== undefined);
+  return parts.length === 0 ? "No diagnostics" : parts.join(", ");
+}
+
+function formatSeverityCount(count: number, severity: "error" | "warning"): string {
+  return `${count} ${count === 1 ? severity : `${severity}s`}`;
+}
+
+function diagnosticLabel(diagnostic: AppState["diagnostics"][number]): string {
+  return `${severityLabel(diagnostic.severity)}: ${sentenceCaseIdentifier(diagnostic.code)}`;
+}
+
+function severityLabel(severity: AppState["diagnostics"][number]["severity"]): string {
+  switch (severity) {
+    case "error":
+      return "Error";
+    case "warning":
+      return "Warning";
+    case "info":
+      return "Info";
+  }
+}
+
+function toolLabel(toolKey: string): string {
+  switch (toolKey) {
+    case "claude-code":
+      return "Claude Code";
+    case "cursor":
+      return "Cursor";
+    case "codex":
+      return "Codex";
+    case "opencode":
+      return "OpenCode";
+    default:
+      return titleizeIdentifier(toolKey);
+  }
+}
+
+function resourceTypeLabel(resourceType: string): string {
+  return titleizeIdentifier(resourceType);
+}
+
+function assetLabel(assetId: string, assetLabels: ReadonlyMap<string, string>): string {
+  return assetLabels.get(assetId) ?? displayIdentifier(assetId);
+}
+
+function contributionLabel(action: string, reasonCode: string): string {
+  const reason = reasonLabel(reasonCode);
+  switch (action) {
+    case "inherit":
+      return `Inherited from ${reason}.`;
+    case "merge":
+      return `Merged because ${reason}.`;
+    case "override":
+      return `Overrode lower-priority values because ${reason}.`;
+    default:
+      return `${sentenceCaseIdentifier(action)} because ${reason}.`;
+  }
+}
+
+function reasonLabel(reasonCode: string): string {
+  return lowerFirst(sentenceCaseIdentifier(reasonCode));
+}
+
+function displayIdentifier(identifier: string): string {
+  const delimiterIndex = identifier.indexOf(":");
+  return delimiterIndex === -1 ? identifier : identifier.slice(delimiterIndex + 1);
+}
+
+function formatTimestamp(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) return isoTimestamp;
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ${pad2(
+    date.getUTCHours(),
+  )}:${pad2(date.getUTCMinutes())} UTC`;
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function titleizeIdentifier(identifier: string): string {
+  const words = identifier
+    .split(/[\s_-]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1).toLowerCase());
+  return words.length === 0 ? identifier : words.join(" ");
+}
+
+function sentenceCaseIdentifier(identifier: string): string {
+  const words = identifier
+    .split(/[\s_-]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.toLowerCase());
+  const firstWord = words[0];
+  if (firstWord === undefined) return identifier;
+  const remainingWords = words.slice(1);
+  return [firstWord[0]?.toUpperCase() + firstWord.slice(1), ...remainingWords].join(" ");
+}
+
+function lowerFirst(value: string): string {
+  return value.length === 0 ? value : value[0]?.toLowerCase() + value.slice(1);
+}
+
+function diagnosticScopeFor(detail: AppState["assetDetail"]) {
+  if (detail === undefined) {
+    return {
+      cardsLabel: "Workspace diagnostic summary",
+      diagnosticsLabel: "Workspace diagnostics",
+      warningsLabel: "Workspace warnings",
+      infoLabel: "Workspace info",
+      panelLabel: "Workspace diagnostics",
+      panelHeading: "Workspace diagnostics",
+      summary: "Counts reflect every indexed asset in this project.",
+    };
+  }
+
+  return {
+    cardsLabel: `Diagnostic summary for ${detail.asset.logicalKey}`,
+    diagnosticsLabel: "Selected asset diagnostics",
+    warningsLabel: "Selected asset warnings",
+    infoLabel: "Selected asset info",
+    panelLabel: `Diagnostics for ${detail.asset.logicalKey}`,
+    panelHeading: `Diagnostics for ${detail.asset.logicalKey}`,
+    summary: "Counts reflect only the inspected asset.",
+  };
+}
+
 function LocateDiagnosticButton(props: {
   readonly assetId: AppState["assets"][number]["id"];
   readonly onLocate: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   return (
-    <button type="button" onClick={() => props.onLocate(props.assetId)}>
+    <button
+      className="diagnostic-action"
+      type="button"
+      onClick={() => props.onLocate(props.assetId)}
+    >
       Locate
     </button>
   );

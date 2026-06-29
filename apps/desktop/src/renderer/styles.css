@@ -79,7 +79,6 @@ main {
   padding: 1.5rem;
 }
 
-.topbar,
 .cards {
   align-items: center;
   display: flex;
@@ -89,19 +88,48 @@ main {
 
 .topbar {
   border-bottom: 1px solid #1f2a44;
+  display: grid;
+  gap: 0.9rem;
   padding-bottom: 1rem;
 }
 
-.project-actions,
-.project-path-form {
+.project-topbar-main,
+.project-path-editor {
   align-items: center;
   display: flex;
   gap: 0.6rem;
 }
 
-.project-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.project-topbar-main {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.project-summary {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.project-root-value {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.project-path-editor {
+  justify-self: end;
+  max-width: min(100%, 460px);
+  min-width: min(100%, 460px);
+}
+
+.project-path-editor input {
+  min-width: 0;
+  width: 100%;
+}
+
+.project-path-submit {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .eyebrow,
@@ -113,7 +141,8 @@ span {
 .status-banner,
 article,
 .diff-card,
-.detail-panel {
+.detail-panel,
+.empty-state {
   background: #111a2f;
   border: 1px solid #243455;
   border-radius: 16px;
@@ -128,6 +157,11 @@ article,
 .cards {
   justify-content: flex-start;
   margin: 1.5rem 0;
+}
+
+.diagnostic-scope-label {
+  color: #aab8d5;
+  margin: 0.75rem 0 -0.5rem;
 }
 
 article {
@@ -201,11 +235,31 @@ pre {
   color: #aab8d5;
 }
 
+.diagnostic-action {
+  justify-self: start;
+}
+
 .migration-form {
   display: grid;
   gap: 1rem;
   margin: 1rem 0;
   max-width: 760px;
+}
+
+.migration-preview-layout {
+  align-items: start;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.migration-control-panel {
+  max-width: 760px;
+  min-width: 0;
+}
+
+.migration-result-panel {
+  margin-top: 0;
+  min-width: 0;
 }
 
 .field {
@@ -349,9 +403,28 @@ pre {
   overflow-wrap: anywhere;
 }
 
-.confirm {
-  display: block;
+.deployment-confirmation-panel {
+  display: grid;
+  gap: 0.75rem;
   margin: 1rem 0;
+  max-width: 760px;
+}
+
+.confirmation-item {
+  align-items: flex-start;
+  background: #0b1224;
+  border: 1px solid #243455;
+  border-radius: 8px;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: min-content 1fr;
+  margin: 1rem 0;
+  padding: 0.75rem;
+}
+
+.confirmation-item input {
+  margin-top: 0.2rem;
+  min-width: auto;
 }
 
 .confirmation-list {
@@ -367,11 +440,24 @@ pre {
   padding: 0 0.25rem;
 }
 
-.confirmation-list .confirm {
+.confirmation-list .confirmation-item {
   margin: 0.65rem 0;
 }
 
-.deployment-blockers,
+.deployment-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.task-status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.85rem;
+}
+
+.blocker-panel,
 .migration-blockers {
   background: #24192a;
   border: 1px solid #7f4366;
@@ -386,4 +472,84 @@ pre {
   gap: 0.75rem;
   list-style: none;
   padding: 0;
+}
+
+.empty-state {
+  margin-top: 1.5rem;
+  max-width: 640px;
+}
+
+.empty-state strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.empty-state p {
+  color: #aab8d5;
+  margin: 0;
+}
+
+.history-entry,
+.history-change {
+  align-items: center;
+  background: #111a2f;
+  border: 1px solid #243455;
+  border-radius: 10px;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(160px, 1fr) minmax(280px, 2fr) auto;
+  padding: 0.85rem 1rem;
+}
+
+.history-entry-main {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.history-entry-main span,
+.history-entry-meta span {
+  overflow-wrap: anywhere;
+}
+
+.history-entry-meta,
+.history-change-hashes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.85rem;
+}
+
+.history-change {
+  align-items: stretch;
+  grid-template-columns: 1fr;
+}
+
+.history-change-hashes {
+  color: #aab8d5;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-bottom: 1px solid #1f2a44;
+    border-right: 0;
+  }
+
+  .history-entry {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1100px) {
+  .migration-preview-layout.with-preview {
+    grid-template-columns: minmax(340px, 0.85fr) minmax(420px, 1.15fr);
+  }
+
+  .migration-preview-layout.with-preview .migration-result-panel {
+    max-height: calc(100vh - 8.5rem);
+    overflow: auto;
+  }
 }

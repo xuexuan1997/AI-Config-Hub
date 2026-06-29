@@ -1,5 +1,6 @@
 import {
   deploymentBlockersForState,
+  deploymentConfirmationLabel,
   rollbackRequestForState,
   type AppState,
   type DeploymentConfirmation,
@@ -29,9 +30,9 @@ export function DeploymentView(props: {
       {activeTask === undefined ? null : (
         <section className="task-status">
           <h2>{activeTask.taskKind === "deployment" ? "Deployment status" : "Rollback status"}</h2>
-          <p>
-            {activeTask.phase}{" "}
-            {activeTask.progress === undefined ? null : progressLabel(activeTask)}
+          <p className="task-status-summary">
+            <span>Status: {phaseLabel(activeTask.phase)}</span>
+            {activeTask.progress === undefined ? null : <span>{progressLabel(activeTask)}</span>}
           </p>
           {activeTask.message === undefined ? null : <p>{activeTask.message}</p>}
           {activeTask.recoveryLock ? (
@@ -44,50 +45,87 @@ export function DeploymentView(props: {
           ) : null}
         </section>
       )}
-      <label className="confirm">
-        <input
-          checked={props.state.deploymentConfirmed}
-          disabled={props.state.preview === undefined}
-          type="checkbox"
-          onChange={(event) => props.onConfirm(event.currentTarget.checked)}
-        />{" "}
-        I understand this writes verified config files.
-      </label>
-      {requiredConfirmations.length === 0 ? null : (
-        <fieldset className="confirmation-list">
-          <legend>Required confirmations</legend>
-          {requiredConfirmations.map((confirmation) => (
-            <label key={confirmation} className="confirm">
-              <input
-                checked={grantedConfirmations.has(confirmation)}
-                type="checkbox"
-                onChange={(event) =>
-                  props.onConfirmRequirement(confirmation, event.currentTarget.checked)
-                }
-              />{" "}
-              {confirmationLabel(confirmation)}
-            </label>
-          ))}
-        </fieldset>
-      )}
-      <button type="button" disabled={blockers.length > 0} onClick={props.onDeploy}>
-        Execute deployment
-      </button>
+      <section className="deployment-confirmation-panel" aria-label="Deployment confirmations">
+        <label className="confirmation-item">
+          <input
+            checked={props.state.deploymentConfirmed}
+            disabled={props.state.preview === undefined}
+            type="checkbox"
+            onChange={(event) => props.onConfirm(event.currentTarget.checked)}
+          />
+          <span>I understand this writes verified config files.</span>
+        </label>
+        {requiredConfirmations.length === 0 ? null : (
+          <fieldset className="confirmation-list">
+            <legend>Required confirmations</legend>
+            {requiredConfirmations.map((confirmation) => (
+              <label key={confirmation} className="confirmation-item">
+                <input
+                  checked={grantedConfirmations.has(confirmation)}
+                  type="checkbox"
+                  onChange={(event) =>
+                    props.onConfirmRequirement(confirmation, event.currentTarget.checked)
+                  }
+                />
+                <span>{deploymentConfirmationLabel(confirmation)}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+      </section>
+      <div className="deployment-action-row">
+        <button type="button" disabled={blockers.length > 0} onClick={props.onDeploy}>
+          Execute deployment
+        </button>
+      </div>
       {blockers.length === 0 ? null : (
-        <ul className="deployment-blockers">
+        <ul className="blocker-panel">
           {blockers.map((blocker) => (
             <li key={blocker}>{blocker}</li>
           ))}
         </ul>
       )}
-      <button type="button" disabled={rollbackUnavailable} onClick={props.onRollback}>
-        Execute rollback
-      </button>
+      <div className="deployment-action-row">
+        <button type="button" disabled={rollbackUnavailable} onClick={props.onRollback}>
+          Execute rollback
+        </button>
+      </div>
       {rollbackUnavailable ? (
         <p className="deployment-blocker">No succeeded deployment is available to roll back.</p>
       ) : null}
     </>
   );
+}
+
+function phaseLabel(phase: NonNullable<AppState["activeTask"]>["phase"]): string {
+  switch (phase) {
+    case "queued":
+      return "Queued";
+    case "discovering":
+      return "Discovering";
+    case "reading":
+      return "Reading";
+    case "parsing":
+      return "Parsing";
+    case "validating":
+      return "Validating";
+    case "committing":
+      return "Committing";
+    case "preflight":
+      return "Preflight";
+    case "backing_up":
+      return "Backing up";
+    case "writing":
+      return "Writing";
+    case "verifying":
+      return "Verifying";
+    case "restoring":
+      return "Restoring";
+    case "rolling_back":
+      return "Rolling back";
+    case "completed":
+      return "Completed";
+  }
 }
 
 function progressLabel(task: NonNullable<AppState["activeTask"]>): string {
@@ -96,15 +134,4 @@ function progressLabel(task: NonNullable<AppState["activeTask"]>): string {
   return progress.total === null
     ? `${progress.completed} ${progress.unit}`
     : `${progress.completed}/${progress.total} ${progress.unit}`;
-}
-
-function confirmationLabel(confirmation: DeploymentConfirmation): string {
-  switch (confirmation) {
-    case "overwrite":
-      return "Overwrite existing target files.";
-    case "partial_conversion":
-      return "Deploy a partial conversion with documented warnings.";
-    case "delete":
-      return "Delete target files listed in the preview.";
-  }
 }

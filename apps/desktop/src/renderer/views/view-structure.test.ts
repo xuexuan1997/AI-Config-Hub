@@ -1,0 +1,468 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  AssetIdSchema,
+  ContentHashSchema,
+  DeploymentPlanIdSchema,
+  DeploymentRecordIdSchema,
+  DiagnosticIdSchema,
+  ScopeIdSchema,
+} from "@ai-config-hub/shared";
+import { describe, expect, it, vi } from "vitest";
+
+import { AppShell } from "../components/app-shell.js";
+import { initialState, type AppState } from "../model.js";
+import { AssetsView } from "./assets.js";
+import { DeploymentView } from "./deployment.js";
+import { HistoryView } from "./history.js";
+import { MigrationView } from "./migration.js";
+
+describe("desktop renderer view structure", () => {
+  it("exposes the selected project path as a readable, titled value outside the edit control", () => {
+    const projectRoot = "/Users/xuexuan/Desktop/project/AI-Config-Hub";
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: { ...initialState, projectRoot },
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "Workspace"),
+      }),
+    );
+
+    expect(html).toContain('class="project-topbar-main"');
+    expect(html).toContain('class="project-root-value"');
+    expect(html).toContain(`title="${projectRoot}"`);
+    expect(html).toContain('class="project-path-editor"');
+    expect(html).toContain('class="project-path-submit"');
+    expect(html).not.toContain(`name="projectPath" value="${projectRoot}"`);
+  });
+
+  it("binds the scroll container identity to the active route", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: { ...initialState, route: "history" },
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "History"),
+      }),
+    );
+
+    expect(html).toContain('<main data-route="history">');
+    expect(html).toContain('<section class="workspace" data-route="history">');
+  });
+
+  it("groups deployment confirmations and actions into scannable sections", () => {
+    const state: AppState = {
+      ...initialState,
+      preview: previewFixture(["overwrite", "partial_conversion"]),
+      history: [
+        {
+          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: "2026-06-28T08:00:00.000Z",
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(DeploymentView, {
+        state,
+        onConfirm: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onDeploy: vi.fn(),
+        onRollback: vi.fn(),
+        onReviewHistory: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="deployment-confirmation-panel"');
+    expect(html).toContain('class="confirmation-item"');
+    expect(html).toContain('class="deployment-action-row"');
+    expect(html).toContain('class="blocker-panel"');
+  });
+
+  it("renders active deployment status as labeled product copy", () => {
+    const html = renderToStaticMarkup(
+      createElement(DeploymentView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:deployment:1",
+            taskKind: "deployment",
+            phase: "completed",
+            status: "succeeded",
+            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+            message: "Deployment complete: 1 succeeded.",
+            recoveryLock: false,
+          },
+        },
+        onConfirm: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onDeploy: vi.fn(),
+        onRollback: vi.fn(),
+        onReviewHistory: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="task-status-summary"');
+    expect(html).toContain("Status: Completed");
+    expect(html).toContain("1/1 operations");
+    expect(html).toContain("Deployment complete: 1 succeeded.");
+    expect(html).not.toContain("<p>completed ");
+  });
+
+  it("renders history entries and change rows as structured records instead of inline text", () => {
+    const state: AppState = {
+      ...initialState,
+      history: [
+        {
+          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: "2026-06-28T08:00:00.000Z",
+          phase: "completed",
+          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+          cancellable: false,
+          snapshot: {
+            status: "recorded",
+            commitId: "1234567890abcdef",
+            authoredAt: "2026-06-28T08:00:00.000Z",
+            message: "AI Config Hub deployment snapshot",
+          },
+        },
+      ],
+      historyDetail: {
+        entry: {
+          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: "2026-06-28T08:00:00.000Z",
+        },
+        plan: {
+          planId: DeploymentPlanIdSchema.parse("deployment-plan:audit-preview"),
+          planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          requiredConfirmations: ["overwrite", "partial_conversion"],
+        },
+        changes: [
+          {
+            operation: "replace",
+            pathDisplay: ".cursor/rules/agents.mdc",
+            beforeHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            afterHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+            diff: "- Existing Cursor rule.\n+ Use local TypeScript conventions.",
+          },
+        ],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(HistoryView, {
+        state,
+        onRefresh: vi.fn(),
+        onLoadDetail: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="history-entry"');
+    expect(html).toContain('class="history-entry-meta"');
+    expect(html).toContain('class="history-change"');
+    expect(html).toContain('class="history-change-hashes"');
+    expect(html).toContain("<strong>Deployment</strong>");
+    expect(html).toContain("<span>Succeeded</span>");
+    expect(html).toContain("Created: 2026-06-28 08:00 UTC");
+    expect(html).toContain("Phase: Completed");
+    expect(html).toContain("Finalized");
+    expect(html).toContain("<h2>Deployment detail</h2>");
+    expect(html).toContain("<dd>audit-success</dd>");
+    expect(html).toContain("<dd>audit-preview</dd>");
+    expect(html).toContain("<strong>Replace file</strong>");
+    expect(html).toContain(
+      "Overwrite existing target files. Deploy a partial conversion with documented warnings.",
+    );
+    expect(html).not.toContain("<dd>overwrite, partial_conversion</dd>");
+    expect(html).not.toContain("<strong>deployment</strong>");
+    expect(html).not.toContain("<span>succeeded</span>");
+    expect(html).not.toContain("2026-06-28T08:00:00.000Z");
+    expect(html).not.toContain("phase completed");
+    expect(html).not.toContain("not cancellable");
+    expect(html).not.toContain("deployment-record:audit-success");
+    expect(html).not.toContain("deployment-plan:audit-preview");
+    expect(html).not.toContain("<strong>replace</strong>");
+  });
+
+  it("renders an empty state when history has no records", () => {
+    const html = renderToStaticMarkup(
+      createElement(HistoryView, {
+        state: initialState,
+        onRefresh: vi.fn(),
+        onLoadDetail: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="empty-state"');
+    expect(html).toContain("No deployment history yet.");
+    expect(html).toContain("Completed deployments and rollback records will appear here.");
+    expect(html).not.toContain('<ul class="history-list"></ul>');
+  });
+
+  it("states whether asset diagnostics are scoped to the workspace or inspected asset", () => {
+    const selectedAssetState: AppState = {
+      ...initialState,
+      assets: [
+        assetSummaryFixture("asset-1", "rule:AGENTS"),
+        assetSummaryFixture("asset-2", "rule:.cursor/rules/agents.mdc"),
+      ],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      effective: {
+        effective: { body: "Use local TypeScript conventions." },
+        contributors: [
+          {
+            assetId: AssetIdSchema.parse("asset-1"),
+            action: "inherit",
+            reasonCode: "highest_priority_scope",
+          },
+        ],
+        ignored: [{ assetId: AssetIdSchema.parse("asset-2"), reasonCode: "target_conflict" }],
+        diagnostics: [],
+        snapshotRevision: "revision-1",
+      },
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-1"),
+          code: "PARTIAL_CONVERSION",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-1"),
+          message: "One Cursor field cannot be represented by Codex.",
+          suggestedAction: "Review the converted output before deployment.",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+    };
+
+    const selectedAssetHtml = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: selectedAssetState,
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(selectedAssetHtml).toContain('class="diagnostic-scope-label"');
+    expect(selectedAssetHtml).toContain("Selected asset diagnostics");
+    expect(selectedAssetHtml).toContain("Counts reflect only the inspected asset");
+    expect(selectedAssetHtml).toContain("Diagnostics for rule:AGENTS");
+    expect(selectedAssetHtml).toContain("<td>Codex</td>");
+    expect(selectedAssetHtml).toContain("<td>Rule</td>");
+    expect(selectedAssetHtml).toContain("<dd>Codex</dd>");
+    expect(selectedAssetHtml).toContain("<dd>Rule</dd>");
+    expect(selectedAssetHtml).toContain("<dd>2026-06-28 08:00 UTC</dd>");
+    expect(selectedAssetHtml).toContain("<strong>Warning: Partial conversion</strong>");
+    expect(selectedAssetHtml).toContain('class="diagnostic-action"');
+    expect(selectedAssetHtml).toContain("<strong>rule:AGENTS</strong>");
+    expect(selectedAssetHtml).toContain("rule:AGENTS</strong> <span>");
+    expect(selectedAssetHtml).toContain("Inherited from highest priority scope.");
+    expect(selectedAssetHtml).toContain("<strong>rule:.cursor/rules/agents.mdc</strong>");
+    expect(selectedAssetHtml).toContain("rule:.cursor/rules/agents.mdc</strong> <span>");
+    expect(selectedAssetHtml).toContain("Ignored because target conflict.");
+    expect(selectedAssetHtml).not.toContain("warning PARTIAL_CONVERSION");
+    expect(selectedAssetHtml).not.toContain("2026-06-28T08:00:00.000Z");
+    expect(selectedAssetHtml).not.toContain("asset-1 inherit highest_priority_scope");
+    expect(selectedAssetHtml).not.toContain("asset-2 target_conflict");
+
+    const workspaceHtml = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+          diagnostics: selectedAssetState.diagnostics,
+          diagnosticCounts: { info: 0, warning: 1, error: 0 },
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(workspaceHtml).toContain("Workspace diagnostics");
+    expect(workspaceHtml).toContain("Counts reflect every indexed asset");
+  });
+
+  it("pluralizes one asset error without suggesting multiple errors", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [
+            assetSummaryFixture("asset-1", "rule:.cursor/rules/agents.mdc", {
+              info: 0,
+              warning: 0,
+              error: 1,
+            }),
+          ],
+          diagnosticCounts: { info: 0, warning: 0, error: 1 },
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("<strong>1 error</strong>");
+    expect(html).toContain("<td>1 error</td>");
+    expect(html).not.toContain("1 errors");
+  });
+
+  it("summarizes every nonzero diagnostic severity in asset table rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [
+            assetSummaryFixture("asset-1", "rule:AGENTS", {
+              info: 1,
+              warning: 1,
+              error: 0,
+            }),
+            assetSummaryFixture("asset-2", "skill:release", {
+              info: 0,
+              warning: 0,
+              error: 0,
+            }),
+          ],
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("<td>1 warning, 1 info</td>");
+    expect(html).toContain("<td>No diagnostics</td>");
+    expect(html).not.toContain("<td>0 errors</td>");
+  });
+
+  it("separates migration settings from generated preview results", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="migration-preview-layout with-preview"');
+    expect(html).toContain('class="migration-control-panel"');
+    expect(html).toContain('class="diff-card migration-result-panel"');
+    expect(html).toContain('value="cursor" selected="">Cursor</option>');
+    expect(html).toContain('value="replace" selected="">Replace existing files</option>');
+    expect(html).toContain("Codex / Rule");
+    expect(html).not.toContain("codex / rule");
+    expect(html).toContain("Plan audit-preview");
+    expect(html).toContain("Plan hash:");
+    expect(html).toContain("Compatibility: Partial");
+    expect(html).toContain("Expires: 2026-06-28 08:10 UTC");
+    expect(html).toContain("<td>Source</td>");
+    expect(html).toContain("<td>rule:AGENTS</td>");
+    expect(html).toContain("Replace file .cursor/rules/agents.mdc");
+    expect(html).toContain(
+      "Confirmations: Overwrite existing target files. Deploy a partial conversion with documented warnings.",
+    );
+    expect(html).not.toContain("Confirmations: overwrite, partial_conversion");
+    expect(html).not.toContain(">cursor</option>");
+    expect(html).not.toContain(">replace</option>");
+    expect(html).not.toContain("Plan deployment-plan:audit-preview");
+    expect(html).not.toContain("Compatibility: partial");
+    expect(html).not.toContain("2026-06-28T08:10:00.000Z");
+    expect(html).not.toContain("asset:codex:rule:agents");
+    expect(html).not.toContain("<td>source</td>");
+    expect(html).not.toContain("replace .cursor/rules/agents.mdc");
+    expect(html.indexOf('class="migration-control-panel"')).toBeLessThan(
+      html.indexOf('class="diff-card migration-result-panel"'),
+    );
+  });
+});
+
+function assetSummaryFixture(
+  id: string,
+  logicalKey: string,
+  diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },
+): AppState["assets"][number] {
+  return {
+    id: AssetIdSchema.parse(id),
+    toolKey: "codex",
+    resourceType: "rule",
+    scopeKind: "project",
+    logicalKey,
+    contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+    diagnosticCounts,
+  };
+}
+
+function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppState["assetDetail"]> {
+  return {
+    asset: {
+      id: AssetIdSchema.parse(id),
+      toolKey: "codex",
+      resourceType: "rule",
+      scopeId: ScopeIdSchema.parse("/workspace"),
+      logicalKey,
+    },
+    source: {
+      pathDisplay: "/workspace/AGENTS.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+      observedAt: "2026-06-28T08:00:00.000Z",
+    },
+    redactions: [],
+  };
+}
+
+function previewFixture(
+  requiredConfirmations: NonNullable<AppState["preview"]>["requiredConfirmations"],
+  sourceAssetId = "asset-1",
+): NonNullable<AppState["preview"]> {
+  return {
+    planId: DeploymentPlanIdSchema.parse("deployment-plan:audit-preview"),
+    planHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+    compatibility: "partial",
+    fieldLosses: [],
+    requiredConfirmations,
+    changes: [
+      {
+        operation: "replace",
+        pathDisplay: ".cursor/rules/agents.mdc",
+        beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+        afterHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+        diff: "+ Use local TypeScript conventions.",
+      },
+    ],
+    warnings: [],
+    sourceHashes: {
+      [AssetIdSchema.parse(sourceAssetId)]: ContentHashSchema.parse(`sha256:${"1".repeat(64)}`),
+    },
+    targetHashes: {},
+    expiresAt: "2026-06-28T08:10:00.000Z",
+  };
+}

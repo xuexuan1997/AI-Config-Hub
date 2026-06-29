@@ -183,8 +183,20 @@ describe("renderer project selection state", () => {
     ).toEqual({
       type: "scan",
       status: "complete",
-      message: "Task task-scan succeeded: 2 succeeded, 0 failed, 1 skipped.",
+      message: "Scan complete: 2 succeeded, 1 skipped.",
     });
+  });
+
+  it("clears transient messages when navigating to another workspace route", () => {
+    const withMessage = reducer(initialState, {
+      type: "message",
+      message: "Scan complete: 1 succeeded.",
+    });
+
+    const navigated = reducer(withMessage, { type: "route", route: "assets" });
+
+    expect(navigated.route).toBe("assets");
+    expect(navigated.message).toBeUndefined();
   });
 
   it("maps deployment task events to active task progress and recovery state", () => {
@@ -273,7 +285,7 @@ describe("renderer project selection state", () => {
       phase: "completed",
       status: "failed",
       recoveryLock: true,
-      message: "deployment failed: 0 succeeded, 1 failed, 0 skipped.",
+      message: "Deployment failed: 1 failed.",
     });
   });
 
@@ -549,6 +561,63 @@ describe("renderer project selection state", () => {
     ).toBe(true);
   });
 
+  it("retires a deployment preview after a successful deployment task completes", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "full" as const,
+      fieldLosses: [],
+      requiredConfirmations: ["overwrite"] as const,
+      changes: [
+        {
+          operation: "replace" as const,
+          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+          beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ Use tests.",
+        },
+      ],
+      warnings: [],
+      sourceHashes: {},
+      targetHashes: {},
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const withPreview = reducer(initialState, { type: "preview", preview });
+    const confirmed = reducer(withPreview, { type: "deploymentConfirmation", confirmed: true });
+    const granted = reducer(confirmed, {
+      type: "deploymentConfirmationGrant",
+      confirmation: "overwrite",
+      granted: true,
+    });
+    const completed = reducer(granted, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:deployment-1"),
+        sequence: 8,
+        emittedAt: "2026-06-28T08:00:04.000Z",
+        type: "completed",
+        payload: {
+          status: "succeeded",
+          succeededCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          resultRef: "deployment-1",
+          systemRecoveryLock: false,
+        },
+      })!,
+    });
+
+    expect(completed.preview).toBeUndefined();
+    expect(completed.deploymentConfirmed).toBe(false);
+    expect(completed.deploymentConfirmationGrants).toEqual([]);
+    expect(completed.activeTask?.message).toBe("Deployment complete: 1 succeeded.");
+    expect(deploymentBlockersForState(completed, "2026-06-28T08:00:04.000Z")).toEqual([
+      "Create a migration preview before deploying.",
+    ]);
+  });
+
   it("requires every migration confirmation grant before deployment", () => {
     const preview = {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
@@ -587,10 +656,10 @@ describe("renderer project selection state", () => {
     });
 
     expect(deploymentBlockersForState(acknowledged, "2026-06-28T08:00:00.000Z")).toEqual([
-      "Confirm required migration actions: overwrite, partial_conversion.",
+      "Confirm required migration actions: Overwrite existing target files. Deploy a partial conversion with documented warnings.",
     ]);
     expect(deploymentBlockersForState(overwriteGranted, "2026-06-28T08:00:00.000Z")).toEqual([
-      "Confirm required migration actions: partial_conversion.",
+      "Confirm required migration actions: Deploy a partial conversion with documented warnings.",
     ]);
     expect(deploymentBlockersForState(allGranted, "2026-06-28T08:00:00.000Z")).toEqual([]);
     expect(deploymentConfirmationsForState(allGranted)).toEqual([
@@ -605,7 +674,6 @@ describe("renderer project selection state", () => {
   it("blocks deployment without a confirmed fresh preview and when sources drift", () => {
     expect(deploymentBlockersForState(initialState)).toEqual([
       "Create a migration preview before deploying.",
-      "Confirm that this writes verified config files.",
     ]);
 
     const preview = {

@@ -190,8 +190,11 @@ function migrationSourceAssetIds(
 
 export function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case "route":
-      return { ...state, route: action.route };
+    case "route": {
+      const { message: discardedMessage, ...withoutMessage } = state;
+      void discardedMessage;
+      return { ...withoutMessage, route: action.route };
+    }
     case "project":
       if (action.root === undefined) {
         return clearProjectDetails(
@@ -321,9 +324,22 @@ export function reducer(state: AppState, action: AppAction): AppState {
         : { ...clearHistoryDetail(state), history: action.history };
     case "historyDetail":
       return { ...state, historyDetail: action.detail };
-    case "taskEvent":
-      return { ...state, activeTask: mergeActiveTask(state.activeTask, action.action) };
+    case "taskEvent": {
+      const activeTask = mergeActiveTask(state.activeTask, action.action);
+      const updated = { ...state, activeTask };
+      return shouldRetireDeploymentPreview(activeTask) ? clearPreview(updated) : updated;
+    }
   }
+}
+
+function shouldRetireDeploymentPreview(activeTask: ActiveTaskState): boolean {
+  return (
+    activeTask.taskKind === "deployment" &&
+    activeTask.phase === "completed" &&
+    (activeTask.status === "succeeded" ||
+      activeTask.status === "partially_succeeded" ||
+      activeTask.status === "rolled_back")
+  );
 }
 
 export async function refreshAssets(api: DesktopApi): Promise<AppState["assets"]> {
@@ -476,9 +492,13 @@ export function deploymentBlockersForState(
   }
   const missingConfirmations = missingDeploymentConfirmationsForState(state);
   if (missingConfirmations.length > 0) {
-    blockers.push(`Confirm required migration actions: ${missingConfirmations.join(", ")}.`);
+    blockers.push(
+      `Confirm required migration actions: ${missingConfirmations
+        .map(deploymentConfirmationLabel)
+        .join(" ")}`,
+    );
   }
-  if (!state.deploymentConfirmed) {
+  if (state.preview !== undefined && !state.deploymentConfirmed) {
     blockers.push("Confirm that this writes verified config files.");
   }
   return blockers;
@@ -500,6 +520,17 @@ function missingDeploymentConfirmationsForState(
   return state.preview.requiredConfirmations.filter((confirmation) => !granted.has(confirmation));
 }
 
+export function deploymentConfirmationLabel(confirmation: DeploymentConfirmation): string {
+  switch (confirmation) {
+    case "overwrite":
+      return "Overwrite existing target files.";
+    case "partial_conversion":
+      return "Deploy a partial conversion with documented warnings.";
+    case "delete":
+      return "Delete target files listed in the preview.";
+  }
+}
+
 export function rollbackRequestForState(
   state: AppState,
 ): CommandRequest<"deployment.rollback"> | undefined {
@@ -518,8 +549,49 @@ export function scanActionForTaskEvent(event: TaskEvent): AppAction | undefined 
   return {
     type: "scan",
     status,
-    message: `Task ${event.taskId} ${event.payload.status}: ${event.payload.succeededCount} succeeded, ${event.payload.failedCount} failed, ${event.payload.skippedCount} skipped.`,
+    message: formatTaskCompletionMessage("scan", event.payload),
   };
+}
+
+function formatTaskCompletionMessage(
+  taskKind: ActiveTaskState["taskKind"],
+  payload: Extract<TaskEvent, { type: "completed" }>["payload"],
+): string {
+  const counts = [
+    payload.succeededCount > 0 ? `${payload.succeededCount} succeeded` : undefined,
+    payload.failedCount > 0 ? `${payload.failedCount} failed` : undefined,
+    payload.skippedCount > 0 ? `${payload.skippedCount} skipped` : undefined,
+  ].filter((count) => count !== undefined);
+  const prefix = `${taskKindLabel(taskKind)} ${taskCompletionStatusLabel(payload.status)}`;
+  return counts.length === 0 ? `${prefix}.` : `${prefix}: ${counts.join(", ")}.`;
+}
+
+function taskKindLabel(taskKind: ActiveTaskState["taskKind"]): string {
+  switch (taskKind) {
+    case "scan":
+      return "Scan";
+    case "deployment":
+      return "Deployment";
+    case "rollback":
+      return "Rollback";
+  }
+}
+
+function taskCompletionStatusLabel(
+  status: Extract<TaskEvent, { type: "completed" }>["payload"]["status"],
+): string {
+  switch (status) {
+    case "succeeded":
+      return "complete";
+    case "partially_succeeded":
+      return "partially complete";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "rolled_back":
+      return "rolled back";
+  }
 }
 
 export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | undefined {
@@ -592,7 +664,7 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
       phase: "completed",
       status: event.payload.status,
       recoveryLock: event.payload.systemRecoveryLock,
-      message: `${taskKind} ${event.payload.status}: ${event.payload.succeededCount} succeeded, ${event.payload.failedCount} failed, ${event.payload.skippedCount} skipped.`,
+      message: formatTaskCompletionMessage(taskKind, event.payload),
     };
   }
   return undefined;
