@@ -31,4 +31,31 @@ describe("desktop installer packaging config", () => {
     assert.match(config, /!\*\*\/\*\.test\.\*/);
     assert.match(config, /!\*\*\/fixtures\/\*\*/);
   });
+
+  it("builds every desktop main workspace dependency before packaging", async () => {
+    const manifest = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
+    const buildMain = manifest.scripts["build:main"];
+
+    for (const workspacePackage of [
+      "@ai-config-hub/shared",
+      "@ai-config-hub/core",
+      "@ai-config-hub/adapters",
+      "@ai-config-hub/api",
+      "@ai-config-hub/deployer",
+      "@ai-config-hub/git",
+      "@ai-config-hub/scanner",
+      "@ai-config-hub/storage",
+    ]) {
+      assert.match(buildMain, new RegExp(`pnpm --filter ${workspacePackage} build`));
+    }
+    assert.match(buildMain, /&& tsc -p tsconfig\.build\.json$/);
+  });
+
+  it("uses cross-platform workspace build scripts for native installer runners", async () => {
+    const storage = JSON.parse(await readFile("packages/storage/package.json", "utf8"));
+
+    assert.doesNotMatch(storage.scripts.build, /\brm\b/);
+    assert.doesNotMatch(storage.scripts.build, /\bcp\b/);
+    assert.match(storage.scripts.build, /node scripts\/copy-migrations\.mjs/);
+  });
 });

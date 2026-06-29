@@ -783,6 +783,16 @@ describe("DeploymentExecutionService", () => {
     ]);
   });
 
+  it("uses filesystem-safe backup directory names for semantic record ids", async () => {
+    const { service } = serviceFixture();
+
+    const result = await execute(service);
+
+    expect(result.backupLocations["/target/a.md"]).toBe(
+      "/backups/deployment-record-test/0000-a.md",
+    );
+  });
+
   it("rejects concurrent executions when compare-and-set fails", async () => {
     const { service, repo, files } = serviceFixture();
     repo.failNextCas = true;

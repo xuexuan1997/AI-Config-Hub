@@ -1,14 +1,4 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -552,12 +542,15 @@ describe("desktop command service composition", () => {
         readFile(join(project, ".cursor", "rules", "agents.mdc"), "utf8"),
       ).resolves.not.toContain("Existing Cursor rule.");
 
-      await chmod(cursorRules, 0o500);
+      await writeFile(
+        join(project, ".cursor", "rules", "agents.mdc"),
+        "External post-deployment edit.\n",
+        "utf8",
+      );
       await expect(
         runtime.services["deployment.rollback"]({ deploymentId: deployment.deploymentId }),
-      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+      ).rejects.toMatchObject({ code: "STALE_INDEX" });
     } finally {
-      await chmod(cursorRules, 0o700).catch(() => undefined);
       runtime.close();
     }
   });

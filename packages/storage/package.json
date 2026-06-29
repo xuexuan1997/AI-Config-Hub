@@ -1,6 +1,6 @@
 {
   "name": "@ai-config-hub/storage",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "files": [
@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && rm -rf dist/migrations && cp -R src/migrations dist/migrations",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",
     "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

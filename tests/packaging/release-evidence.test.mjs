@@ -11,24 +11,25 @@ const execFileAsync = promisify(execFile);
 
 describe("release evidence scripts", () => {
   it("generates deterministic platform manifests and verifies them", async () => {
+    const version = JSON.parse(await readFile("package.json", "utf8")).version;
     const root = await mkdtemp(join(tmpdir(), "aich-release-"));
     const linux = join(root, "linux-x64");
     const windows = join(root, "windows-x64");
     const macosArm = join(root, "macos-arm64");
 
     await mkdir(join(linux, "linux-unpacked"), { recursive: true });
-    await writeFile(join(linux, "AI-Config-Hub-0.2.0-x86_64.AppImage"), "linux-demo");
+    await writeFile(join(linux, `AI-Config-Hub-${version}-x86_64.AppImage`), "linux-demo");
     await writeFile(join(linux, "builder-debug.yml"), "internal: true\n");
     await writeFile(join(linux, "elf-compatibility.json"), "{}\n");
     await writeFile(join(linux, "sbom.cdx.json"), "{}\n");
 
     await mkdir(windows, { recursive: true });
-    await writeFile(join(windows, "AI-Config-Hub-0.2.0-windows-x64.exe"), "windows-demo");
+    await writeFile(join(windows, `AI-Config-Hub-${version}-windows-x64.exe`), "windows-demo");
     await writeFile(join(windows, "win-unpacked"), "not-a-file-entry");
     await writeFile(join(windows, "sbom.cdx.json"), "{}\n");
 
     await mkdir(macosArm, { recursive: true });
-    await writeFile(join(macosArm, "AI-Config-Hub-0.2.0-macos-arm64.dmg"), "macos-demo");
+    await writeFile(join(macosArm, `AI-Config-Hub-${version}-macos-arm64.dmg`), "macos-demo");
     await writeFile(join(macosArm, "builder-debug.yml"), "internal: true\n");
     await writeFile(join(macosArm, "sbom.cdx.json"), "{}\n");
 
@@ -49,7 +50,7 @@ describe("release evidence scripts", () => {
 
     const linuxSums = await readFile(join(linux, "SHA256SUMS"), "utf8");
     const linuxManifest = JSON.parse(await readFile(join(linux, "version-manifest.json"), "utf8"));
-    assert.match(linuxSums, /AI-Config-Hub-0\.2\.0-x86_64\.AppImage/);
+    assert.match(linuxSums, new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-x86_64\\.AppImage`));
     assert.match(linuxSums, /elf-compatibility\.json/);
     assert.doesNotMatch(linuxSums, /builder-debug\.yml/);
     assert.doesNotMatch(linuxSums, /linux-unpacked/);
@@ -61,7 +62,10 @@ describe("release evidence scripts", () => {
     const windowsManifest = JSON.parse(
       await readFile(join(windows, "version-manifest.json"), "utf8"),
     );
-    assert.match(windowsSums, /AI-Config-Hub-0\.2\.0-windows-x64\.exe/);
+    assert.match(
+      windowsSums,
+      new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-windows-x64\\.exe`),
+    );
     assert.doesNotMatch(windowsSums, /elf-compatibility\.json/);
     assert.equal(windowsManifest.platform, "windows");
     assert.equal(windowsManifest.architecture, "x64");
@@ -71,7 +75,7 @@ describe("release evidence scripts", () => {
     const macosManifest = JSON.parse(
       await readFile(join(macosArm, "version-manifest.json"), "utf8"),
     );
-    assert.match(macosSums, /AI-Config-Hub-0\.2\.0-macos-arm64\.dmg/);
+    assert.match(macosSums, new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-macos-arm64\\.dmg`));
     assert.doesNotMatch(macosSums, /builder-debug\.yml/);
     assert.equal(macosManifest.platform, "macos");
     assert.equal(macosManifest.architecture, "arm64");
@@ -109,3 +113,7 @@ describe("release evidence scripts", () => {
     assert.match(releaseWorkflow, /--clobber/);
   });
 });
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

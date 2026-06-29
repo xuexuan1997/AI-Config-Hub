@@ -1,12 +1,12 @@
 {
   "name": "@ai-config-hub/desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "vite --config vite.config.ts",
-    "build:main": "pnpm --filter @ai-config-hub/shared build && pnpm --filter @ai-config-hub/core build && pnpm --filter @ai-config-hub/api build && tsc -p tsconfig.build.json",
+    "build:main": "pnpm --filter @ai-config-hub/shared build && pnpm --filter @ai-config-hub/core build && pnpm --filter @ai-config-hub/adapters build && pnpm --filter @ai-config-hub/api build && pnpm --filter @ai-config-hub/deployer build && pnpm --filter @ai-config-hub/git build && pnpm --filter @ai-config-hub/scanner build && pnpm --filter @ai-config-hub/storage build && tsc -p tsconfig.build.json",
     "build:renderer": "vite build --config vite.config.ts",
     "build": "pnpm run build:main && pnpm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",

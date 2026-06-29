@@ -146,10 +146,21 @@ function backupPath(plan: DeploymentPlan, record: DeploymentRecord, index: numbe
   return AbsolutePathSchema.parse(
     posix.join(
       plan.backupPolicy.backupRoot,
-      record.deploymentRecordId,
-      `${String(index).padStart(4, "0")}-${basename(operation.targetPath)}`,
+      filesystemSafePathSegment(record.deploymentRecordId),
+      `${String(index).padStart(4, "0")}-${filesystemSafePathSegment(
+        basename(operation.targetPath),
+      )}`,
     ),
   );
+}
+
+function filesystemSafePathSegment(segment: string): string {
+  const unsafeCharacters = new Set(["<", ">", ":", '"', "/", "\\", "|", "?", "*"]);
+  return [...segment]
+    .map((character) =>
+      unsafeCharacters.has(character) || character.charCodeAt(0) < 32 ? "-" : character,
+    )
+    .join("");
 }
 
 function withRecord(
