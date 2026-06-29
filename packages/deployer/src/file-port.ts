@@ -245,6 +245,23 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+export function shouldIgnoreDirectorySyncError(
+  cause: unknown,
+  currentPlatform: NodeJS.Platform = process.platform,
+): boolean {
+  if (currentPlatform !== "win32") return false;
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
+  return cause.code === "EPERM" || cause.code === "ENOTSUP" || cause.code === "EINVAL";
+}
+
+async function syncDirectoryWhenSupported(path: string): Promise<void> {
+  try {
+    await syncDirectory(path);
+  } catch (cause) {
+    if (!shouldIgnoreDirectorySyncError(cause)) throw cause;
+  }
+}
+
 async function writeAtomically(input: {
   readonly destination: AbsolutePath;
   readonly bytes: Uint8Array | string;
@@ -266,7 +283,7 @@ async function writeAtomically(input: {
     await rename(temporaryPath, input.destination);
     try {
       await input.beforeParentSync?.();
-      await syncDirectory(directory);
+      await syncDirectoryWhenSupported(directory);
     } catch (cause) {
       throw new CommittedButDurabilityUncertainError(input.operation, cause);
     }
@@ -292,7 +309,7 @@ async function createSymlinkAtomically(input: {
     await rename(temporaryPath, input.destination);
     try {
       await input.beforeParentSync?.();
-      await syncDirectory(directory);
+      await syncDirectoryWhenSupported(directory);
     } catch (cause) {
       throw new CommittedButDurabilityUncertainError(input.operation, cause);
     }
@@ -439,7 +456,7 @@ export class NodeDeploymentFilePort implements DeploymentFilePort {
     await unlink(target);
     try {
       await testHooks.get(this)?.beforeParentSync?.();
-      await syncDirectory(dirname(target));
+      await syncDirectoryWhenSupported(dirname(target));
     } catch (cause) {
       throw new CommittedButDurabilityUncertainError("remove", cause);
     }

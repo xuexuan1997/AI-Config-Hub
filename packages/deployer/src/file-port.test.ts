@@ -24,6 +24,7 @@ import {
   createNodeDeploymentFilePortForTest,
   MutationOutcomeUncertainError,
   NodeDeploymentFilePort,
+  shouldIgnoreDirectorySyncError,
   type NodeDeploymentFilePortOptions,
 } from "./file-port.js";
 import { PathLockManager } from "./path-locks.js";
@@ -596,6 +597,21 @@ describe("NodeDeploymentFilePort writes", () => {
     expect(error).toBeInstanceOf(CommittedButDurabilityUncertainError);
     expect(error).toMatchObject({ committed: true, durabilityUncertain: true });
     await expect(readFile(target, "utf8")).resolves.toBe("committed");
+  });
+
+  it("ignores Windows directory fsync permission failures", () => {
+    expect(
+      shouldIgnoreDirectorySyncError(
+        Object.assign(new Error("denied"), { code: "EPERM" }),
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      shouldIgnoreDirectorySyncError(
+        Object.assign(new Error("denied"), { code: "EPERM" }),
+        "darwin",
+      ),
+    ).toBe(false);
   });
 });
 
