@@ -349,12 +349,15 @@ describe("NodeDeploymentFilePort writes", () => {
           text: "replacement",
           expectedHash: hash("expected"),
         });
+        const replacementExpectation = expect(replacement).rejects.toMatchObject({
+          code: "STALE_TARGET",
+        });
         await waitForPath(marker);
         await writeFile(changed, "external change");
         await rename(changed, target);
         await writeFile(`${marker}.continue`, "continue");
 
-        await expect(replacement).rejects.toMatchObject({ code: "STALE_TARGET" });
+        await replacementExpectation;
         await expect(readFile(target, "utf8")).resolves.toBe("external change");
       } finally {
         delete process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"];
@@ -447,12 +450,15 @@ describe("NodeDeploymentFilePort writes", () => {
       process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"] = marker;
       try {
         const removal = port.remove({ target: absolute(target), expectedHash: hash("expected") });
+        const removalExpectation = expect(removal).rejects.toMatchObject({
+          code: "STALE_TARGET",
+        });
         await waitForPath(marker);
         await writeFile(changed, "external change");
         await rename(changed, target);
         await writeFile(`${marker}.continue`, "continue");
 
-        await expect(removal).rejects.toMatchObject({ code: "STALE_TARGET" });
+        await removalExpectation;
         await expect(readFile(target, "utf8")).resolves.toBe("external change");
       } finally {
         delete process.env["AICH_TEST_PAUSE_BEFORE_COMMIT"];
