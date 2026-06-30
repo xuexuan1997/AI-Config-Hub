@@ -64,7 +64,7 @@ import {
   type DiagnosticReportPathRoot,
 } from "@ai-config-hub/api";
 
-const APP_VERSION = "0.2.2";
+const APP_VERSION = "0.2.3";
 
 export interface CliServiceOptions {
   readonly cwd?: string;
