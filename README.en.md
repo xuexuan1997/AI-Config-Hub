@@ -22,6 +22,24 @@ Core principles:
 - Tool-specific behavior is isolated inside adapters, while the CLI and desktop app share the same core use cases and error semantics.
 - The Electron renderer cannot access the filesystem, SQLite, Git, or shell directly; it only calls business-level APIs through an allowlisted preload IPC bridge.
 
+### Visual Overview
+
+#### Feature Flow
+
+![AI Config Hub feature flow](./docs/readme/assets/feature-flow.svg)
+
+#### Interface Preview
+
+The screenshots come from the current desktop workflow and are cropped so the local path bar is not shown.
+
+| Asset scanning and diagnostics                                                                                 | Migration preview                                                                                            | History and rollback evidence                                                                                         |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset scanning and diagnostics interface" width="320"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Migration preview interface" width="320"> | <img src="./docs/readme/assets/desktop-history-detail.png" alt="History and rollback evidence interface" width="320"> |
+
+#### Architecture Overview
+
+![AI Config Hub architecture overview](./docs/readme/assets/architecture.svg)
+
 ### Features
 
 - Multi-tool configuration scanning for Claude Code, Cursor, Codex, and OpenCode Rules, Agents, Skills, and MCP assets.

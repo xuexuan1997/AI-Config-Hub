@@ -22,6 +22,24 @@ AI Config Hub 的目标是在不接管工具原生文件、不执行第三方配
 - 工具差异被限制在适配器内，CLI 和桌面端共享同一套核心用例和错误语义。
 - Electron renderer 不直接访问文件系统、SQLite、Git 或 shell，只通过白名单 preload IPC 调用业务级 API。
 
+### 图示概览
+
+#### 功能流程
+
+![AI Config Hub 功能流程](./docs/readme/assets/feature-flow.svg)
+
+#### 界面预览
+
+截图来自当前桌面端工作流，并已裁剪掉本机路径栏。
+
+| 资产扫描与诊断 | 迁移预览 | 历史与回滚证据 |
+| --- | --- | --- |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="资产扫描与诊断界面" width="320"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="迁移预览界面" width="320"> | <img src="./docs/readme/assets/desktop-history-detail.png" alt="历史与回滚证据界面" width="320"> |
+
+#### 架构概览
+
+![AI Config Hub 架构概览](./docs/readme/assets/architecture.svg)
+
 ### 功能
 
 - 多工具配置扫描：发现 Claude Code、Cursor、Codex 与 OpenCode 的 Rules、Agents、Skills、MCP 配置资产。

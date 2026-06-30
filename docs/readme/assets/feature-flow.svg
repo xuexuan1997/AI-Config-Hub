@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="360" viewBox="0 0 1180 360" role="img" aria-labelledby="title desc">
+  <title id="title">AI Config Hub feature flow</title>
+  <desc id="desc">Read-only scan, normalized assets, diagnostics, migration preview, transactional deployment, and rollback history.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="card" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#38bdf8" />
+    </marker>
+    <style>
+      .label {
+        fill: #f8fafc;
+        font: 700 24px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .caption {
+        fill: #cbd5e1;
+        font: 500 15px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .meta {
+        fill: #93c5fd;
+        font: 700 13px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0.08em;
+      }
+    </style>
+  </defs>
+
+  <rect width="1180" height="360" rx="24" fill="url(#bg)" />
+  <text x="48" y="58" fill="#f8fafc" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="32" font-weight="800">Feature Flow</text>
+  <text x="48" y="88" fill="#cbd5e1" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16">Local-first configuration management from discovery to verified rollback.</text>
+
+  <g transform="translate(46 128)">
+    <rect width="150" height="150" rx="18" fill="url(#card)" stroke="#334155" />
+    <text class="meta" x="24" y="40">01</text>
+    <text class="label" x="24" y="77">Scan</text>
+    <text class="caption" x="24" y="108">Read tool files</text>
+    <text class="caption" x="24" y="130">without execution</text>
+  </g>
+  <path d="M207 203 H282" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" />
+
+  <g transform="translate(294 128)">
+    <rect width="150" height="150" rx="18" fill="url(#card)" stroke="#334155" />
+    <text class="meta" x="24" y="40">02</text>
+    <text class="label" x="24" y="77">Model</text>
+    <text class="caption" x="24" y="108">Normalize rules,</text>
+    <text class="caption" x="24" y="130">agents, skills, MCP</text>
+  </g>
+  <path d="M455 203 H530" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" />
+
+  <g transform="translate(542 128)">
+    <rect width="150" height="150" rx="18" fill="url(#card)" stroke="#334155" />
+    <text class="meta" x="24" y="40">03</text>
+    <text class="label" x="24" y="77">Diagnose</text>
+    <text class="caption" x="24" y="108">Explain conflicts,</text>
+    <text class="caption" x="24" y="130">loss, and drift</text>
+  </g>
+  <path d="M703 203 H778" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" />
+
+  <g transform="translate(790 128)">
+    <rect width="150" height="150" rx="18" fill="url(#card)" stroke="#334155" />
+    <text class="meta" x="24" y="40">04</text>
+    <text class="label" x="24" y="77">Preview</text>
+    <text class="caption" x="24" y="108">Show conversion</text>
+    <text class="caption" x="24" y="130">and file diffs</text>
+  </g>
+  <path d="M951 203 H1026" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" />
+
+  <g transform="translate(1038 128)">
+    <rect width="96" height="150" rx="18" fill="#172554" stroke="#2563eb" />
+    <text class="meta" x="22" y="40">05</text>
+    <text class="label" x="22" y="77">Ship</text>
+    <text class="caption" x="22" y="108">Backup</text>
+    <text class="caption" x="22" y="130">Verify</text>
+  </g>
+
+  <path d="M1086 288 C1086 328 856 332 754 304" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" fill="none" marker-end="url(#arrow)" />
+  <text x="820" y="330" fill="#fde68a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">Rollback evidence and history stay linked to each deployment.</text>
+</svg>
