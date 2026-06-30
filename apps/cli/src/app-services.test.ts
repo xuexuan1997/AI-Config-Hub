@@ -182,14 +182,10 @@ describe("CLI command service composition", () => {
       expect(
         warningAssets.items.every(({ diagnosticCounts }) => diagnosticCounts.warning > 0),
       ).toBe(true);
-      expect(warningAssets.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            logicalKey: expect.stringContaining("release"),
-            scopeKind: "project",
-          }),
-        ]),
+      const releaseProjectAsset = warningAssets.items.find(
+        ({ logicalKey, scopeKind }) => logicalKey.includes("release") && scopeKind === "project",
       );
+      expect(releaseProjectAsset).toBeDefined();
     } finally {
       runtime.close();
     }

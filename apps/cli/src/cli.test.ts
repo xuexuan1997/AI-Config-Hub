@@ -496,17 +496,18 @@ describe("CLI program", () => {
 
     expect(deploy).toEqual({ exitCode: 4 });
     expect(rollback).toEqual({ exitCode: 4 });
-    expect(output.map((text) => JSON.parse(text))).toEqual([
-      expect.objectContaining({
+    const parsedOutput = output.map((text): unknown => JSON.parse(text) as unknown);
+    expect(parsedOutput).toMatchObject([
+      {
         command: "deploy",
         ok: false,
-        error: expect.objectContaining({ code: "USER_CANCELLED" }),
-      }),
-      expect.objectContaining({
+        error: { code: "USER_CANCELLED" },
+      },
+      {
         command: "rollback",
         ok: false,
-        error: expect.objectContaining({ code: "USER_CANCELLED" }),
-      }),
+        error: { code: "USER_CANCELLED" },
+      },
     ]);
   });
 
