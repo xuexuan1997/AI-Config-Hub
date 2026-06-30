@@ -21,7 +21,7 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
+import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
 import {
   parseMarkdownAsset,
   rejectedParse,
@@ -214,7 +214,24 @@ class CodexAdapter extends BaseToolAdapter {
     const candidates = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
-      const files = await walkFiles(context.read, root, context.signal);
+      const files = await documentedFiles({
+        read: context.read,
+        root,
+        rootFileNames: ["AGENTS.override.md", "AGENTS.md", "config.toml"],
+        relativeFiles:
+          basename(root) === ".codex"
+            ? ["config.toml"]
+            : basename(root) === ".agents"
+              ? []
+              : ["AGENTS.override.md", "AGENTS.md", ".codex/config.toml"],
+        relativeDirectories:
+          basename(root) === ".codex"
+            ? ["agents"]
+            : basename(root) === ".agents"
+              ? ["skills"]
+              : [".codex/agents", ".agents/skills"],
+        signal: context.signal,
+      });
       const overrides = new Set(
         files
           .filter((path) => basename(path) === "AGENTS.override.md")

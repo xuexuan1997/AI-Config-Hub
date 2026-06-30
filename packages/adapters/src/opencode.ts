@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -18,11 +18,19 @@ import {
   SemVerRangeSchema,
   SemVerSchema,
   ToolInstallationIdSchema,
+  type AbsolutePath,
 } from "@ai-config-hub/shared";
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
+import {
+  candidate,
+  documentedFiles,
+  markerPath,
+  scopeKindFromEvidence,
+  uniquePaths,
+  walkRelativeDirectories,
+} from "./discovery.js";
 import {
   parseMarkdownAsset,
   rejectedParse,
@@ -209,8 +217,20 @@ class OpenCodeAdapter extends BaseToolAdapter {
     const candidates = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
-      const files = await walkFiles(context.read, root, context.signal);
-      const fileSet = new Set(files);
+      const files = await documentedFiles({
+        read: context.read,
+        root,
+        rootFileNames: ["AGENTS.md", "CLAUDE.md", "opencode.json", "opencode.jsonc"],
+        relativeFiles:
+          basename(root) === ".opencode"
+            ? []
+            : ["AGENTS.md", "CLAUDE.md", "opencode.json", "opencode.jsonc"],
+        relativeDirectories:
+          basename(root) === ".opencode"
+            ? ["agents", "skills"]
+            : [".opencode/agents", ".opencode/skills", ".agents/skills", ".claude/skills"],
+        signal: context.signal,
+      });
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);
         if (leaf === "AGENTS.md" || leaf === "CLAUDE.md") {
@@ -279,22 +299,23 @@ class OpenCodeAdapter extends BaseToolAdapter {
                 scopeKind,
               }),
             );
-          for (const instruction of stringList(document["instructions"])) {
-            if (isAbsolute(instruction) || URL.canParse(instruction)) continue;
-            const instructionPath = AbsolutePathSchema.safeParse(resolve(root, instruction));
-            if (instructionPath.success && fileSet.has(instructionPath.data)) {
-              candidates.push(
-                candidate({
-                  toolId: this.toolId,
-                  root,
-                  sourcePath: instructionPath.data,
-                  sourceFormat: "markdown",
-                  resourceKind: "rule",
-                  scopeRoot: dirname(instructionPath.data),
-                  scopeKind,
-                }),
-              );
-            }
+          for (const instructionPath of await configuredInstructionPaths({
+            read: context.read,
+            baseRoot: dirname(sourcePath),
+            instructions: stringList(document["instructions"]),
+            signal: context.signal,
+          })) {
+            candidates.push(
+              candidate({
+                toolId: this.toolId,
+                root,
+                sourcePath: instructionPath,
+                sourceFormat: "markdown",
+                resourceKind: "rule",
+                scopeRoot: dirname(instructionPath),
+                scopeKind,
+              }),
+            );
           }
         }
       }
@@ -324,6 +345,85 @@ class OpenCodeAdapter extends BaseToolAdapter {
             );
     return Promise.resolve(result);
   }
+}
+
+async function configuredInstructionPaths(input: {
+  readonly read: DiscoveryContext["read"];
+  readonly baseRoot: AbsolutePath;
+  readonly instructions: readonly string[];
+  readonly signal: DiscoveryContext["signal"];
+}): Promise<readonly AbsolutePath[]> {
+  const files = [];
+  for (const instruction of input.instructions) {
+    if (isAbsolute(instruction) || URL.canParse(instruction)) continue;
+    const normalized = instruction.split(/[\\/]/).filter((segment) => segment.length > 0);
+    if (
+      normalized.length === 0 ||
+      normalized.includes("..") ||
+      normalized.some((segment) => segment.includes("\0"))
+    ) {
+      continue;
+    }
+    if (!hasGlobSyntax(instruction)) {
+      const path = AbsolutePathSchema.parse(resolve(input.baseRoot, instruction));
+      if ((await input.read.stat(path)).kind === "file") {
+        files.push(await input.read.realpath(path));
+      }
+      continue;
+    }
+
+    const staticRoot = staticGlobRoot(normalized);
+    const searchRoot =
+      staticRoot.length === 0
+        ? input.baseRoot
+        : AbsolutePathSchema.parse(resolve(input.baseRoot, ...staticRoot));
+    const candidates =
+      (await input.read.stat(searchRoot)).kind === "directory"
+        ? await walkRelativeDirectories(input.read, searchRoot, ["."], input.signal)
+        : [];
+    const pattern = globPattern(instruction);
+    for (const path of candidates) {
+      if (pattern.test(relative(input.baseRoot, path).split(sep).join("/"))) files.push(path);
+    }
+  }
+  return uniquePaths(files);
+}
+
+function hasGlobSyntax(path: string): boolean {
+  return /[*?[\]{}]/.test(path);
+}
+
+function staticGlobRoot(segments: readonly string[]): readonly string[] {
+  const staticSegments = [];
+  for (const segment of segments) {
+    if (hasGlobSyntax(segment)) break;
+    staticSegments.push(segment);
+  }
+  return staticSegments;
+}
+
+function globPattern(glob: string): RegExp {
+  const normalized = glob.split(/[\\/]/).join("/");
+  let pattern = "^";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized.charAt(index);
+    const next = normalized.charAt(index + 1);
+    if (character === "*" && next === "*") {
+      pattern += ".*";
+      index += 1;
+    } else if (character === "*") {
+      pattern += "[^/]*";
+    } else if (character === "?") {
+      pattern += "[^/]";
+    } else {
+      pattern += escapeRegExp(character);
+    }
+  }
+  return new RegExp(`${pattern}$`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
 async function existingUserRoots(

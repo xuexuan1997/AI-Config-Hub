@@ -34,7 +34,7 @@ function tool(): ToolInstallation {
 }
 
 describe("Claude Code adapter read path", () => {
-  it("detects and deterministically discovers four resource kinds and nested rules", async () => {
+  it("detects and deterministically discovers four resource kinds from documented paths", async () => {
     const read = memoryReadApi(files);
     const adapter = claudeCodeRegistration.create({ logger: { debug() {}, warn() {} } });
     const detection = await adapter.detect({
@@ -58,10 +58,9 @@ describe("Claude Code adapter read path", () => {
     expect(new Set(discovery.candidates.map(({ resourceKindHint }) => resourceKindHint))).toEqual(
       new Set<ResourceKind>(["rule", "agent", "skill", "mcp"]),
     );
-    expect(
-      discovery.candidates.find(({ sourcePath }) => sourcePath === "/project/src/CLAUDE.md")?.scope
-        .kind,
-    ).toBe("directory");
+    expect(discovery.candidates.map(({ sourcePath }) => sourcePath)).not.toContain(
+      "/project/src/CLAUDE.md",
+    );
   });
 
   it("normalizes markdown and multi-server MCP while removing secret canaries", async () => {

@@ -19,7 +19,7 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
+import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
 const capabilities: AdapterCapabilities = {
@@ -84,7 +84,18 @@ class ClaudeCodeAdapter extends BaseToolAdapter {
     const candidates = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
-      for (const sourcePath of await walkFiles(context.read, root, context.signal)) {
+      const files = await documentedFiles({
+        read: context.read,
+        root,
+        rootFileNames: ["CLAUDE.md", ".mcp.json"],
+        relativeFiles: basename(root) === ".claude" ? ["CLAUDE.md"] : ["CLAUDE.md", ".mcp.json"],
+        relativeDirectories:
+          basename(root) === ".claude"
+            ? ["agents", "skills"]
+            : [".claude/agents", ".claude/skills"],
+        signal: context.signal,
+      });
+      for (const sourcePath of files) {
         const leaf = basename(sourcePath);
         if (leaf === "CLAUDE.md") {
           candidates.push(

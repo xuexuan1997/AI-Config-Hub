@@ -67,6 +67,21 @@ export function memoryReadApi(files: Readonly<Record<string, string>>): AdapterR
   });
 }
 
+export function failOnListedDirectory(
+  read: AdapterReadApi,
+  directory: AbsolutePath,
+): AdapterReadApi {
+  return Object.freeze({
+    ...read,
+    list(path: AbsolutePath) {
+      if (AbsolutePathSchema.parse(posix.normalize(path)) === directory) {
+        throw new Error(`Unexpected directory traversal: ${directory}`);
+      }
+      return read.list(path);
+    },
+  });
+}
+
 export async function fixtureSnapshot(
   read: AdapterReadApi,
   path: AbsolutePath,

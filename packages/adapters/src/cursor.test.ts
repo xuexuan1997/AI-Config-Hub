@@ -55,9 +55,9 @@ describe("Cursor adapter read path", () => {
       new Set(["rule", "agent", "skill", "mcp"]),
     );
     expect(JSON.stringify(results)).not.toContain("top-secret-canary");
-    expect(
-      discovery.candidates.find(({ sourcePath }) => sourcePath.includes("src/.cursor"))?.scope.kind,
-    ).toBe("directory");
+    expect(discovery.candidates.map(({ sourcePath }) => sourcePath)).not.toContain(
+      "/project/src/.cursor/rules/nested.mdc",
+    );
     expect(discovery.diagnostics).toContainEqual(
       expect.objectContaining({ code: "CURSOR_LEGACY_RULE_FORMAT", severity: "warning" }),
     );

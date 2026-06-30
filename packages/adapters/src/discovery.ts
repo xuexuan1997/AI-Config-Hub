@@ -17,11 +17,12 @@ export async function walkFiles(
   signal: CancellationSignal,
 ): Promise<readonly AbsolutePath[]> {
   const rootStat = await read.stat(root);
-  if (rootStat.kind === "file") return [root];
   if (rootStat.kind === "missing") return [];
+  const canonicalRoot = await read.realpath(root);
+  if (rootStat.kind === "file") return [canonicalRoot];
 
   const files: AbsolutePath[] = [];
-  const queue: AbsolutePath[] = [root];
+  const queue: AbsolutePath[] = [canonicalRoot];
   let visited = 0;
   while (queue.length > 0) {
     signal.throwIfAborted();
@@ -37,6 +38,69 @@ export async function walkFiles(
     }
   }
   return files.sort();
+}
+
+export async function existingRelativeFiles(
+  read: AdapterReadApi,
+  root: AbsolutePath,
+  relativePaths: readonly string[],
+): Promise<readonly AbsolutePath[]> {
+  const files = [];
+  for (const relativePath of [...relativePaths].sort()) {
+    const path = markerPath(root, ...pathSegments(relativePath));
+    if ((await read.stat(path)).kind === "file") files.push(await read.realpath(path));
+  }
+  return files;
+}
+
+export async function walkRelativeDirectories(
+  read: AdapterReadApi,
+  root: AbsolutePath,
+  relativeDirectories: readonly string[],
+  signal: CancellationSignal,
+): Promise<readonly AbsolutePath[]> {
+  const files = [];
+  for (const relativeDirectory of [...relativeDirectories].sort()) {
+    const directory = markerPath(root, ...pathSegments(relativeDirectory));
+    if ((await read.stat(directory)).kind === "directory") {
+      files.push(...(await walkFiles(read, await read.realpath(directory), signal)));
+    }
+  }
+  return uniquePaths(files);
+}
+
+export async function documentedFiles(input: {
+  readonly read: AdapterReadApi;
+  readonly root: AbsolutePath;
+  readonly rootFileNames: readonly string[];
+  readonly relativeFiles: readonly string[];
+  readonly relativeDirectories: readonly string[];
+  readonly signal: CancellationSignal;
+}): Promise<readonly AbsolutePath[]> {
+  const rootStat = await input.read.stat(input.root);
+  if (rootStat.kind === "file") {
+    return input.rootFileNames.includes(basename(input.root))
+      ? [await input.read.realpath(input.root)]
+      : [];
+  }
+  if (rootStat.kind !== "directory") return [];
+  return uniquePaths([
+    ...(await existingRelativeFiles(input.read, input.root, input.relativeFiles)),
+    ...(await walkRelativeDirectories(
+      input.read,
+      input.root,
+      input.relativeDirectories,
+      input.signal,
+    )),
+  ]);
+}
+
+export function uniquePaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {
+  return Object.freeze([...new Set(paths)].sort());
+}
+
+function pathSegments(path: string): readonly string[] {
+  return path.split(/[\\/]/).filter((segment) => segment.length > 0 && segment !== ".");
 }
 
 export function scopeFor(

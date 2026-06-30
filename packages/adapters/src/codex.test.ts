@@ -7,8 +7,9 @@ import { fixtureSnapshot, memoryReadApi, neverCancelled } from "./test-support.j
 
 const files = {
   "/project/AGENTS.md": "# Root guidance\nUse tests.\n",
-  "/project/src/AGENTS.md": "Ignored when override exists.\n",
-  "/project/src/AGENTS.override.md": "# Source override\nUse strict TypeScript.\n",
+  "/project/AGENTS.override.md": "# Root override\nUse strict TypeScript.\n",
+  "/project/src/AGENTS.md": "Ignored outside the scanned Codex config scope.\n",
+  "/project/src/AGENTS.override.md": "Ignored outside the scanned Codex config scope.\n",
   "/project/.codex/agents/reviewer.toml": `
 name = "reviewer"
 description = "Reviews code"
@@ -52,7 +53,9 @@ describe("Codex adapter read path", () => {
       signal: neverCancelled,
     });
     const paths = discovery.candidates.map(({ sourcePath }) => sourcePath);
-    expect(paths).toContain("/project/src/AGENTS.override.md");
+    expect(paths).toContain("/project/AGENTS.override.md");
+    expect(paths).not.toContain("/project/AGENTS.md");
+    expect(paths).not.toContain("/project/src/AGENTS.override.md");
     expect(paths).not.toContain("/project/src/AGENTS.md");
 
     const results = await Promise.all(

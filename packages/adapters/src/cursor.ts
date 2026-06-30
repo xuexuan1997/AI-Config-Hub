@@ -19,7 +19,7 @@ import {
 
 import { adapterDiagnostic, BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
+import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
 const capabilities: AdapterCapabilities = {
@@ -85,7 +85,21 @@ class CursorAdapter extends BaseToolAdapter {
     const diagnostics = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
-      for (const sourcePath of await walkFiles(context.read, root, context.signal)) {
+      const files = await documentedFiles({
+        read: context.read,
+        root,
+        rootFileNames: ["AGENTS.md", ".cursorrules", "mcp.json"],
+        relativeFiles:
+          basename(root) === ".cursor"
+            ? ["mcp.json"]
+            : ["AGENTS.md", ".cursorrules", ".cursor/mcp.json"],
+        relativeDirectories:
+          basename(root) === ".cursor"
+            ? ["rules", "agents", "skills"]
+            : [".cursor/rules", ".cursor/agents", ".cursor/skills", ".agents/skills"],
+        signal: context.signal,
+      });
+      for (const sourcePath of files) {
         const leaf = basename(sourcePath);
         if (sourcePath.includes(`${sep}.cursor${sep}rules${sep}`) && leaf.endsWith(".mdc")) {
           const cursorDirectory = sourcePath.slice(0, sourcePath.indexOf(`${sep}.cursor${sep}`));

@@ -4,6 +4,8 @@ import type {
   AdapterCapabilities,
   AdapterLogger,
   AdapterRegistration,
+  AdapterReadApi,
+  CancellationSignal,
   DetectionContext,
   DetectionResult,
   DiscoveryContext,
@@ -12,6 +14,7 @@ import type {
   ParseResult,
 } from "@ai-config-hub/core";
 import {
+  AbsolutePathSchema,
   AdapterIdSchema,
   SemVerRangeSchema,
   SemVerSchema,
@@ -24,7 +27,13 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, markerPath, scopeKindFromEvidence, walkFiles } from "./discovery.js";
+import {
+  candidate,
+  markerPath,
+  scopeKindFromEvidence,
+  uniquePaths,
+  walkFiles,
+} from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 
 export interface DeclarativeResourceRule {
@@ -357,7 +366,12 @@ class DeclarativeToolAdapter extends BaseToolAdapter {
     const candidates = [];
     const scopeKind = declaredScopeKind(this.#definition, context.tool.evidence);
     for (const root of [...context.tool.configRoots].sort()) {
-      for (const sourcePath of await walkFiles(context.read, root, context.signal)) {
+      for (const sourcePath of await declarativeDiscoveryFiles({
+        read: context.read,
+        root,
+        evidence: context.tool.evidence,
+        signal: context.signal,
+      })) {
         for (const kind of resourceKinds(this.#definition)) {
           if (!matchesResource(this.#definition, kind, root, sourcePath)) continue;
           candidates.push(
@@ -393,6 +407,38 @@ class DeclarativeToolAdapter extends BaseToolAdapter {
           );
     return Promise.resolve(result);
   }
+}
+
+async function declarativeDiscoveryFiles(input: {
+  readonly read: AdapterReadApi;
+  readonly root: AbsolutePath;
+  readonly evidence: Readonly<Record<string, unknown>>;
+  readonly signal: CancellationSignal;
+}): Promise<readonly AbsolutePath[]> {
+  const markers = declaredMarkers(input.evidence);
+  const roots = markers.length === 0 ? [input.root] : markers;
+  const files = [];
+  for (const root of roots) {
+    const stat = await input.read.stat(root);
+    if (stat.kind === "file") {
+      files.push(await input.read.realpath(root));
+    } else if (stat.kind === "directory") {
+      files.push(...(await walkFiles(input.read, await input.read.realpath(root), input.signal)));
+    }
+  }
+  return uniquePaths(files);
+}
+
+function declaredMarkers(evidence: Readonly<Record<string, unknown>>): readonly AbsolutePath[] {
+  const markers = evidence["markers"];
+  if (!Array.isArray(markers)) return [];
+  return uniquePaths(
+    markers.flatMap((marker) => {
+      if (typeof marker !== "string") return [];
+      const parsed = AbsolutePathSchema.safeParse(marker);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
 }
 
 async function existingDeclaredPaths(
