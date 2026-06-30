@@ -38,6 +38,29 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain(`name="projectPath" value="${projectRoot}"`);
   });
 
+  it("explains the project folder selection journey before scanning", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: initialState,
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "Workspace"),
+      }),
+    );
+
+    expect(html).toContain("Choose the project folder to scan before reviewing assets.");
+    expect(html).toContain("Selected project folder");
+    expect(html).toContain("No folder selected yet");
+    expect(html).toContain("Browse folder");
+    expect(html).toContain("Opens your system folder picker.");
+    expect(html).toContain("Manual path fallback");
+    expect(html).toContain("Paste a folder path only if the picker is unavailable.");
+    expect(html).toContain("Use typed path");
+    expect(html).not.toContain("Select project");
+    expect(html).not.toContain(">Use path</button>");
+  });
+
   it("binds the scroll container identity to the active route", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {

@@ -35,7 +35,8 @@ describe("renderer project selection state", () => {
 
     expect(message).toContain("Select project failed");
     expect(message).toContain("system file chooser is unavailable");
-    expect(message).toContain("type the project path manually");
+    expect(message).toContain("paste the project folder path");
+    expect(message).toContain("Use typed path");
   });
 
   it("stores a manually entered project path and clears the prior error", () => {

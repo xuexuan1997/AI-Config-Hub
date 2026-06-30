@@ -45,14 +45,21 @@ export function AppShell(props: {
         <header className="topbar">
           <div className="project-topbar-main">
             <div className="project-summary">
-              <p className="eyebrow">Project</p>
+              <p className="eyebrow">Project setup</p>
+              <p className="project-guidance">
+                Choose the project folder to scan before reviewing assets.
+              </p>
+              <span className="project-root-label">Selected project folder</span>
               <strong className="project-root-value" title={props.state.projectRoot}>
-                {props.state.projectRoot ?? "No project selected"}
+                {props.state.projectRoot ?? "No folder selected yet"}
               </strong>
             </div>
-            <button type="button" onClick={props.onSelectProject}>
-              Select project
-            </button>
+            <div className="project-picker-action">
+              <button type="button" onClick={props.onSelectProject}>
+                Browse folder
+              </button>
+              <span>Opens your system folder picker.</span>
+            </div>
           </div>
           <form
             className="project-path-editor"
@@ -65,9 +72,19 @@ export function AppShell(props: {
               form.reset();
             }}
           >
-            <input aria-label="Project path" name="projectPath" placeholder="/path/to/project" />
+            <label className="project-path-field">
+              <span>Manual path fallback</span>
+              <input
+                aria-label="Project path"
+                name="projectPath"
+                placeholder="/Users/you/project"
+              />
+            </label>
+            <span className="project-path-help">
+              Paste a folder path only if the picker is unavailable.
+            </span>
             <button className="project-path-submit" type="submit">
-              Use path
+              Use typed path
             </button>
           </form>
         </header>

@@ -95,13 +95,13 @@ main {
 
 .project-topbar-main,
 .project-path-editor {
-  align-items: center;
-  display: flex;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .project-topbar-main {
-  justify-content: space-between;
+  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
 }
 
@@ -111,20 +111,53 @@ main {
   min-width: 0;
 }
 
+.project-guidance {
+  color: #d7def7;
+  margin: 0;
+}
+
+.project-root-label,
+.project-path-field span,
+.project-path-help,
+.project-picker-action span {
+  color: #8ea0c2;
+  font-size: 0.9rem;
+}
+
 .project-root-value {
   display: block;
   overflow-wrap: anywhere;
 }
 
+.project-picker-action {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+  max-width: 240px;
+  text-align: right;
+}
+
 .project-path-editor {
-  justify-self: end;
-  max-width: min(100%, 460px);
-  min-width: min(100%, 460px);
+  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 280px) auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.project-path-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
 }
 
 .project-path-editor input {
   min-width: 0;
   width: 100%;
+}
+
+.project-path-help {
+  align-self: center;
 }
 
 .project-path-submit {
@@ -536,6 +569,25 @@ pre {
   .sidebar {
     border-bottom: 1px solid #1f2a44;
     border-right: 0;
+  }
+
+  nav {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .project-topbar-main,
+  .project-path-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .project-picker-action {
+    justify-items: start;
+    max-width: none;
+    text-align: left;
+  }
+
+  .project-path-submit {
+    justify-self: start;
   }
 
   .history-entry {

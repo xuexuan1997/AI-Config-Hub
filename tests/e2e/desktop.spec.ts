@@ -40,15 +40,17 @@ test.describe("Desktop end to end", () => {
 
     try {
       const page = await app.firstWindow();
-      await expect(page.getByText("AI Config Hub")).toBeVisible();
+      await expect(page.getByText("AI Config Hub", { exact: true })).toBeVisible();
       expect(existsSync(join(workspace.userData, "ai-config-hub.sqlite"))).toBe(true);
 
       await page.getByLabel("Project path").fill(workspace.projectRoot);
-      await page.getByRole("button", { name: "Use path" }).click();
+      await page.getByRole("button", { name: "Use typed path" }).click();
       await expect(page.getByText(workspace.projectRoot)).toBeVisible();
 
       await page.getByRole("button", { name: "Start scan" }).click();
-      await expect(page.getByText(/Task task:scan:.*succeeded/)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/Scan complete: \d+ succeeded\./)).toBeVisible({
+        timeout: 30_000,
+      });
 
       await page.getByRole("button", { name: "Assets" }).click();
       await expect(page.getByRole("cell", { name: "codex" }).first()).toBeVisible();
@@ -84,9 +86,11 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByText("Select source assets from one resource type.")).toBeVisible();
       await codexSkill.uncheck();
       await page.getByRole("button", { name: "Preview migration" }).click();
-      await expect(page.getByText(/Plan deployment-plan:/)).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator(".preview-summary")).toContainText(/Plan [0-9a-f]{64}/, {
+        timeout: 30_000,
+      });
       await expect(
-        page.getByRole("heading", { name: /replace .*\.cursor\/rules\/agents\.mdc/ }),
+        page.getByRole("heading", { name: /Replace file .*\.cursor\/rules\/agents\.mdc/ }),
       ).toBeVisible();
 
       await page.getByRole("button", { name: "Deployment" }).click();
@@ -96,10 +100,12 @@ test.describe("Desktop end to end", () => {
       ).toBeVisible();
       await page.getByLabel("I understand this writes verified config files.").check();
       await expect(page.getByRole("button", { name: "Execute deployment" })).toBeDisabled();
-      await expect(page.getByText(/Confirm required migration actions: overwrite\./)).toBeVisible();
+      await expect(
+        page.getByText("Confirm required migration actions: Overwrite existing target files."),
+      ).toBeVisible();
       await page.getByLabel("Overwrite existing target files.").check();
       await page.getByRole("button", { name: "Execute deployment" }).click();
-      await expect(page.getByText(/deployment succeeded: 1 succeeded/)).toBeVisible({
+      await expect(page.getByText("Deployment complete: 1 succeeded.")).toBeVisible({
         timeout: 30_000,
       });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
@@ -109,12 +115,15 @@ test.describe("Desktop end to end", () => {
       await page.getByRole("button", { name: "History" }).click();
       await page.getByRole("button", { name: "Refresh history" }).click();
       await expect(
-        page.locator(".history-list li").filter({ hasText: "deployment succeeded" }),
+        page
+          .locator(".history-list li")
+          .filter({ hasText: "Deployment" })
+          .filter({ hasText: "Succeeded" }),
       ).toBeVisible();
 
       await page.getByRole("button", { name: "Deployment" }).click();
       await page.getByRole("button", { name: "Execute rollback" }).click();
-      await expect(page.getByText(/rollback succeeded: 1 succeeded/)).toBeVisible({
+      await expect(page.getByText("Rollback complete: 1 succeeded.")).toBeVisible({
         timeout: 30_000,
       });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
@@ -123,7 +132,10 @@ test.describe("Desktop end to end", () => {
       await page.getByRole("button", { name: "History" }).click();
       await page.getByRole("button", { name: "Refresh history" }).click();
       await expect(
-        page.locator(".history-list li").filter({ hasText: "rollback succeeded" }),
+        page
+          .locator(".history-list li")
+          .filter({ hasText: "Rollback" })
+          .filter({ hasText: "Succeeded" }),
       ).toBeVisible();
     } finally {
       await app.close();

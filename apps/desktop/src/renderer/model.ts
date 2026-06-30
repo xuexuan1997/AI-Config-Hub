@@ -708,7 +708,7 @@ export function formatUiError(error: unknown, action: string): string {
   const detail = error instanceof Error ? error.message : String(error);
   const lowerDetail = detail.toLowerCase();
   if (lowerDetail.includes("filechooser") || lowerDetail.includes("file chooser")) {
-    return `${action} failed: the system file chooser is unavailable. Please type the project path manually and click Use path. (${detail})`;
+    return `${action} failed: the system file chooser is unavailable. Please paste the project folder path in Manual path fallback and click Use typed path. (${detail})`;
   }
   return `${action} failed: ${detail}`;
 }
