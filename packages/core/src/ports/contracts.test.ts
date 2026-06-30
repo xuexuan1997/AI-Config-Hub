@@ -61,6 +61,8 @@ describe("core use cases", () => {
       "assets.list",
       "assets.get",
       "assets.openSource",
+      "assets.disable",
+      "assets.enable",
       "effective.resolve",
       "diagnostics.list",
       "diagnostics.export",
@@ -79,6 +81,20 @@ describe("core use cases", () => {
     expectTypeOf<UseCaseContractMap["assets.openSource"]["output"]>().toEqualTypeOf<{
       readonly assetId: AssetId;
       readonly opened: true;
+    }>();
+    expectTypeOf<UseCaseContractMap["assets.disable"]["input"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+    }>();
+    expectTypeOf<UseCaseContractMap["assets.disable"]["output"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+      readonly status: "disabled";
+    }>();
+    expectTypeOf<UseCaseContractMap["assets.enable"]["input"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+    }>();
+    expectTypeOf<UseCaseContractMap["assets.enable"]["output"]>().toEqualTypeOf<{
+      readonly assetId: AssetId;
+      readonly status: "enabled";
     }>();
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("entry");
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("plan");

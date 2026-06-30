@@ -49,6 +49,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
             scopeKind: "project",
             logicalKey: "AGENTS.md",
             contentHash: hash,
+            status: "enabled",
             diagnosticCounts: { info: 0, warning: 1, error: 0 },
           },
         ],
@@ -64,6 +65,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           resourceType: "rule",
           scopeId: "scope-1",
           logicalKey: "AGENTS.md",
+          status: "enabled",
           normalized: { kind: "rule", instructions: "Use local conventions." },
           references: [],
           diagnosticIds: [],
@@ -75,6 +77,16 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
       Promise.resolve({
         assetId: (payload as { readonly assetId: string }).assetId,
         opened: true,
+      }),
+    "assets.disable": (payload) =>
+      Promise.resolve({
+        assetId: (payload as { readonly assetId: string }).assetId,
+        status: "disabled",
+      }),
+    "assets.enable": (payload) =>
+      Promise.resolve({
+        assetId: (payload as { readonly assetId: string }).assetId,
+        status: "enabled",
       }),
     "effective.resolve": () =>
       Promise.resolve({
@@ -323,6 +335,8 @@ describe("CLI program", () => {
     for (const argv of [
       ["assets", "--tool", "codex"],
       ["assets", "get", "asset-1"],
+      ["assets", "disable", "asset-1"],
+      ["assets", "enable", "asset-1"],
       ["effective", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
       ["diagnose", "--severity", "warning", "--code", "UNRESOLVED_SKILL_REFERENCE"],
       ["diagnose", "export", "--tool", "codex", "--severity", "warning", "--format", "markdown"],
@@ -364,6 +378,8 @@ describe("CLI program", () => {
     expect(calls.map((call) => call.split(":")[0])).toEqual([
       "assets.list",
       "assets.get",
+      "assets.disable",
+      "assets.enable",
       "effective.resolve",
       "diagnostics.list",
       "diagnostics.export",
@@ -404,6 +420,45 @@ describe("CLI program", () => {
       toolKeys: ["codex"],
       severities: ["warning"],
     });
+  });
+
+  it("maps asset disable and enable commands to status-changing API calls", async () => {
+    const calls: unknown[] = [];
+    const output: string[] = [];
+    const programOptions = {
+      services: services({
+        "assets.disable": (payload) => {
+          calls.push({ command: "disable", payload });
+          return Promise.resolve({ assetId: AssetIdSchema.parse("asset-1"), status: "disabled" });
+        },
+        "assets.enable": (payload) => {
+          calls.push({ command: "enable", payload });
+          return Promise.resolve({ assetId: AssetIdSchema.parse("asset-1"), status: "enabled" });
+        },
+      }),
+      stdout: (text: string) => output.push(text),
+      stderr: () => undefined,
+    };
+
+    const disabled = await runCli(createCliProgram(programOptions), [
+      "assets",
+      "disable",
+      "asset-1",
+      "--json",
+    ]);
+    const enabled = await runCli(createCliProgram(programOptions), ["assets", "enable", "asset-1"]);
+
+    expect(disabled).toEqual({ exitCode: 0 });
+    expect(enabled).toEqual({ exitCode: 0 });
+    expect(calls).toEqual([
+      { command: "disable", payload: { assetId: "asset-1" } },
+      { command: "enable", payload: { assetId: "asset-1" } },
+    ]);
+    expect(JSON.parse(output[0] ?? "")).toMatchObject({
+      command: "assets.disable",
+      data: { assetId: "asset-1", status: "disabled" },
+    });
+    expect(output.join("")).toContain("asset-1 enabled");
   });
 
   it("returns a failed CLI JSON envelope and validation exit code for invalid command payloads", async () => {

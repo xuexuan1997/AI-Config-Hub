@@ -10,6 +10,7 @@ import {
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
+  AssetIdSchema,
   ScanRunIdSchema,
   TaskIdSchema,
   ToolInstallationIdSchema,
@@ -141,22 +142,67 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("persists asset disablement across derived index replacement without deleting the asset", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    await repositories.index.replaceDerivedIndex(
+      replacement("scan-full", [asset("asset-a", "A"), asset("asset-b", "B")]),
+    );
+    const missingAssetId = AssetIdSchema.parse("missing-asset");
+    const assetAId = AssetIdSchema.parse("asset-a");
+    const assetBId = AssetIdSchema.parse("asset-b");
+
+    await expect(
+      repositories.index.setAssetStatus(missingAssetId, "disabled"),
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+
+    const disabled = await repositories.index.setAssetStatus(assetAId, "disabled");
+    expect(disabled).toMatchObject({ assetId: "asset-a", status: "disabled" });
+    expect((await repositories.index.getAsset(assetAId))?.status).toBe("disabled");
+    expect((await repositories.index.getAsset(assetBId))?.status).toBe("enabled");
+    expect(
+      (await repositories.index.listAssets({ limit: 20 })).items.map(({ assetId, status }) => ({
+        assetId,
+        status,
+      })),
+    ).toEqual([
+      { assetId: "asset-a", status: "disabled" },
+      { assetId: "asset-b", status: "enabled" },
+    ]);
+
+    await repositories.index.replaceDerivedIndex(
+      replacement("scan-rescan", [asset("asset-a", "A2"), asset("asset-b", "B2")]),
+    );
+    expect((await repositories.index.getAsset(assetAId))?.status).toBe("disabled");
+
+    const enabled = await repositories.index.setAssetStatus(assetAId, "enabled");
+    expect(enabled).toMatchObject({ assetId: "asset-a", status: "enabled" });
+    expect((await repositories.index.getAsset(assetAId))?.status).toBe("enabled");
+    opened.database.close();
+  });
+
   it("persists settings and task progress across reopen with optimistic revisions", async () => {
     const databasePath = path();
     const first = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
     const repositories = createStorageRepositories(first);
     const initial = await repositories.settings.getPublic();
+    expect(initial.settings.language).toBe("system");
     const updated = await repositories.settings.updatePublic({
       expectedRevision: initial.revision,
       settings: {
         readOnlyMode: false,
         customScanRoots: [AbsolutePathSchema.parse("/project")],
         theme: "system",
+        language: "zh-CN",
         scanHints: true,
         fileWatching: true,
         pathDisplay: "abbreviated",
       },
     });
+    expect(updated.settings.language).toBe("zh-CN");
     await expect(
       repositories.settings.updatePublic({
         expectedRevision: initial.revision,

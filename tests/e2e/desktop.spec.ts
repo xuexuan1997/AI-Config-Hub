@@ -53,18 +53,20 @@ test.describe("Desktop end to end", () => {
       });
 
       await page.getByRole("button", { name: "Assets" }).click();
-      await expect(page.getByRole("cell", { name: "codex" }).first()).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Rule assets" })).toBeVisible();
       await page
         .locator("tbody tr")
-        .filter({ hasText: "codex" })
+        .filter({ hasText: "Codex" })
         .filter({ hasText: "AGENTS" })
         .getByRole("button", { name: "Inspect" })
         .click();
 
-      await expect(page.getByRole("region", { name: "Asset detail" })).toContainText("AGENTS");
-      await expect(page.getByRole("region", { name: "Asset detail" })).toContainText(
+      await expect(page.getByRole("dialog", { name: "Asset detail" })).toContainText("AGENTS");
+      await expect(page.getByRole("dialog", { name: "Asset detail" })).toContainText(
         workspace.projectRoot,
       );
+      await page.getByRole("button", { name: "Close" }).click();
+      await expect(page.getByRole("dialog", { name: "Asset detail" })).toBeHidden();
 
       await page.getByRole("button", { name: "Migration" }).click();
       const sourceAssets = page.getByRole("group", { name: "Source assets" });

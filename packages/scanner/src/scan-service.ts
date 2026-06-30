@@ -1,5 +1,6 @@
 import type {
   AdapterDiagnostic,
+  AdapterEffectiveConfigDraft,
   AdapterReadApi,
   AdapterRegistration,
   Asset,
@@ -233,6 +234,10 @@ export class ScanService {
         ),
       )
       .sort((left, right) => left.assetId.localeCompare(right.assetId));
+    const parsedAssetsWithStatuses = await applyStoredAssetStatuses(
+      this.options.indexRepository,
+      parsedAssets,
+    );
     const cached =
       changedPaths === undefined || affectedInstallationIds === undefined
         ? { assets: [], scopes: [] }
@@ -242,8 +247,9 @@ export class ScanService {
             affectedInstallationIds,
           });
     const scopes = uniqueScopes([...cached.scopes, ...parsedScopes]);
-    const assetsForResolution = uniqueAssets([...cached.assets, ...parsedAssets]);
-    const assetsForCommit = changedPaths === undefined ? assetsForResolution : parsedAssets;
+    const assetsForResolution = uniqueAssets([...cached.assets, ...parsedAssetsWithStatuses]);
+    const assetsForCommit =
+      changedPaths === undefined ? assetsForResolution : parsedAssetsWithStatuses;
     const effectiveConfigs = [];
     const resolvedInstallations =
       affectedInstallationIds === undefined
@@ -252,19 +258,24 @@ export class ScanService {
     for (const { adapter, tool } of resolvedInstallations) {
       input.signal.throwIfAborted();
       const toolAssets = assetsForResolution.filter(({ toolId }) => toolId === tool.toolId);
+      const enabledToolAssets = toolAssets.filter(({ status }) => status !== "disabled");
       const toolScopes = scopes.filter(({ toolId }) => toolId === tool.toolId);
       for (const targetPath of tool.configRoots) {
         const resolution = await adapter.resolveEffective({
           tool,
           targetPath,
-          assets: toolAssets,
+          assets: enabledToolAssets,
           scopes: toolScopes,
           signal: input.signal,
         });
+        const draft = withDisabledAssetsAsIgnored(
+          resolution.draft,
+          disabledApplicableAssets(toolAssets, toolScopes, tool.toolId, targetPath),
+        );
         const diagnosis = await adapter.diagnose({
           tool,
-          assets: toolAssets,
-          effectiveConfigDraft: resolution.draft,
+          assets: enabledToolAssets,
+          effectiveConfigDraft: draft,
           signal: input.signal,
         });
         allAdapterDiagnostics.push(
@@ -277,12 +288,12 @@ export class ScanService {
         );
         effectiveConfigs.push(
           EffectiveConfigSchema.parse({
-            ...resolution.draft,
+            ...draft,
             effectiveConfigId: EffectiveConfigIdSchema.parse(
               stableId("effective", [
                 tool.installationId,
                 targetPath,
-                resolution.draft.resolutionInputHash,
+                draft.resolutionInputHash,
                 adapter.adapterVersion,
               ]),
             ),
@@ -434,6 +445,61 @@ function summarizeAssetDiagnostics(
       diagnosticSummary: diagnosticsByAsset.get(asset.assetId) ?? asset.diagnosticSummary,
     }),
   );
+}
+
+async function applyStoredAssetStatuses(
+  repository: IndexRepository,
+  assets: readonly Asset[],
+): Promise<readonly Asset[]> {
+  const statuses = await repository.getAssetStatuses(
+    assets.map(({ assetId }) => AssetIdSchema.parse(assetId)),
+  );
+  return assets.map((asset) =>
+    AssetSchema.parse({ ...asset, status: statuses.get(asset.assetId) ?? "enabled" }),
+  );
+}
+
+function disabledApplicableAssets(
+  assets: readonly Asset[],
+  scopes: readonly Scope[],
+  toolId: string,
+  targetPath: AbsolutePath,
+): readonly Asset[] {
+  const scopesById = new Map(scopes.map((scope) => [scope.scopeId, scope]));
+  return assets
+    .filter(({ status }) => status === "disabled")
+    .filter((asset) => {
+      const scope = scopesById.get(asset.scopeId);
+      void targetPath;
+      return scope === undefined || scope.toolId === toolId;
+    })
+    .sort((left, right) => left.assetId.localeCompare(right.assetId));
+}
+
+function withDisabledAssetsAsIgnored(
+  draft: AdapterEffectiveConfigDraft,
+  disabledAssets: readonly Asset[],
+): AdapterEffectiveConfigDraft {
+  if (disabledAssets.length === 0) return draft;
+  const existingIgnored = new Set(draft.ignoredAssetIds);
+  const existingStepAssetIds = new Set(
+    draft.steps.filter((step) => step.action === "ignore").map(({ assetId }) => assetId),
+  );
+  const additionalIgnored = disabledAssets
+    .map(({ assetId }) => AssetIdSchema.parse(assetId))
+    .filter((assetId) => !existingIgnored.has(assetId));
+  const additionalSteps = additionalIgnored
+    .filter((assetId) => !existingStepAssetIds.has(assetId))
+    .map((assetId) => ({
+      action: "ignore" as const,
+      assetId,
+      reason: "Asset disabled",
+    }));
+  return {
+    ...draft,
+    ignoredAssetIds: [...draft.ignoredAssetIds, ...additionalIgnored],
+    steps: [...draft.steps, ...additionalSteps],
+  };
 }
 
 function scopeId(installationId: string, parsed: ParsedAsset): string {

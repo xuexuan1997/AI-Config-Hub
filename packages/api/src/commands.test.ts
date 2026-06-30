@@ -14,6 +14,8 @@ const hash = `sha256:${"a".repeat(64)}`;
 describe("command schemas", () => {
   it("publishes exactly the approved MVP command catalog", () => {
     expect([...API_COMMAND_NAMES].sort()).toEqual([
+      "assets.disable",
+      "assets.enable",
       "assets.get",
       "assets.list",
       "assets.openSource",
@@ -108,6 +110,31 @@ describe("command schemas", () => {
     ).toBe(false);
   });
 
+  it("accepts language alongside theme in public settings commands", () => {
+    expect(
+      CommandRequestSchemas["settings.get"].safeParse({ keys: ["theme", "language"] }).success,
+    ).toBe(true);
+    expect(
+      CommandRequestSchemas["settings.update"].safeParse({
+        patch: { theme: "dark", language: "zh-CN" },
+        expectedRevision: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      CommandRequestSchemas["settings.update"].safeParse({
+        patch: { language: "fr-FR" },
+        expectedRevision: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      CommandResponseSchemas["settings.get"].safeParse({
+        values: { theme: "system", language: "en" },
+        revision: 1,
+        readOnlyRecovery: false,
+      }).success,
+    ).toBe(true);
+  });
+
   it("validates a request and response fixture for every command", () => {
     const requests: Record<string, unknown> = {
       "scan.start": { mode: "full" },
@@ -116,6 +143,8 @@ describe("command schemas", () => {
       "assets.list": {},
       "assets.get": { assetId: "asset-1" },
       "assets.openSource": { assetId: "asset-1" },
+      "assets.disable": { assetId: "asset-1" },
+      "assets.enable": { assetId: "asset-1" },
       "effective.resolve": {
         toolKey: "codex",
         projectId: "project-1",
@@ -145,7 +174,7 @@ describe("command schemas", () => {
       "history.list": {},
       "history.get": { id: "deployment-1" },
       "settings.get": {},
-      "settings.update": { patch: { theme: "dark" }, expectedRevision: 1 },
+      "settings.update": { patch: { theme: "dark", language: "zh-CN" }, expectedRevision: 1 },
     };
     const progress = { phase: "queued", completed: 0, total: null, unit: "items" };
     const diagnosticCounts = { info: 0, warning: 0, error: 0 };
@@ -173,6 +202,7 @@ describe("command schemas", () => {
             scopeKind: "project",
             logicalKey: "repository-policy",
             contentHash: hash,
+            status: "enabled",
             diagnosticCounts,
           },
         ],
@@ -187,12 +217,15 @@ describe("command schemas", () => {
           resourceType: "rule",
           scopeId: "scope-1",
           logicalKey: "repository-policy",
+          status: "enabled",
           normalized: { kind: "rule", instructions: "redacted view" },
         },
         source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },
         redactions: [],
       },
       "assets.openSource": { assetId: "asset-1", opened: true },
+      "assets.disable": { assetId: "asset-1", status: "disabled" },
+      "assets.enable": { assetId: "asset-1", status: "enabled" },
       "effective.resolve": {
         effective: { counts: { rule: 1 } },
         contributors: [{ assetId: "asset-1", action: "inherit", reasonCode: "PROJECT_SCOPE" }],
@@ -341,12 +374,12 @@ describe("command schemas", () => {
         ],
       },
       "settings.get": {
-        values: { theme: "system" },
+        values: { theme: "system", language: "system" },
         revision: 1,
         readOnlyRecovery: false,
       },
       "settings.update": {
-        values: { theme: "dark" },
+        values: { theme: "dark", language: "zh-CN" },
         revision: 2,
         requiresRestart: false,
       },

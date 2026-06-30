@@ -95,6 +95,7 @@ const AssetsGetRequestSchema = z
   .strict()
   .readonly();
 const AssetsOpenSourceRequestSchema = z.object({ assetId: AssetIdSchema }).strict().readonly();
+const AssetsStatusChangeRequestSchema = z.object({ assetId: AssetIdSchema }).strict().readonly();
 const EffectiveResolveRequestSchema = z
   .object({
     toolKey: ToolIdSchema,
@@ -186,10 +187,17 @@ const HistoryListRequestSchema = z
   .readonly();
 const HistoryGetRequestSchema = z.object({ id: DeploymentRecordIdSchema }).strict().readonly();
 
-export const PublicSettingKeySchema = z.enum(["theme", "pathDisplay", "scanHints", "fileWatching"]);
+export const PublicSettingKeySchema = z.enum([
+  "theme",
+  "language",
+  "pathDisplay",
+  "scanHints",
+  "fileWatching",
+]);
 const PublicSettingsPatchSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]).optional(),
+    language: z.enum(["system", "en", "zh-CN"]).optional(),
     pathDisplay: z.enum(["full", "abbreviated"]).optional(),
     scanHints: z.boolean().optional(),
     fileWatching: z.boolean().optional(),
@@ -198,7 +206,7 @@ const PublicSettingsPatchSchema = z
   .refine((patch) => Object.keys(patch).length > 0, "Settings patch cannot be empty")
   .readonly();
 const SettingsGetRequestSchema = z
-  .object({ keys: z.array(PublicSettingKeySchema).min(1).max(4).optional().readonly() })
+  .object({ keys: z.array(PublicSettingKeySchema).min(1).max(5).optional().readonly() })
   .strict()
   .readonly();
 const SettingsUpdateRequestSchema = z
@@ -213,6 +221,8 @@ export const CommandRequestSchemas = {
   "assets.list": AssetsListRequestSchema,
   "assets.get": AssetsGetRequestSchema,
   "assets.openSource": AssetsOpenSourceRequestSchema,
+  "assets.disable": AssetsStatusChangeRequestSchema,
+  "assets.enable": AssetsStatusChangeRequestSchema,
   "effective.resolve": EffectiveResolveRequestSchema,
   "diagnostics.list": DiagnosticsListRequestSchema,
   "diagnostics.export": DiagnosticsExportRequestSchema,
@@ -285,6 +295,7 @@ const AssetSummarySchema = z
     scopeKind: ScopeKindSchema,
     logicalKey: z.string().trim().min(1).max(500),
     contentHash: ContentHashSchema,
+    status: z.enum(["enabled", "disabled"]),
     diagnosticCounts: DiagnosticCountsSchema,
   })
   .strict()
@@ -311,6 +322,7 @@ const AssetsGetResponseSchema = z
         resourceType: ResourceKindSchema,
         scopeId: ScopeIdSchema,
         logicalKey: z.string().trim().min(1).max(500),
+        status: z.enum(["enabled", "disabled"]),
         normalized: JsonValueSchema.optional(),
         references: z.array(z.string().trim().min(1).max(500)).max(1_000).optional().readonly(),
         diagnosticIds: z.array(DiagnosticIdSchema).max(1_000).optional().readonly(),
@@ -333,6 +345,20 @@ const AssetsOpenSourceResponseSchema = z
   .object({
     assetId: AssetIdSchema,
     opened: z.literal(true),
+  })
+  .strict()
+  .readonly();
+const AssetsDisableResponseSchema = z
+  .object({
+    assetId: AssetIdSchema,
+    status: z.literal("disabled"),
+  })
+  .strict()
+  .readonly();
+const AssetsEnableResponseSchema = z
+  .object({
+    assetId: AssetIdSchema,
+    status: z.literal("enabled"),
   })
   .strict()
   .readonly();
@@ -554,6 +580,7 @@ const HistoryGetResponseSchema = z
 const PublicSettingsValuesSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]).optional(),
+    language: z.enum(["system", "en", "zh-CN"]).optional(),
     pathDisplay: z.enum(["full", "abbreviated"]).optional(),
     scanHints: z.boolean().optional(),
     fileWatching: z.boolean().optional(),
@@ -584,6 +611,8 @@ export const CommandResponseSchemas = {
   "assets.list": AssetsListResponseSchema,
   "assets.get": AssetsGetResponseSchema,
   "assets.openSource": AssetsOpenSourceResponseSchema,
+  "assets.disable": AssetsDisableResponseSchema,
+  "assets.enable": AssetsEnableResponseSchema,
   "effective.resolve": EffectiveResolveResponseSchema,
   "diagnostics.list": DiagnosticsListResponseSchema,
   "diagnostics.export": DiagnosticsExportResponseSchema,

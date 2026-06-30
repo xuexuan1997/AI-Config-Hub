@@ -58,6 +58,36 @@ async function writeCodexUserConfigFixtures(home: string): Promise<void> {
 }
 
 describe("desktop command service composition", () => {
+  it("persists public theme and language settings through desktop services", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-settings-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      const initial = await runtime.services["settings.get"]({ keys: ["theme", "language"] });
+      const updated = await runtime.services["settings.update"]({
+        expectedRevision: initial.revision,
+        patch: { theme: "dark", language: "zh-CN" },
+      });
+      const reloaded = await runtime.services["settings.get"]({ keys: ["language"] });
+
+      expect(initial.values).toEqual({ theme: "system", language: "system" });
+      expect(updated.values).toMatchObject({ theme: "dark", language: "zh-CN" });
+      expect(updated.revision).toBe(initial.revision + 1);
+      expect(reloaded.values).toEqual({ language: "zh-CN" });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("opens asset source files through the injected opener", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-open-source-"));
     temporaryDirectories.push(root);
@@ -93,6 +123,53 @@ describe("desktop command service composition", () => {
         opened: true,
       });
       expect(openedPaths).toEqual([await realpath(sourcePath)]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("disables and re-enables existing assets through desktop command services", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-asset-status-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+
+      expect(await runtime.services["assets.disable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "disabled",
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "disabled",
+      );
+      await expect(
+        runtime.services["migration.preview"]({
+          sourceAssetIds: [source.id],
+          targetToolKey: "cursor",
+          targetScopeId: project,
+          conflictPolicy: "replace",
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+
+      expect(await runtime.services["assets.enable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "enabled",
+      });
     } finally {
       runtime.close();
     }

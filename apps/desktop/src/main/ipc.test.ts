@@ -4,7 +4,7 @@ import {
   type CommandServiceMap,
   type TaskEvent,
 } from "@ai-config-hub/api";
-import { ContentHashSchema, TaskIdSchema } from "@ai-config-hub/shared";
+import { AssetIdSchema, ContentHashSchema, TaskIdSchema } from "@ai-config-hub/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import { registerIpcHandlers } from "./ipc.js";
@@ -175,11 +175,12 @@ function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceM
     }),
     "assets.get": vi.fn().mockResolvedValue({
       asset: {
-        id: "asset-1",
+        id: AssetIdSchema.parse("asset-1"),
         toolKey: "codex",
         resourceType: "rule",
         scopeId: "scope-1",
         logicalKey: "AGENTS.md",
+        status: "enabled",
       },
       source: {
         pathDisplay: "AGENTS.md",
@@ -189,6 +190,12 @@ function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceM
       redactions: [],
     }),
     "assets.openSource": vi.fn(),
+    "assets.disable": vi
+      .fn()
+      .mockResolvedValue({ assetId: AssetIdSchema.parse("asset-1"), status: "disabled" }),
+    "assets.enable": vi
+      .fn()
+      .mockResolvedValue({ assetId: AssetIdSchema.parse("asset-1"), status: "enabled" }),
     "effective.resolve": vi.fn(),
     "diagnostics.list": vi.fn(),
     "diagnostics.export": vi.fn(),

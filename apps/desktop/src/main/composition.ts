@@ -2,11 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { createDefaultAdapterRegistry } from "@ai-config-hub/adapters";
-import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
+import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
+import { DeploymentStatusSchema } from "@ai-config-hub/core";
 import type {
+  AdapterEffectiveConfigDraft,
   AdapterReadApi,
   AdapterRegistration,
   Asset,
@@ -15,10 +16,11 @@ import type {
   DeploymentPlan,
   DeploymentRecord,
   Diagnostic,
-  EffectiveConfig,
   GitCommitSummary,
   Page,
   PublicSettings,
+  Scope,
+  ToolInstallation,
 } from "@ai-config-hub/core";
 import {
   DeploymentExecutionService,
@@ -54,6 +56,7 @@ import {
   ScopeKindSchema,
   TaskIdSchema,
   ToolIdSchema,
+  ToolInstallationIdSchema,
   type AbsolutePath,
   type ContentHash,
   type ProjectId,
@@ -223,6 +226,7 @@ function createServices(
         read: access.read,
         snapshots: access.snapshots,
         indexRepository: runtime.repositories.index,
+        now: () => now(runtime),
       });
       const cancellation = createCancellationController();
       let sequence = 0;
@@ -384,6 +388,7 @@ function createServices(
           scopeKind: scopeKinds.get(asset.scopeId) ?? "project",
           logicalKey: asset.locator,
           contentHash: asset.contentHash,
+          status: asset.status,
           diagnosticCounts: asset.diagnosticSummary,
         })),
         nextCursor:
@@ -406,6 +411,7 @@ function createServices(
           resourceType: asset.resource.kind,
           scopeId: asset.scopeId,
           logicalKey: asset.locator,
+          status: asset.status,
           ...(include.includes("normalized") ? { normalized: toJson(asset.resource) } : {}),
           ...(include.includes("references") ? { references: asset.references } : {}),
           ...(include.includes("diagnostics") ? { diagnosticIds: [] } : {}),
@@ -438,42 +444,24 @@ function createServices(
       }
       return { assetId: asset.assetId, opened: true as const };
     },
-    "effective.resolve": (payload) => {
-      const request = payload as {
-        readonly toolKey: string;
-        readonly targetScopeId: string;
-        readonly resourceTypes?: readonly string[];
-      };
-      const configs = effectiveConfigs(runtime);
-      const targetPath = resolve(request.targetScopeId);
-      const found = configs.find(
-        (config) =>
-          config.toolInstallationId.startsWith(`${request.toolKey}:`) &&
-          (config.canonicalTargetPath === targetPath ||
-            config.effectiveConfigId === request.targetScopeId),
+    "assets.disable": async (payload) => {
+      const request = payload as CommandRequest<"assets.disable">;
+      const result = await runtime.repositories.index.setAssetStatus(
+        AssetIdSchema.parse(request.assetId),
+        "disabled",
       );
-      if (found === undefined) throw notFound("Effective configuration not found");
-      const resourceTypes = new Set(request.resourceTypes ?? []);
-      const resources =
-        resourceTypes.size === 0
-          ? found.resolvedResources
-          : found.resolvedResources.filter((resource) => resourceTypes.has(resource.kind));
-      return Promise.resolve({
-        effective: toJson(resources),
-        contributors: found.steps
-          .filter((step) => step.action !== "ignore")
-          .map((step) => ({
-            assetId: step.assetId,
-            action: step.action,
-            reasonCode: reasonCode(step.reason),
-          })),
-        ignored: found.steps
-          .filter((step) => step.action === "ignore")
-          .map((step) => ({ assetId: step.assetId, reasonCode: reasonCode(step.reason) })),
-        diagnostics: found.diagnostics.map(diagnosticView),
-        snapshotRevision: databaseRevision(runtime),
-      });
+      return { assetId: result.assetId, status: "disabled" as const };
     },
+    "assets.enable": async (payload) => {
+      const request = payload as CommandRequest<"assets.enable">;
+      const result = await runtime.repositories.index.setAssetStatus(
+        AssetIdSchema.parse(request.assetId),
+        "enabled",
+      );
+      return { assetId: result.assetId, status: "enabled" as const };
+    },
+    "effective.resolve": async (payload) =>
+      resolveEffectiveView(runtime, registry, payload as CommandRequest<"effective.resolve">),
     "diagnostics.list": async (payload) => {
       const request = payload as CommandRequest<"diagnostics.list">;
       const page = await runtime.repositories.index.listDiagnostics({
@@ -561,6 +549,15 @@ function createServices(
       );
       const first = assets[0];
       if (first === undefined) throw unsupported("Migration preview requires at least one asset");
+      const disabled = assets.find((asset) => asset.status === "disabled");
+      if (disabled !== undefined) {
+        throw new AppError({
+          code: "VALIDATION_FAILED",
+          message: `Asset is disabled and cannot be used as a migration source: ${disabled.assetId}`,
+          retryable: false,
+          suggestedActions: ["Enable the asset before creating a migration preview"],
+        });
+      }
       if (new Set(assets.map((asset) => asset.resource.kind)).size > 1) {
         throw new AppError({
           code: "VALIDATION_FAILED",
@@ -849,6 +846,7 @@ function createServices(
         readonly expectedRevision: number;
         readonly patch: {
           readonly theme?: "system" | "light" | "dark";
+          readonly language?: "system" | "en" | "zh-CN";
           readonly pathDisplay?: "full" | "abbreviated";
           readonly scanHints?: boolean;
           readonly fileWatching?: boolean;
@@ -860,6 +858,7 @@ function createServices(
         settings: {
           ...current.settings,
           ...(request.patch.theme === undefined ? {} : { theme: request.patch.theme }),
+          ...(request.patch.language === undefined ? {} : { language: request.patch.language }),
           ...(request.patch.pathDisplay === undefined
             ? {}
             : { pathDisplay: request.patch.pathDisplay }),
@@ -1782,12 +1781,144 @@ function uniqueReportPathRoots(
   });
 }
 
-function effectiveConfigs(runtime: DesktopRuntime): readonly EffectiveConfig[] {
+async function resolveEffectiveView(
+  runtime: DesktopRuntime,
+  registry: AdapterRegistry,
+  request: CommandRequest<"effective.resolve">,
+) {
+  const targetPath = AbsolutePathSchema.parse(resolve(request.targetScopeId));
+  const tool = toolInstallations(runtime)
+    .filter((installation) => installation.toolId === request.toolKey)
+    .find((installation) =>
+      installation.configRoots.some((root) => containsPath(root, targetPath)),
+    );
+  if (tool === undefined) throw notFound("Effective configuration not found");
+
+  const resourceKinds =
+    request.resourceTypes === undefined
+      ? undefined
+      : request.resourceTypes.map((resourceType) => ResourceKindSchema.parse(resourceType));
+  const scopes = (await runtime.repositories.index.listScopes()).filter(
+    (scope) => scope.toolId === tool.toolId,
+  );
+  const assets = (await diagnosticFilterAssets(runtime)).filter(
+    (asset) => asset.toolId === tool.toolId,
+  );
+  const enabledAssets = assets.filter((asset) => asset.status !== "disabled");
+  const adapter = registry.create(tool.toolId, { debug() {}, warn() {} });
+  const cancellation = createCancellationController();
+  const resolution = await adapter.resolveEffective({
+    tool,
+    targetPath,
+    assets: enabledAssets,
+    scopes,
+    ...(resourceKinds === undefined ? {} : { resourceKinds }),
+    signal: cancellation.signal,
+  });
+  const draft = withDisabledAssetsAsIgnored(
+    resolution.draft,
+    disabledApplicableAssets(assets, scopes, tool.toolId, targetPath, resourceKinds),
+  );
+  const resources =
+    resourceKinds === undefined
+      ? draft.resolvedResources
+      : draft.resolvedResources.filter((resource) => resourceKinds.includes(resource.kind));
+  return {
+    effective: toJson(resources),
+    contributors: draft.steps
+      .filter((step) => step.action !== "ignore")
+      .map((step) => ({
+        assetId: step.assetId,
+        action: step.action,
+        reasonCode: reasonCode(step.reason),
+      })),
+    ignored: draft.steps
+      .filter((step) => step.action === "ignore")
+      .map((step) => ({ assetId: step.assetId, reasonCode: reasonCode(step.reason) })),
+    diagnostics: [],
+    snapshotRevision: databaseRevision(runtime),
+  };
+}
+
+function toolInstallations(runtime: DesktopRuntime): readonly ToolInstallation[] {
   const rows = runtime.repositories.database
-    .prepare("SELECT effective_configs_json FROM scan_runs ORDER BY started_at DESC")
-    .all() as { readonly effective_configs_json: string }[];
-  return rows.flatMap((row) =>
-    EffectiveConfigSchema.array().parse(JSON.parse(row.effective_configs_json)),
+    .prepare(
+      `SELECT tool_key, tool_installation_id, canonical_config_root, detected_version, capabilities_json
+       FROM tools
+       WHERE is_detected = 1
+       ORDER BY tool_installation_id`,
+    )
+    .all() as {
+    readonly tool_key: string;
+    readonly tool_installation_id: string;
+    readonly canonical_config_root: string;
+    readonly detected_version: string | null;
+    readonly capabilities_json: string;
+  }[];
+  return rows.map((row) => ({
+    toolId: ToolIdSchema.parse(row.tool_key),
+    installationId: ToolInstallationIdSchema.parse(row.tool_installation_id),
+    ...(row.detected_version === null
+      ? {}
+      : { detectedVersion: SemVerSchema.parse(row.detected_version) }),
+    configRoots: [AbsolutePathSchema.parse(row.canonical_config_root)],
+    evidence: JSON.parse(row.capabilities_json) as Readonly<Record<string, unknown>>,
+  }));
+}
+
+function disabledApplicableAssets(
+  assets: readonly Asset[],
+  scopes: readonly Scope[],
+  toolId: string,
+  targetPath: AbsolutePath,
+  resourceKinds: readonly string[] | undefined,
+): readonly Asset[] {
+  const scopesById = new Map(scopes.map((scope) => [scope.scopeId, scope]));
+  return assets
+    .filter((asset) => asset.status === "disabled")
+    .filter((asset) => resourceKinds === undefined || resourceKinds.includes(asset.resource.kind))
+    .filter((asset) => {
+      const scope = scopesById.get(asset.scopeId);
+      void targetPath;
+      return scope === undefined || scope.toolId === toolId;
+    })
+    .sort((left, right) => left.assetId.localeCompare(right.assetId));
+}
+
+function withDisabledAssetsAsIgnored(
+  draft: AdapterEffectiveConfigDraft,
+  disabledAssets: readonly Asset[],
+): AdapterEffectiveConfigDraft {
+  if (disabledAssets.length === 0) return draft;
+  const ignored = new Set(draft.ignoredAssetIds);
+  const stepKeys = new Set(draft.steps.map((step) => `${step.action}:${step.assetId}`));
+  const ignoredAssetIds = disabledAssets
+    .map((asset) => AssetIdSchema.parse(asset.assetId))
+    .filter((assetId) => !ignored.has(assetId));
+  return {
+    ...draft,
+    ignoredAssetIds: [...draft.ignoredAssetIds, ...ignoredAssetIds],
+    steps: [
+      ...draft.steps,
+      ...ignoredAssetIds
+        .filter((assetId) => !stepKeys.has(`ignore:${assetId}`))
+        .map((assetId) => ({
+          action: "ignore" as const,
+          assetId,
+          reason: "Asset disabled",
+        })),
+    ],
+  };
+}
+
+function containsPath(root: AbsolutePath, target: AbsolutePath): boolean {
+  const pathFromRoot = relative(root, target);
+  return (
+    pathFromRoot === "" ||
+    (!isAbsolute(pathFromRoot) &&
+      pathFromRoot !== ".." &&
+      !pathFromRoot.startsWith("../") &&
+      !pathFromRoot.startsWith("..\\"))
   );
 }
 
@@ -2055,6 +2186,7 @@ function existingAncestor(path: string): AbsolutePath {
 function settingsValues(settings: PublicSettings) {
   return {
     theme: settings.theme,
+    language: settings.language,
     pathDisplay: settings.pathDisplay,
     scanHints: settings.scanHints,
     fileWatching: settings.fileWatching,
@@ -2068,6 +2200,7 @@ function selectSettings(
   const selected: Partial<ReturnType<typeof settingsValues>> = {};
   for (const key of keys) {
     if (key === "theme") selected.theme = values.theme;
+    if (key === "language") selected.language = values.language;
     if (key === "pathDisplay") selected.pathDisplay = values.pathDisplay;
     if (key === "scanHints") selected.scanHints = values.scanHints;
     if (key === "fileWatching") selected.fileWatching = values.fileWatching;

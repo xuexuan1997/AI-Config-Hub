@@ -28,12 +28,22 @@ const customToolKeysSql = readFileSync(
   new URL("./migrations/0003-custom-tool-keys.sql", import.meta.url),
   "utf8",
 );
+const assetStatusOverridesSql = readFileSync(
+  new URL("./migrations/0004-asset-status-overrides.sql", import.meta.url),
+  "utf8",
+);
 
 export const initialMigration = migration(1, "initial", initialSql);
 export const rollbackLinksMigration = migration(2, "rollback-links", rollbackLinksSql);
 export const customToolKeysMigration = migration(3, "custom-tool-keys", customToolKeysSql);
+export const assetStatusOverridesMigration = migration(
+  4,
+  "asset-status-overrides",
+  assetStatusOverridesSql,
+);
 export const databaseMigrations = Object.freeze([
   initialMigration,
   rollbackLinksMigration,
   customToolKeysMigration,
+  assetStatusOverridesMigration,
 ]);

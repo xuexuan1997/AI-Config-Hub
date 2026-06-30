@@ -10,6 +10,8 @@ export interface AssetQueryUseCase {
   readonly list: CoreUseCases["assets.list"];
   readonly get: CoreUseCases["assets.get"];
   readonly openSource: CoreUseCases["assets.openSource"];
+  readonly disable: CoreUseCases["assets.disable"];
+  readonly enable: CoreUseCases["assets.enable"];
 }
 
 export interface EffectiveConfigUseCase {
@@ -59,6 +61,8 @@ export function createCoreUseCases(services: ApplicationServices): CoreUseCases 
     "assets.list": services.assets.list,
     "assets.get": services.assets.get,
     "assets.openSource": services.assets.openSource,
+    "assets.disable": services.assets.disable,
+    "assets.enable": services.assets.enable,
     "effective.resolve": services.effective.resolve,
     "diagnostics.list": services.diagnostics.list,
     "diagnostics.export": services.diagnostics.export,

@@ -202,6 +202,24 @@ export function createCliProgram(options: CliProgramOptions): Command {
         return finishResponse("assets.get", "assets.get", response, outputFlags);
       },
     );
+  assets
+    .command("disable")
+    .argument("<asset-id>", "asset id")
+    .option("--json", "print a CLI JSON envelope")
+    .action(async (assetId: string, flags: GlobalOptions, command: Command) => {
+      const outputFlags = withInheritedJson(flags, command);
+      const response = await callApi("assets.disable", { assetId });
+      return finishResponse("assets.disable", "assets.disable", response, outputFlags);
+    });
+  assets
+    .command("enable")
+    .argument("<asset-id>", "asset id")
+    .option("--json", "print a CLI JSON envelope")
+    .action(async (assetId: string, flags: GlobalOptions, command: Command) => {
+      const outputFlags = withInheritedJson(flags, command);
+      const response = await callApi("assets.enable", { assetId });
+      return finishResponse("assets.enable", "assets.enable", response, outputFlags);
+    });
 
   const effective = program.command("effective").description("Resolve effective configuration.");
   addEffectiveOptions(effective).action(async (flags: EffectiveOptions) => {
@@ -774,6 +792,13 @@ function renderText<Name extends ApiCommandName>(
     const logicalKey = typeof asset.logicalKey === "string" ? asset.logicalKey : "";
     return `${id} ${logicalKey}\n`;
   }
+  if (
+    (name === "assets.disable" || name === "assets.enable") &&
+    typeof data.assetId === "string" &&
+    typeof data.status === "string"
+  ) {
+    return `${data.assetId} ${data.status}\n`;
+  }
   return `${JSON.stringify(data, null, 2)}\n`;
 }
 
@@ -870,6 +895,7 @@ function renderAssets(items: readonly unknown[]): string {
         stringValue(row.resourceType),
         stringValue(row.scopeKind),
         stringValue(row.logicalKey),
+        stringValue(row.status),
         `errors:${numberValue(counts.error)}`,
         `warnings:${numberValue(counts.warning)}`,
       ]

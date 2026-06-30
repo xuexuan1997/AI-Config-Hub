@@ -191,6 +191,80 @@ describe("CLI command service composition", () => {
     }
   });
 
+  it("disables and re-enables existing assets without removing them from the project index", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-asset-status-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      expect(source.status).toBe("enabled");
+
+      await expect(
+        runtime.services["assets.disable"]({ assetId: "missing-asset" }),
+      ).rejects.toMatchObject({
+        code: "NOT_FOUND",
+      });
+
+      expect(await runtime.services["assets.disable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "disabled",
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "disabled",
+      );
+      const disabledAssets = await runtime.services["assets.list"]({ limit: 50 });
+      expect(disabledAssets.items.find((asset) => asset.id === source.id)).toMatchObject({
+        status: "disabled",
+      });
+      const disabledEffective = await runtime.services["effective.resolve"]({
+        toolKey: "codex",
+        projectId: project,
+        targetScopeId: project,
+        resourceTypes: ["rule"],
+      });
+      expect(disabledEffective.effective).toEqual([]);
+      expect(disabledEffective.contributors).toEqual([]);
+      expect(disabledEffective.ignored).toContainEqual({
+        assetId: source.id,
+        reasonCode: "ASSET_DISABLED",
+      });
+
+      await expect(
+        runtime.services["migration.preview"]({
+          sourceAssetIds: [source.id],
+          targetToolKey: "cursor",
+          targetScopeId: project,
+          conflictPolicy: "replace",
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+
+      expect(await runtime.services["assets.enable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "enabled",
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "enabled",
+      );
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("passes changed paths through to incremental scans", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-incremental-"));
     temporaryDirectories.push(root);
@@ -426,6 +500,7 @@ describe("CLI command service composition", () => {
       const initial = await runtime.services["settings.get"]({});
       expect(initial.values).toMatchObject({
         theme: "system",
+        language: "system",
         pathDisplay: "abbreviated",
         scanHints: true,
         fileWatching: true,
@@ -435,6 +510,7 @@ describe("CLI command service composition", () => {
         expectedRevision: initial.revision,
         patch: {
           theme: "dark",
+          language: "zh-CN",
           pathDisplay: "full",
           scanHints: false,
           fileWatching: false,
@@ -442,6 +518,7 @@ describe("CLI command service composition", () => {
       });
       expect(updated.values).toEqual({
         theme: "dark",
+        language: "zh-CN",
         pathDisplay: "full",
         scanHints: false,
         fileWatching: false,

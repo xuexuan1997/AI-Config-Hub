@@ -21,6 +21,9 @@ export const DiagnosticSummarySchema = z
   .strict()
   .readonly();
 
+export const AssetStatusSchema = z.enum(["enabled", "disabled"]);
+export type AssetStatus = z.infer<typeof AssetStatusSchema>;
+
 export const AssetSchema = z
   .object({
     assetId: AssetIdSchema,
@@ -36,6 +39,7 @@ export const AssetSchema = z
     adapterVersion: SemVerSchema,
     discoveredAt: IsoDateTimeSchema,
     references: z.array(z.string().min(1)).readonly(),
+    status: AssetStatusSchema.default("enabled"),
     diagnosticSummary: DiagnosticSummarySchema,
   })
   .strict()

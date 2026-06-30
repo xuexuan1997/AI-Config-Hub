@@ -9,12 +9,14 @@ import {
 
 import type { DesktopApi } from "../preload/api.js";
 
-export type Route = "overview" | "assets" | "migration" | "deployment" | "history";
+export type Route = "overview" | "assets" | "migration" | "deployment" | "history" | "settings";
 
 export type MigrationTargetToolKey = CommandRequest<"migration.preview">["targetToolKey"];
 export type MigrationConflictPolicy = CommandRequest<"migration.preview">["conflictPolicy"];
 export type MigrationSourceAssetId = CommandResponse<"assets.list">["items"][number]["id"];
 export type DeploymentConfirmation = CommandRequest<"deployment.execute">["confirmations"][number];
+export type ThemeSetting = NonNullable<CommandResponse<"settings.get">["values"]["theme"]>;
+export type LanguageSetting = NonNullable<CommandResponse<"settings.get">["values"]["language"]>;
 
 export const MIGRATION_TARGET_TOOL_OPTIONS = [
   "claude-code",
@@ -27,10 +29,34 @@ export const MIGRATION_CONFLICT_POLICY_OPTIONS = [
   "fail",
   "merge",
 ] as const satisfies readonly MigrationConflictPolicy[];
+export const THEME_SETTING_OPTIONS = [
+  "system",
+  "light",
+  "dark",
+] as const satisfies readonly ThemeSetting[];
+export const LANGUAGE_SETTING_OPTIONS = [
+  "system",
+  "en",
+  "zh-CN",
+] as const satisfies readonly LanguageSetting[];
+
+export interface AppSettingsValues {
+  readonly theme: ThemeSetting;
+  readonly language: LanguageSetting;
+}
+
+export interface AppSettingsState {
+  readonly values: AppSettingsValues;
+  readonly revision: number;
+  readonly status: "idle" | "loading" | "ready" | "saving" | "error";
+  readonly readOnlyRecovery: boolean;
+  readonly requiresRestart: boolean;
+}
 
 export interface MigrationFormState {
   readonly sourceAssetIds: readonly MigrationSourceAssetId[];
   readonly targetToolKey: MigrationTargetToolKey;
+  readonly targetScopeId?: string;
   readonly conflictPolicy: MigrationConflictPolicy;
 }
 
@@ -92,6 +118,7 @@ export interface AppState {
   readonly history: CommandResponse<"history.list">["items"];
   readonly historyDetail?: CommandResponse<"history.get">;
   readonly activeTask?: ActiveTaskState;
+  readonly settings: AppSettingsState;
   readonly message?: string;
 }
 
@@ -102,6 +129,7 @@ export type AppAction =
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
   | { readonly type: "assetDetail"; readonly detail: CommandResponse<"assets.get"> }
+  | { readonly type: "assetDetailClosed" }
   | { readonly type: "effective"; readonly effective: CommandResponse<"effective.resolve"> }
   | {
       readonly type: "diagnostics";
@@ -114,6 +142,7 @@ export type AppAction =
       readonly selected: boolean;
     }
   | { readonly type: "migrationTarget"; readonly targetToolKey: MigrationTargetToolKey }
+  | { readonly type: "migrationTargetProject"; readonly targetScopeId: string }
   | {
       readonly type: "migrationConflictPolicy";
       readonly conflictPolicy: MigrationConflictPolicy;
@@ -127,7 +156,17 @@ export type AppAction =
     }
   | { readonly type: "history"; readonly history: AppState["history"] }
   | { readonly type: "historyDetail"; readonly detail: CommandResponse<"history.get"> }
-  | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate };
+  | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate }
+  | { readonly type: "settingsLoading" }
+  | { readonly type: "settingsSaving" }
+  | { readonly type: "settingsFailed" }
+  | { readonly type: "settingsLoaded"; readonly settings: CommandResponse<"settings.get"> }
+  | { readonly type: "settingsUpdated"; readonly settings: CommandResponse<"settings.update"> };
+
+const DEFAULT_SETTINGS_VALUES: AppSettingsValues = {
+  theme: "system",
+  language: "system",
+};
 
 export const initialState: AppState = {
   route: "overview",
@@ -139,6 +178,13 @@ export const initialState: AppState = {
   deploymentConfirmed: false,
   deploymentConfirmationGrants: [],
   history: [],
+  settings: {
+    values: DEFAULT_SETTINGS_VALUES,
+    revision: 0,
+    status: "idle",
+    readOnlyRecovery: false,
+    requiresRestart: false,
+  },
 };
 
 function clearPreview(state: AppState): AppState {
@@ -177,15 +223,64 @@ function clearHistoryDetail(state: AppState): AppState {
   return withoutHistoryDetail;
 }
 
+type MigrationAssetSummary = AppState["assets"][number];
+type MigrationAssetWithStatus = MigrationAssetSummary & {
+  readonly status?: "enabled" | "disabled";
+};
+
+function isEnabledMigrationAsset(asset: MigrationAssetSummary): boolean {
+  return (asset as MigrationAssetWithStatus).status !== "disabled";
+}
+
+export function enabledMigrationAssets(state: AppState): readonly MigrationAssetSummary[] {
+  return state.assets.filter(isEnabledMigrationAsset);
+}
+
 function migrationSourceAssetIds(
   state: AppState,
   assets: AppState["assets"],
 ): MigrationFormState["sourceAssetIds"] {
-  const available = new Set(assets.map((asset) => asset.id));
+  const enabledAssets = assets.filter(isEnabledMigrationAsset);
+  const available = new Set(enabledAssets.map((asset) => asset.id));
   const retained = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
   if (retained.length > 0) return retained;
-  const first = assets[0];
+  const first = enabledAssets[0];
   return first === undefined ? [] : [first.id];
+}
+
+function normalizedTargetScopeId(
+  targetScopeId: MigrationFormState["targetScopeId"],
+): string | undefined {
+  if (targetScopeId === undefined) return undefined;
+  const trimmed = targetScopeId.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function migrationWithTargetScopeId(
+  migration: MigrationFormState,
+  targetScopeId: string | undefined,
+): MigrationFormState {
+  const { targetScopeId: discardedTargetScopeId, ...withoutTargetScopeId } = migration;
+  void discardedTargetScopeId;
+  return targetScopeId === undefined
+    ? withoutTargetScopeId
+    : { ...withoutTargetScopeId, targetScopeId };
+}
+
+function migrationForProjectChange(state: AppState, root: string | undefined): MigrationFormState {
+  const currentTargetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
+  const currentProjectRoot = normalizedTargetScopeId(state.projectRoot);
+  const followsSourceProject =
+    currentTargetScopeId === undefined || currentTargetScopeId === currentProjectRoot;
+  if (root === undefined) {
+    return followsSourceProject
+      ? migrationWithTargetScopeId(state.migration, undefined)
+      : migrationWithTargetScopeId(state.migration, currentTargetScopeId);
+  }
+  return migrationWithTargetScopeId(
+    state.migration,
+    followsSourceProject ? normalizedTargetScopeId(root) : currentTargetScopeId,
+  );
 }
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -204,10 +299,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
             assets: state.assets,
             diagnostics: state.diagnostics,
             diagnosticCounts: state.diagnosticCounts,
-            migration: state.migration,
+            migration: migrationForProjectChange(state, undefined),
             deploymentConfirmed: state.deploymentConfirmed,
             deploymentConfirmationGrants: state.deploymentConfirmationGrants,
             history: state.history,
+            settings: state.settings,
             ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
             ...(state.message === undefined ? {} : { message: state.message }),
           }),
@@ -220,10 +316,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
           assets: state.assets,
           diagnostics: state.diagnostics,
           diagnosticCounts: state.diagnosticCounts,
-          migration: state.migration,
+          migration: migrationForProjectChange(state, action.root),
           deploymentConfirmed: state.deploymentConfirmed,
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
+          settings: state.settings,
           projectRoot: action.root,
           ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
         }),
@@ -240,6 +337,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
             deploymentConfirmed: state.deploymentConfirmed,
             deploymentConfirmationGrants: state.deploymentConfirmationGrants,
             history: state.history,
+            settings: state.settings,
             ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
             ...(state.effective === undefined ? {} : { effective: state.effective }),
@@ -274,6 +372,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       void discardedEffective;
       return { ...withoutEffective, assetDetail: action.detail };
     }
+    case "assetDetailClosed":
+      return clearAssetDetail(state);
     case "effective":
       return { ...state, effective: action.effective };
     case "diagnostics":
@@ -294,6 +394,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return clearPreview({
         ...state,
         migration: { ...state.migration, targetToolKey: action.targetToolKey },
+      });
+    case "migrationTargetProject":
+      return clearPreview({
+        ...state,
+        migration: migrationWithTargetScopeId(
+          state.migration,
+          normalizedTargetScopeId(action.targetScopeId),
+        ),
       });
     case "migrationConflictPolicy":
       return clearPreview({
@@ -329,7 +437,54 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const updated = { ...state, activeTask };
       return shouldRetireDeploymentPreview(activeTask) ? clearPreview(updated) : updated;
     }
+    case "settingsLoading":
+      return { ...state, settings: { ...state.settings, status: "loading" } };
+    case "settingsSaving":
+      return { ...state, settings: { ...state.settings, status: "saving" } };
+    case "settingsFailed":
+      return { ...state, settings: { ...state.settings, status: "error" } };
+    case "settingsLoaded":
+      return {
+        ...state,
+        settings: {
+          values: settingsValuesFromResponse(action.settings.values),
+          revision: action.settings.revision,
+          status: "ready",
+          readOnlyRecovery: action.settings.readOnlyRecovery,
+          requiresRestart: false,
+        },
+      };
+    case "settingsUpdated":
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          values: settingsValuesFromResponse(action.settings.values),
+          revision: action.settings.revision,
+          status: "ready",
+          requiresRestart: action.settings.requiresRestart,
+        },
+      };
   }
+}
+
+function settingsValuesFromResponse(
+  values: CommandResponse<"settings.get">["values"],
+): AppSettingsValues {
+  return {
+    theme: values.theme ?? DEFAULT_SETTINGS_VALUES.theme,
+    language: values.language ?? DEFAULT_SETTINGS_VALUES.language,
+  };
+}
+
+export function settingsUpdateRequestForState(
+  state: AppState,
+  patch: CommandRequest<"settings.update">["patch"],
+): CommandRequest<"settings.update"> {
+  return {
+    expectedRevision: state.settings.revision,
+    patch,
+  };
 }
 
 function shouldRetireDeploymentPreview(activeTask: ActiveTaskState): boolean {
@@ -404,9 +559,9 @@ export function previewRequestForState(
   state: AppState,
 ): CommandRequest<"migration.preview"> | undefined {
   if (migrationPreviewBlockersForState(state).length > 0) return undefined;
-  const targetScopeId = state.projectRoot;
+  const targetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
   if (targetScopeId === undefined) return undefined;
-  const available = new Set(state.assets.map((asset) => asset.id));
+  const available = new Set(enabledMigrationAssets(state).map((asset) => asset.id));
   const sourceAssetIds = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
   return {
     sourceAssetIds,
@@ -418,13 +573,16 @@ export function previewRequestForState(
 
 export function migrationPreviewBlockersForState(state: AppState): readonly string[] {
   const blockers: string[] = [];
-  const availableAssets = new Map(state.assets.map((asset) => [asset.id, asset]));
+  const availableAssets = new Map(enabledMigrationAssets(state).map((asset) => [asset.id, asset]));
   const selectedAssets = state.migration.sourceAssetIds
     .map((assetId) => availableAssets.get(assetId))
     .filter((asset) => asset !== undefined);
 
   if (state.projectRoot === undefined) {
     blockers.push("Select a project before creating a migration preview.");
+  }
+  if (normalizedTargetScopeId(state.migration.targetScopeId) === undefined) {
+    blockers.push("Enter a target project folder.");
   }
   if (selectedAssets.length === 0) {
     blockers.push("Select at least one source asset.");

@@ -12,6 +12,7 @@ import type {
 } from "@ai-config-hub/shared";
 
 import type { Asset } from "../domain/asset.js";
+import type { AssetStatus } from "../domain/asset.js";
 import type { DeploymentPlan, DeploymentRecord } from "../domain/deployment.js";
 import type { Diagnostic } from "../domain/diagnostic.js";
 import type { EffectiveConfig } from "../domain/effective-config.js";
@@ -52,6 +53,15 @@ export interface IndexRepository {
     readonly limit: number;
   }): Promise<Page<Asset>>;
   getAsset(assetId: AssetId): Promise<Asset | undefined>;
+  getAssetStatuses(assetIds: readonly AssetId[]): Promise<ReadonlyMap<AssetId, AssetStatus>>;
+  setAssetStatus(
+    assetId: AssetId,
+    status: AssetStatus,
+  ): Promise<{
+    readonly assetId: AssetId;
+    readonly status: AssetStatus;
+    readonly revision: string;
+  }>;
   getEffectiveConfig(
     id: EffectiveConfig["effectiveConfigId"],
   ): Promise<EffectiveConfig | undefined>;
@@ -90,6 +100,7 @@ export interface PublicSettings {
   readonly readOnlyMode: boolean;
   readonly customScanRoots: readonly AbsolutePath[];
   readonly theme: "system" | "light" | "dark";
+  readonly language: "system" | "en" | "zh-CN";
   readonly scanHints: boolean;
   readonly fileWatching: boolean;
   readonly pathDisplay: "full" | "abbreviated";

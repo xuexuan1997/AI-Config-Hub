@@ -16,6 +16,7 @@ import { AssetsView } from "./assets.js";
 import { DeploymentView } from "./deployment.js";
 import { HistoryView } from "./history.js";
 import { MigrationView } from "./migration.js";
+import { SettingsView } from "./settings.js";
 
 describe("desktop renderer view structure", () => {
   it("exposes the selected project path as a readable, titled value outside the edit control", () => {
@@ -74,6 +75,74 @@ describe("desktop renderer view structure", () => {
 
     expect(html).toContain('<main data-route="history">');
     expect(html).toContain('<section class="workspace" data-route="history">');
+  });
+
+  it("adds settings to desktop navigation", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: { ...initialState, route: "settings" },
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "Settings"),
+      }),
+    );
+
+    expect(html).toContain('<main data-route="settings">');
+    expect(html).toContain('<section class="workspace" data-route="settings">');
+    expect(html).toContain(">Settings</button>");
+  });
+
+  it("applies language and theme preferences to the shell", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: {
+          ...initialState,
+          settings: {
+            ...initialState.settings,
+            values: { theme: "dark", language: "zh-CN" },
+          },
+        },
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "Workspace"),
+      }),
+    );
+
+    expect(html).toContain('class="app-shell"');
+    expect(html).toContain('data-theme="dark"');
+    expect(html).toContain('data-language="zh-CN"');
+    expect(html).toContain('lang="zh-CN"');
+  });
+
+  it("renders general settings controls for language and theme", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsView, {
+        state: {
+          ...initialState,
+          settings: {
+            values: { theme: "dark", language: "zh-CN" },
+            revision: 2,
+            status: "ready",
+            readOnlyRecovery: false,
+            requiresRestart: false,
+          },
+        },
+        onThemeChange: vi.fn(),
+        onLanguageChange: vi.fn(),
+        onReload: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="settings-panel"');
+    expect(html).toContain('for="settings-theme"');
+    expect(html).toContain('id="settings-theme"');
+    expect(html).toContain('value="dark" selected="">Dark</option>');
+    expect(html).toContain('for="settings-language"');
+    expect(html).toContain('id="settings-language"');
+    expect(html).toContain('value="zh-CN" selected="">Simplified Chinese</option>');
+    expect(html).toContain("Revision 2");
   });
 
   it("groups deployment confirmations and actions into scannable sections", () => {
@@ -273,7 +342,9 @@ describe("desktop renderer view structure", () => {
         onInspect: vi.fn(),
         onLoadEffective: vi.fn(),
         onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
         onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
         onLocateDiagnostic: vi.fn(),
       }),
     );
@@ -312,7 +383,9 @@ describe("desktop renderer view structure", () => {
         onInspect: vi.fn(),
         onLoadEffective: vi.fn(),
         onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
         onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
         onLocateDiagnostic: vi.fn(),
       }),
     );
@@ -339,7 +412,9 @@ describe("desktop renderer view structure", () => {
         onInspect: vi.fn(),
         onLoadEffective: vi.fn(),
         onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
         onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
         onLocateDiagnostic: vi.fn(),
       }),
     );
@@ -371,7 +446,9 @@ describe("desktop renderer view structure", () => {
         onInspect: vi.fn(),
         onLoadEffective: vi.fn(),
         onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
         onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
         onLocateDiagnostic: vi.fn(),
       }),
     );
@@ -381,17 +458,141 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("<td>0 errors</td>");
   });
 
+  it("groups assets by resource type in compact sections", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [
+            assetSummaryFixture(
+              "asset-rule",
+              "rule:AGENTS",
+              { info: 0, warning: 1, error: 0 },
+              { resourceType: "rule", status: "disabled" },
+            ),
+            assetSummaryFixture(
+              "asset-skill",
+              "skill:release",
+              { info: 0, warning: 0, error: 0 },
+              { resourceType: "skill" },
+            ),
+            assetSummaryFixture(
+              "asset-mcp",
+              "mcp:github",
+              { info: 1, warning: 0, error: 0 },
+              { resourceType: "mcp" },
+            ),
+          ],
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="asset-groups"');
+    expect(html).toContain('class="asset-type-group" aria-label="Rule assets"');
+    expect(html).toContain('class="asset-type-group" aria-label="Skill assets"');
+    expect(html).toContain('class="asset-type-group" aria-label="Mcp assets"');
+    expect(html).toContain('class="asset-row-compact"');
+    expect(html).toContain('class="asset-row-meta"');
+    expect(html).toContain('class="asset-status disabled"');
+    expect(html).toContain("Disabled");
+    expect(html).toContain("<h2>Rule assets</h2>");
+    expect(html).toContain("<h2>Skill assets</h2>");
+    expect(html).toContain("<h2>Mcp assets</h2>");
+    expect(html.indexOf("<h2>Rule assets</h2>")).toBeLessThan(html.indexOf("rule:AGENTS"));
+    expect(html.indexOf("<h2>Skill assets</h2>")).toBeLessThan(html.indexOf("skill:release"));
+    expect(html.indexOf("<h2>Mcp assets</h2>")).toBeLessThan(html.indexOf("mcp:github"));
+    expect(html).not.toContain("<th>Type</th>");
+  });
+
+  it("renders inspected asset detail as a modal dialog instead of an inline panel", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+          assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="asset-detail-modal"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('aria-label="Asset detail"');
+    expect(html).toContain('class="asset-detail-dialog"');
+    expect(html).toContain('class="asset-detail-scroll"');
+    expect(html).toContain("Status</dt><dd>Enabled</dd>");
+    expect(html).toContain("Disable asset");
+    expect(html).toContain(">Close</button>");
+    expect(html).not.toContain('<section class="detail-panel" aria-label="Asset detail">');
+  });
+
+  it("enables disabled assets from the asset detail modal", () => {
+    const detail = assetDetailFixture("asset-1", "rule:AGENTS");
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          assets: [
+            {
+              ...assetSummaryFixture("asset-1", "rule:AGENTS"),
+              status: "disabled",
+            },
+          ],
+          assetDetail: {
+            ...detail,
+            asset: { ...detail.asset, status: "disabled" },
+          },
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="asset-status disabled"');
+    expect(html).toContain("Status</dt><dd>Disabled</dd>");
+    expect(html).toContain("Enable asset");
+  });
+
   it("separates migration settings from generated preview results", () => {
     const html = renderToStaticMarkup(
       createElement(MigrationView, {
         state: {
           ...initialState,
+          projectRoot: "/workspace/source",
+          migration: {
+            ...initialState.migration,
+            targetScopeId: "/workspace/target",
+          },
           assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
           preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
         },
         onPreview: vi.fn(),
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
+        onTargetProject: vi.fn(),
         onConflictPolicy: vi.fn(),
       }),
     );
@@ -400,6 +601,9 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="migration-control-panel"');
     expect(html).toContain('class="diff-card migration-result-panel"');
     expect(html).toContain('value="cursor" selected="">Cursor</option>');
+    expect(html).toContain('for="migration-target-project"');
+    expect(html).toContain('id="migration-target-project"');
+    expect(html).toContain('value="/workspace/target"');
     expect(html).toContain('value="replace" selected="">Replace existing files</option>');
     expect(html).toContain("Codex / Rule");
     expect(html).not.toContain("codex / rule");
@@ -432,14 +636,18 @@ function assetSummaryFixture(
   id: string,
   logicalKey: string,
   diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },
+  overrides: Partial<
+    Pick<AppState["assets"][number], "toolKey" | "resourceType" | "scopeKind" | "status">
+  > = {},
 ): AppState["assets"][number] {
   return {
     id: AssetIdSchema.parse(id),
-    toolKey: "codex",
-    resourceType: "rule",
-    scopeKind: "project",
+    toolKey: overrides.toolKey ?? "codex",
+    resourceType: overrides.resourceType ?? "rule",
+    scopeKind: overrides.scopeKind ?? "project",
     logicalKey,
     contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+    status: overrides.status ?? "enabled",
     diagnosticCounts,
   };
 }
@@ -452,6 +660,7 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       resourceType: "rule",
       scopeId: ScopeIdSchema.parse("/workspace"),
       logicalKey,
+      status: "enabled",
     },
     source: {
       pathDisplay: "/workspace/AGENTS.md",

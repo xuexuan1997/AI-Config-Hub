@@ -23,7 +23,7 @@ describe("ApplicationServices", () => {
     });
     const services = {
       scan: { start, status: vi.fn(), cancel: vi.fn() },
-      assets: { list: vi.fn(), get: vi.fn(), openSource },
+      assets: { list: vi.fn(), get: vi.fn(), openSource, disable: vi.fn(), enable: vi.fn() },
       effective: { resolve: vi.fn() },
       diagnostics: { list: vi.fn(), export: vi.fn() },
       migration: { preview: vi.fn() },
@@ -62,6 +62,8 @@ describe("ApplicationServices", () => {
       "assets.list",
       "assets.get",
       "assets.openSource",
+      "assets.disable",
+      "assets.enable",
       "effective.resolve",
       "diagnostics.list",
       "diagnostics.export",

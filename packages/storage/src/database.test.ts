@@ -29,6 +29,7 @@ afterEach(() => {
 
 const expectedTables = [
   "asset_references",
+  "asset_status_overrides",
   "assets",
   "backups",
   "database_backups",

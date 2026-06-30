@@ -4,9 +4,12 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   AssetSchema,
+  AssetStatusSchema,
   DiagnosticSchema,
   EffectiveConfigSchema,
   ScopeSchema,
+  type Asset,
+  type AssetStatus,
   type DerivedIndexIncrementalReplacement,
   type DerivedIndexReplacement,
   type IndexRepository,
@@ -14,6 +17,7 @@ import {
 import {
   AbsolutePathSchema,
   AppError,
+  AssetIdSchema,
   PaginationCursorSchema,
   SemVerSchema,
   ToolIdSchema,
@@ -29,6 +33,29 @@ function readOnlyError() {
     retryable: false,
     suggestedActions: ["Repair or restore the database before making changes"],
   });
+}
+
+function withAssetStatus(asset: Asset, status: AssetStatus): Asset {
+  return AssetSchema.parse({ ...asset, status });
+}
+
+function assetStatusOverrides(
+  database: DatabaseSync,
+  assetIds: readonly string[],
+): ReadonlyMap<string, AssetStatus> {
+  if (assetIds.length === 0) return new Map();
+  const placeholders = assetIds.map(() => "?").join(",");
+  const rows = database
+    .prepare(
+      `SELECT asset_domain_id, status FROM asset_status_overrides WHERE asset_domain_id IN (${placeholders})`,
+    )
+    .all(...assetIds) as { readonly asset_domain_id: string; readonly status: string }[];
+  return new Map(rows.map((row) => [row.asset_domain_id, AssetStatusSchema.parse(row.status)]));
+}
+
+function applyAssetStatus(database: DatabaseSync, asset: Asset): Asset {
+  const status = assetStatusOverrides(database, [asset.assetId]).get(asset.assetId) ?? "enabled";
+  return withAssetStatus(asset, status);
 }
 
 export class SqliteIndexRepository implements IndexRepository {
@@ -108,7 +135,9 @@ export class SqliteIndexRepository implements IndexRepository {
         normalized_json: string;
       }[]
     )
-      .map(({ normalized_json }) => parseJson(AssetSchema, normalized_json))
+      .map(({ normalized_json }) =>
+        applyAssetStatus(this.database, parseJson(AssetSchema, normalized_json)),
+      )
       .filter((asset) => query.toolIds === undefined || query.toolIds.includes(asset.toolId))
       .filter((asset) => query.scopeIds === undefined || query.scopeIds.includes(asset.scopeId))
       .filter(
@@ -143,8 +172,70 @@ export class SqliteIndexRepository implements IndexRepository {
       .prepare("SELECT normalized_json FROM assets WHERE domain_id = ?")
       .get(assetId) as { normalized_json: string } | undefined;
     return Promise.resolve(
-      row === undefined ? undefined : parseJson(AssetSchema, row.normalized_json),
+      row === undefined
+        ? undefined
+        : applyAssetStatus(this.database, parseJson(AssetSchema, row.normalized_json)),
     );
+  }
+
+  getAssetStatuses(
+    assetIds: Parameters<IndexRepository["getAssetStatuses"]>[0],
+  ): ReturnType<IndexRepository["getAssetStatuses"]> {
+    const parsedAssetIds = assetIds.map((assetId) => AssetIdSchema.parse(assetId));
+    if (parsedAssetIds.length === 0) return Promise.resolve(new Map());
+    const overrides = assetStatusOverrides(this.database, parsedAssetIds);
+    return Promise.resolve(
+      new Map(parsedAssetIds.map((assetId) => [assetId, overrides.get(assetId) ?? "enabled"])),
+    );
+  }
+
+  setAssetStatus(
+    assetId: Parameters<IndexRepository["setAssetStatus"]>[0],
+    status: Parameters<IndexRepository["setAssetStatus"]>[1],
+  ): ReturnType<IndexRepository["setAssetStatus"]> {
+    if (this.readOnly) return Promise.reject(readOnlyError());
+    const parsedAssetId = AssetIdSchema.parse(assetId);
+    const parsedStatus = AssetStatusSchema.parse(status);
+    const existing = this.database
+      .prepare("SELECT 1 AS found FROM assets WHERE domain_id = ?")
+      .get(parsedAssetId);
+    if (existing === undefined) {
+      return Promise.reject(
+        new AppError({
+          code: "NOT_FOUND",
+          message: "Asset not found",
+          retryable: false,
+          suggestedActions: ["Scan the project and choose an existing asset"],
+        }),
+      );
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (parsedStatus === "enabled") {
+        this.database
+          .prepare("DELETE FROM asset_status_overrides WHERE asset_domain_id = ?")
+          .run(parsedAssetId);
+      } else {
+        const now = Date.now();
+        this.database
+          .prepare(
+            `INSERT INTO asset_status_overrides(asset_domain_id, status, created_at, updated_at)
+             VALUES(?, ?, ?, ?)
+             ON CONFLICT(asset_domain_id) DO UPDATE SET
+               status = excluded.status,
+               updated_at = excluded.updated_at`,
+          )
+          .run(parsedAssetId, parsedStatus, now, now);
+      }
+      const revision = String(bumpRevision(this.database));
+      this.database.exec("COMMIT");
+      return Promise.resolve({ assetId: parsedAssetId, status: parsedStatus, revision });
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      return Promise.reject(
+        error instanceof Error ? error : new Error("Asset status update failed"),
+      );
+    }
   }
 
   getEffectiveConfig(

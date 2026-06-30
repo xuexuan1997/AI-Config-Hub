@@ -13,6 +13,7 @@ const defaults = parseSettings({
   readOnlyMode: false,
   customScanRoots: [],
   theme: "system",
+  language: "system",
   scanHints: true,
   fileWatching: true,
   pathDisplay: "abbreviated",
@@ -83,9 +84,11 @@ function parseSettings(value: unknown): PublicSettings {
     throw new TypeError("Public settings are invalid");
   }
   const theme = input["theme"] ?? "system";
+  const language = input["language"] ?? "system";
   const scanHints = input["scanHints"] ?? true;
   if (
     (theme !== "system" && theme !== "light" && theme !== "dark") ||
+    (language !== "system" && language !== "en" && language !== "zh-CN") ||
     typeof scanHints !== "boolean"
   ) {
     throw new TypeError("Public settings are invalid");
@@ -96,6 +99,7 @@ function parseSettings(value: unknown): PublicSettings {
       input["customScanRoots"].map((path) => AbsolutePathSchema.parse(path)),
     ),
     theme,
+    language,
     scanHints,
     fileWatching: input["fileWatching"],
     pathDisplay: input["pathDisplay"],

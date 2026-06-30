@@ -190,6 +190,15 @@ function repository(
         items: seed.assets ?? [],
         snapshotRevision: "seed",
       }),
+    getAssetStatuses: (assetIds: Parameters<IndexRepository["getAssetStatuses"]>[0]) =>
+      Promise.resolve(
+        new Map(
+          assetIds.map((assetId) => [
+            assetId,
+            seed.assets?.find((asset) => asset.assetId === assetId)?.status ?? "enabled",
+          ]),
+        ),
+      ),
     listScopes: () => Promise.resolve(seed.scopes ?? []),
   } as unknown as IndexRepository;
   return { index, calls };

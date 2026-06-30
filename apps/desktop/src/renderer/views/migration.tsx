@@ -15,6 +15,7 @@ export function MigrationView(props: {
   readonly onPreview: () => void;
   readonly onToggleSource: (assetId: AppState["assets"][number]["id"], selected: boolean) => void;
   readonly onTargetTool: (targetToolKey: MigrationTargetToolKey) => void;
+  readonly onTargetProject: (targetScopeId: string) => void;
   readonly onConflictPolicy: (conflictPolicy: MigrationConflictPolicy) => void;
 }) {
   const preview = props.state.preview;
@@ -49,6 +50,16 @@ export function MigrationView(props: {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="field">
+              <label htmlFor="migration-target-project">Target project folder</label>
+              <input
+                id="migration-target-project"
+                type="text"
+                value={props.state.migration.targetScopeId ?? ""}
+                placeholder={props.state.projectRoot ?? "Target project path"}
+                onChange={(event) => props.onTargetProject(event.currentTarget.value)}
+              />
             </div>
             <div className="field">
               <label htmlFor="migration-conflict">Existing target files</label>

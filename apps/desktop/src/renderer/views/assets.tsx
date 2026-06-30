@@ -6,13 +6,19 @@ export function AssetsView(props: {
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onLoadEffective: () => void;
   readonly onOpenSource: () => void;
+  readonly onToggleAssetStatus: (
+    assetId: AppState["assets"][number]["id"],
+    nextStatus: AssetStatus,
+  ) => void;
   readonly onRescanAfterEdit: () => void;
+  readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   const detail = props.state.assetDetail;
   const effective = props.state.effective;
   const diagnosticScope = diagnosticScopeFor(detail);
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
+  const assetGroups = assetGroupsByResourceType(props.state.assets);
   return (
     <>
       <h1>Assets</h1>
@@ -34,122 +40,74 @@ export function AssetsView(props: {
           <strong>{props.state.diagnosticCounts.info}</strong>
         </article>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Tool</th>
-            <th>Type</th>
-            <th>Logical key</th>
-            <th>Diagnostics</th>
-            <th>Detail</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.state.assets.map((asset) => (
-            <tr key={asset.id}>
-              <td>{toolLabel(asset.toolKey)}</td>
-              <td>{resourceTypeLabel(asset.resourceType)}</td>
-              <td>{asset.logicalKey}</td>
-              <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
-              <td>
-                <button type="button" onClick={() => props.onInspect(asset.id)}>
-                  Inspect
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {assetGroups.length === 0 ? (
+        <p className="empty-state">No assets indexed yet.</p>
+      ) : (
+        <div className="asset-groups">
+          {assetGroups.map((group) => {
+            const groupLabel = resourceTypeLabel(group.resourceType);
+            return (
+              <section
+                key={group.resourceType}
+                className="asset-type-group"
+                aria-label={`${groupLabel} assets`}
+              >
+                <header className="asset-type-heading">
+                  <h2>{groupLabel} assets</h2>
+                  <span>{formatAssetCount(group.assets.length)}</span>
+                </header>
+                <table className="asset-table-compact">
+                  <thead>
+                    <tr>
+                      <th>Logical key</th>
+                      <th>Tool</th>
+                      <th>Resource</th>
+                      <th>Diagnostics</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.assets.map((asset) => (
+                      <tr key={asset.id} className="asset-row-compact">
+                        <td className="asset-primary-cell">
+                          <strong>{asset.logicalKey}</strong>
+                          <span className="asset-row-meta">
+                            {scopeKindLabel(asset.scopeKind)}
+                            <AssetStatusBadge status={assetStatusFor(asset)} />
+                          </span>
+                        </td>
+                        <td>{toolLabel(asset.toolKey)}</td>
+                        <td>{resourceTypeLabel(asset.resourceType)}</td>
+                        <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
+                        <td>
+                          <button
+                            className="asset-inspect-button"
+                            type="button"
+                            onClick={() => props.onInspect(asset.id)}
+                          >
+                            Inspect
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            );
+          })}
+        </div>
+      )}
       {detail === undefined ? null : (
-        <section className="detail-panel" aria-label="Asset detail">
-          <h2>{detail.asset.logicalKey}</h2>
-          <div className="detail-actions">
-            <button type="button" onClick={props.onOpenSource}>
-              Open source
-            </button>
-            <button type="button" onClick={props.onRescanAfterEdit}>
-              Rescan after edit
-            </button>
-            <button type="button" onClick={props.onLoadEffective}>
-              Load effective configuration
-            </button>
-          </div>
-          <dl>
-            <dt>Tool</dt>
-            <dd>{toolLabel(detail.asset.toolKey)}</dd>
-            <dt>Resource</dt>
-            <dd>{resourceTypeLabel(detail.asset.resourceType)}</dd>
-            <dt>Scope</dt>
-            <dd>{detail.asset.scopeId}</dd>
-            <dt>Source</dt>
-            <dd>{detail.source.pathDisplay}</dd>
-            <dt>Observed</dt>
-            <dd>{formatTimestamp(detail.source.observedAt)}</dd>
-          </dl>
-          {detail.asset.references === undefined || detail.asset.references.length === 0 ? null : (
-            <>
-              <h3>References</h3>
-              <ul>
-                {detail.asset.references.map((reference) => (
-                  <li key={reference}>{reference}</li>
-                ))}
-              </ul>
-            </>
-          )}
-          {detail.asset.normalized === undefined ? null : (
-            <>
-              <h3>Normalized</h3>
-              <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
-            </>
-          )}
-          {effective === undefined ? null : (
-            <>
-              <h3>Effective configuration</h3>
-              <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
-              <h3>Contributors</h3>
-              {effective.contributors.length === 0 ? (
-                <p>No contributing assets.</p>
-              ) : (
-                <ul>
-                  {effective.contributors.map((contributor) => (
-                    <li
-                      key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
-                    >
-                      <strong>{assetLabel(contributor.assetId, assetLabels)}</strong>{" "}
-                      <span>{contributionLabel(contributor.action, contributor.reasonCode)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h3>Ignored assets</h3>
-              {effective.ignored.length === 0 ? (
-                <p>No ignored assets.</p>
-              ) : (
-                <ul>
-                  {effective.ignored.map((ignored) => (
-                    <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
-                      <strong>{assetLabel(ignored.assetId, assetLabels)}</strong>{" "}
-                      <span>Ignored because {reasonLabel(ignored.reasonCode)}.</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h3>Effective diagnostics</h3>
-              {effective.diagnostics.length === 0 ? (
-                <p>No effective diagnostics.</p>
-              ) : (
-                <ul className="diagnostic-list">
-                  {effective.diagnostics.map((diagnostic) => (
-                    <li key={diagnostic.id}>
-                      <strong>{diagnosticLabel(diagnostic)}</strong>
-                      <span>{diagnostic.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </section>
+        <AssetDetailDialog
+          detail={detail}
+          effective={effective}
+          assetLabels={assetLabels}
+          onOpenSource={props.onOpenSource}
+          onToggleAssetStatus={props.onToggleAssetStatus}
+          onRescanAfterEdit={props.onRescanAfterEdit}
+          onLoadEffective={props.onLoadEffective}
+          onCloseInspect={props.onCloseInspect}
+        />
       )}
       {props.state.diagnostics.length === 0 ? null : (
         <section className="detail-panel" aria-label={diagnosticScope.panelLabel}>
@@ -182,6 +140,45 @@ export function AssetsView(props: {
       )}
     </>
   );
+}
+
+type AssetSummary = AppState["assets"][number];
+type AssetStatus = "enabled" | "disabled";
+
+function assetGroupsByResourceType(assets: readonly AssetSummary[]) {
+  const groups = new Map<string, AssetSummary[]>();
+  for (const asset of assets) {
+    const group = groups.get(asset.resourceType);
+    if (group === undefined) {
+      groups.set(asset.resourceType, [asset]);
+    } else {
+      group.push(asset);
+    }
+  }
+  return Array.from(groups, ([resourceType, groupAssets]) => ({
+    resourceType,
+    assets: groupAssets,
+  }));
+}
+
+function formatAssetCount(count: number): string {
+  return `${count} ${count === 1 ? "asset" : "assets"}`;
+}
+
+function assetStatusFor(asset: { readonly status?: string }): AssetStatus {
+  return asset.status === "disabled" ? "disabled" : "enabled";
+}
+
+function assetStatusLabel(status: AssetStatus): string {
+  return status === "disabled" ? "Disabled" : "Enabled";
+}
+
+function nextAssetStatus(status: AssetStatus): AssetStatus {
+  return status === "disabled" ? "enabled" : "disabled";
+}
+
+function assetStatusActionLabel(status: AssetStatus): string {
+  return status === "disabled" ? "Enable asset" : "Disable asset";
 }
 
 function formatErrorCount(count: number): string {
@@ -233,6 +230,10 @@ function toolLabel(toolKey: string): string {
 
 function resourceTypeLabel(resourceType: string): string {
   return titleizeIdentifier(resourceType);
+}
+
+function scopeKindLabel(scopeKind: string): string {
+  return `${titleizeIdentifier(scopeKind)} scope`;
 }
 
 function assetLabel(assetId: string, assetLabels: ReadonlyMap<string, string>): string {
@@ -333,5 +334,144 @@ function LocateDiagnosticButton(props: {
     >
       Locate
     </button>
+  );
+}
+
+function AssetStatusBadge(props: { readonly status: AssetStatus }) {
+  return <span className={`asset-status ${props.status}`}>{assetStatusLabel(props.status)}</span>;
+}
+
+function AssetDetailDialog(props: {
+  readonly detail: NonNullable<AppState["assetDetail"]>;
+  readonly effective: AppState["effective"];
+  readonly assetLabels: ReadonlyMap<string, string>;
+  readonly onOpenSource: () => void;
+  readonly onToggleAssetStatus: (
+    assetId: AppState["assets"][number]["id"],
+    nextStatus: AssetStatus,
+  ) => void;
+  readonly onRescanAfterEdit: () => void;
+  readonly onLoadEffective: () => void;
+  readonly onCloseInspect: () => void;
+}) {
+  const detail = props.detail;
+  const effective = props.effective;
+  const status = assetStatusFor(detail.asset);
+  const targetStatus = nextAssetStatus(status);
+  return (
+    <div className="asset-detail-modal">
+      <section
+        className="asset-detail-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Asset detail"
+      >
+        <header className="asset-detail-header">
+          <div>
+            <span className="eyebrow">Inspect asset</span>
+            <h2>{detail.asset.logicalKey}</h2>
+          </div>
+          <button className="asset-detail-close" type="button" onClick={props.onCloseInspect}>
+            Close
+          </button>
+        </header>
+        <div className="asset-detail-scroll">
+          <div className="detail-actions">
+            <button type="button" onClick={props.onOpenSource}>
+              Open source
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onToggleAssetStatus(detail.asset.id, targetStatus)}
+            >
+              {assetStatusActionLabel(status)}
+            </button>
+            <button type="button" onClick={props.onRescanAfterEdit}>
+              Rescan after edit
+            </button>
+            <button type="button" onClick={props.onLoadEffective}>
+              Load effective configuration
+            </button>
+          </div>
+          <dl>
+            <dt>Tool</dt>
+            <dd>{toolLabel(detail.asset.toolKey)}</dd>
+            <dt>Resource</dt>
+            <dd>{resourceTypeLabel(detail.asset.resourceType)}</dd>
+            <dt>Status</dt>
+            <dd>{assetStatusLabel(status)}</dd>
+            <dt>Scope</dt>
+            <dd>{detail.asset.scopeId}</dd>
+            <dt>Source</dt>
+            <dd>{detail.source.pathDisplay}</dd>
+            <dt>Observed</dt>
+            <dd>{formatTimestamp(detail.source.observedAt)}</dd>
+          </dl>
+          {detail.asset.references === undefined || detail.asset.references.length === 0 ? null : (
+            <>
+              <h3>References</h3>
+              <ul>
+                {detail.asset.references.map((reference) => (
+                  <li key={reference}>{reference}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {detail.asset.normalized === undefined ? null : (
+            <>
+              <h3>Normalized</h3>
+              <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
+            </>
+          )}
+          {effective === undefined ? null : (
+            <>
+              <h3>Effective configuration</h3>
+              <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
+              <h3>Contributors</h3>
+              {effective.contributors.length === 0 ? (
+                <p>No contributing assets.</p>
+              ) : (
+                <ul>
+                  {effective.contributors.map((contributor) => (
+                    <li
+                      key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
+                    >
+                      <strong>{assetLabel(contributor.assetId, props.assetLabels)}</strong>{" "}
+                      <span>{contributionLabel(contributor.action, contributor.reasonCode)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <h3>Ignored assets</h3>
+              {effective.ignored.length === 0 ? (
+                <p>No ignored assets.</p>
+              ) : (
+                <ul>
+                  {effective.ignored.map((ignored) => (
+                    <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
+                      <strong>{assetLabel(ignored.assetId, props.assetLabels)}</strong>{" "}
+                      <span>Ignored because {reasonLabel(ignored.reasonCode)}.</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <h3>Effective diagnostics</h3>
+              {effective.diagnostics.length === 0 ? (
+                <p>No effective diagnostics.</p>
+              ) : (
+                <ul className="diagnostic-list">
+                  {effective.diagnostics.map((diagnostic) => (
+                    <li key={diagnostic.id}>
+                      <strong>{diagnosticLabel(diagnostic)}</strong>
+                      <span>{diagnostic.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }

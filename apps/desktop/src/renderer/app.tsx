@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 
 import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/api";
 
@@ -21,6 +21,7 @@ import {
   refreshHistory,
   rollbackRequestForState,
   scanActionForTaskEvent,
+  settingsUpdateRequestForState,
   taskActionForTaskEvent,
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
@@ -28,6 +29,7 @@ import { DeploymentView } from "./views/deployment.js";
 import { HistoryView } from "./views/history.js";
 import { MigrationView } from "./views/migration.js";
 import { OverviewView } from "./views/overview.js";
+import { SettingsView } from "./views/settings.js";
 
 export function App(props: { readonly api: DesktopApi }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -54,6 +56,43 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({ type: "project", root });
     }
   }
+
+  async function loadSettings() {
+    dispatch({ type: "settingsLoading" });
+    try {
+      const response = await props.api.invoke("settings.get", { keys: ["theme", "language"] });
+      if (response.ok) dispatch({ type: "settingsLoaded", settings: response.data });
+      else {
+        dispatch({ type: "settingsFailed" });
+        dispatch({ type: "message", message: response.error.message });
+      }
+    } catch (error) {
+      dispatch({ type: "settingsFailed" });
+      dispatch({ type: "message", message: formatUiError(error, "Load settings") });
+    }
+  }
+
+  async function updateSettings(patch: CommandRequest<"settings.update">["patch"]) {
+    dispatch({ type: "settingsSaving" });
+    try {
+      const response = await props.api.invoke(
+        "settings.update",
+        settingsUpdateRequestForState(state, patch),
+      );
+      if (response.ok) dispatch({ type: "settingsUpdated", settings: response.data });
+      else {
+        dispatch({ type: "settingsFailed" });
+        dispatch({ type: "message", message: response.error.message });
+      }
+    } catch (error) {
+      dispatch({ type: "settingsFailed" });
+      dispatch({ type: "message", message: formatUiError(error, "Update settings") });
+    }
+  }
+
+  useEffect(() => {
+    void loadSettings();
+  }, [props.api]);
 
   async function scan() {
     await runAction("Start scan", async () => {
@@ -147,6 +186,32 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "message",
         message: response.ok ? "Source file opened." : response.error.message,
+      });
+    });
+  }
+
+  async function toggleAssetStatus(
+    assetId: CommandResponse<"assets.list">["items"][number]["id"],
+    nextStatus: CommandResponse<"assets.list">["items"][number]["status"],
+  ) {
+    await runAction(nextStatus === "disabled" ? "Disable asset" : "Enable asset", async () => {
+      const response =
+        nextStatus === "disabled"
+          ? await props.api.invoke("assets.disable", { assetId })
+          : await props.api.invoke("assets.enable", { assetId });
+      if (!response.ok) {
+        dispatch({ type: "message", message: response.error.message });
+        return;
+      }
+
+      dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+      const detail = await refreshAssetDetail(props.api, assetId);
+      if (detail !== undefined) dispatch({ type: "assetDetail", detail });
+      const diagnostics = await refreshDiagnostics(props.api, assetId);
+      dispatch({
+        type: "diagnostics",
+        diagnostics: diagnostics.diagnostics,
+        counts: diagnostics.diagnosticCounts,
       });
     });
   }
@@ -322,7 +387,21 @@ export function App(props: { readonly api: DesktopApi }) {
             });
           }}
           onOpenSource={() => void openSource()}
+          onToggleAssetStatus={(assetId, nextStatus) => {
+            void toggleAssetStatus(assetId, nextStatus);
+          }}
           onRescanAfterEdit={() => void rescanAfterEdit()}
+          onCloseInspect={() => {
+            dispatch({ type: "assetDetailClosed" });
+            void runAction("Refresh diagnostics", async () => {
+              const diagnostics = await refreshDiagnostics(props.api);
+              dispatch({
+                type: "diagnostics",
+                diagnostics: diagnostics.diagnostics,
+                counts: diagnostics.diagnosticCounts,
+              });
+            });
+          }}
           onLocateDiagnostic={(assetId) => {
             void runAction("Locate diagnostic", async () => {
               const detail = await refreshAssetDetail(props.api, assetId);
@@ -349,6 +428,9 @@ export function App(props: { readonly api: DesktopApi }) {
             dispatch({ type: "migrationSource", assetId, selected })
           }
           onTargetTool={(targetToolKey) => dispatch({ type: "migrationTarget", targetToolKey })}
+          onTargetProject={(targetScopeId) =>
+            dispatch({ type: "migrationTargetProject", targetScopeId })
+          }
           onConflictPolicy={(conflictPolicy) =>
             dispatch({ type: "migrationConflictPolicy", conflictPolicy })
           }
@@ -384,6 +466,14 @@ export function App(props: { readonly api: DesktopApi }) {
               else dispatch({ type: "message", message: response.error.message });
             });
           }}
+        />
+      ) : null}
+      {state.route === "settings" ? (
+        <SettingsView
+          state={state}
+          onThemeChange={(theme) => void updateSettings({ theme })}
+          onLanguageChange={(language) => void updateSettings({ language })}
+          onReload={() => void loadSettings()}
         />
       ) : null}
     </AppShell>

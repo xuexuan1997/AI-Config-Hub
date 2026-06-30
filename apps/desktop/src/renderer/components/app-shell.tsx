@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import type { AppState, Route } from "../model.js";
+import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
   { route: "overview", label: "Overview" },
@@ -8,6 +8,7 @@ const routes: { readonly route: Route; readonly label: string }[] = [
   { route: "migration", label: "Migration" },
   { route: "deployment", label: "Deployment" },
   { route: "history", label: "History" },
+  { route: "settings", label: "Settings" },
 ];
 
 export function AppShell(props: {
@@ -25,7 +26,12 @@ export function AppShell(props: {
   }, [props.state.route]);
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-language={props.state.settings.values.language}
+      data-theme={themeAttribute(props.state.settings.values.theme)}
+      lang={languageAttribute(props.state.settings.values.language)}
+    >
       <aside className="sidebar">
         <div className="brand">AI Config Hub</div>
         <nav aria-label="Workspaces">
@@ -97,4 +103,19 @@ export function AppShell(props: {
       </main>
     </div>
   );
+}
+
+function themeAttribute(theme: ThemeSetting): "light" | "dark" | "system" {
+  return theme;
+}
+
+function languageAttribute(language: LanguageSetting): "en" | "zh-CN" | undefined {
+  switch (language) {
+    case "en":
+      return "en";
+    case "zh-CN":
+      return "zh-CN";
+    case "system":
+      return undefined;
+  }
 }

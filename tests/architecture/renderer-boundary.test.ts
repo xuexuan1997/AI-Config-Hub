@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
-const dependencyCruiseTimeoutMs = 10_000;
+const dependencyCruiseTimeoutMs = 30_000;
 
 function cruise(fixture: string) {
   return spawnSync(

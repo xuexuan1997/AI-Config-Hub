@@ -13,6 +13,7 @@ import {
   deploymentBlockersForState,
   deploymentConfirmationsForState,
   effectiveRequestForState,
+  enabledMigrationAssets,
   formatUiError,
   historyDetailRequestForEntry,
   initialState,
@@ -22,6 +23,7 @@ import {
   previewRequestForState,
   reducer,
   rollbackRequestForState,
+  settingsUpdateRequestForState,
   taskActionForTaskEvent,
   scanActionForTaskEvent,
 } from "./model.js";
@@ -71,6 +73,7 @@ describe("renderer project selection state", () => {
           scopeKind: "project",
           logicalKey: "AGENTS.md",
           contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
           diagnosticCounts: { info: 0, warning: 0, error: 0 },
         },
       ],
@@ -82,6 +85,58 @@ describe("renderer project selection state", () => {
       targetScopeId: "/home/user/workspace",
       conflictPolicy: "replace",
     });
+  });
+
+  it("defaults the migration target project to the selected source project", () => {
+    const withProject = reducer(initialState, {
+      type: "project",
+      root: "/home/user/source-workspace",
+    });
+    const switchedProject = reducer(withProject, {
+      type: "project",
+      root: "/home/user/next-source-workspace",
+    });
+
+    expect(withProject.migration.targetScopeId).toBe("/home/user/source-workspace");
+    expect(switchedProject.migration.targetScopeId).toBe("/home/user/next-source-workspace");
+  });
+
+  it("builds migration previews for an explicit target project", () => {
+    const withProject = reducer(initialState, {
+      type: "project",
+      root: "/home/user/source-workspace",
+    });
+    const withAssets = reducer(withProject, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const withTargetProject = reducer(withAssets, {
+      type: "migrationTargetProject",
+      targetScopeId: " /home/user/target-workspace ",
+    });
+    const switchedSourceProject = reducer(withTargetProject, {
+      type: "project",
+      root: "/home/user/next-source-workspace",
+    });
+
+    expect(previewRequestForState(withTargetProject)).toEqual({
+      sourceAssetIds: ["asset-1"],
+      targetToolKey: "cursor",
+      targetScopeId: "/home/user/target-workspace",
+      conflictPolicy: "replace",
+    });
+    expect(switchedSourceProject.migration.targetScopeId).toBe("/home/user/target-workspace");
   });
 
   it("builds migration previews from explicit migration selections", () => {
@@ -99,6 +154,7 @@ describe("renderer project selection state", () => {
           scopeKind: "project",
           logicalKey: "AGENTS.md",
           contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
           diagnosticCounts: { info: 0, warning: 0, error: 0 },
         },
         {
@@ -108,6 +164,7 @@ describe("renderer project selection state", () => {
           scopeKind: "project",
           logicalKey: "review/SKILL.md",
           contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+          status: "enabled",
           diagnosticCounts: { info: 0, warning: 0, error: 0 },
         },
       ],
@@ -138,6 +195,53 @@ describe("renderer project selection state", () => {
       targetScopeId: "/home/user/workspace",
       conflictPolicy: "fail",
     });
+  });
+
+  it("keeps disabled assets visible but out of default migration selections", () => {
+    const withProject = reducer(initialState, {
+      type: "project",
+      root: "/home/user/workspace",
+    });
+    const withAssets = reducer(withProject, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-disabled"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "disabled/AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "disabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+        {
+          id: AssetIdSchema.parse("asset-enabled"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const manuallySelectedDisabled = reducer(withAssets, {
+      type: "migrationSource",
+      assetId: AssetIdSchema.parse("asset-disabled"),
+      selected: true,
+    });
+
+    expect(withAssets.assets.map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: "asset-disabled", status: "disabled" },
+      { id: "asset-enabled", status: "enabled" },
+    ]);
+    expect(withAssets.migration.sourceAssetIds).toEqual(["asset-enabled"]);
+    expect(enabledMigrationAssets(withAssets).map(({ id }) => id)).toEqual(["asset-enabled"]);
+    expect(previewRequestForState(manuallySelectedDisabled)?.sourceAssetIds).toEqual([
+      "asset-enabled",
+    ]);
   });
 
   it("uses the newest succeeded deployment history item for rollback", () => {
@@ -198,6 +302,41 @@ describe("renderer project selection state", () => {
 
     expect(navigated.route).toBe("assets");
     expect(navigated.message).toBeUndefined();
+  });
+
+  it("stores loaded desktop settings and builds optimistic update requests", () => {
+    const loaded = reducer(initialState, {
+      type: "settingsLoaded",
+      settings: {
+        values: { theme: "dark", language: "zh-CN" },
+        revision: 3,
+        readOnlyRecovery: false,
+      },
+    });
+    const saved = reducer(loaded, {
+      type: "settingsUpdated",
+      settings: {
+        values: { theme: "light", language: "en" },
+        revision: 4,
+        requiresRestart: false,
+      },
+    });
+
+    expect(loaded.settings).toMatchObject({
+      values: { theme: "dark", language: "zh-CN" },
+      revision: 3,
+      status: "ready",
+      readOnlyRecovery: false,
+    });
+    expect(settingsUpdateRequestForState(loaded, { language: "en" })).toEqual({
+      expectedRevision: 3,
+      patch: { language: "en" },
+    });
+    expect(saved.settings).toMatchObject({
+      values: { theme: "light", language: "en" },
+      revision: 4,
+      status: "ready",
+    });
   });
 
   it("maps deployment task events to active task progress and recovery state", () => {
@@ -329,6 +468,7 @@ describe("renderer project selection state", () => {
         resourceType: "rule" as const,
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
+        status: "enabled" as const,
         normalized: { kind: "rule", data: { instructions: "Use tests." } },
         references: ["README.md"],
         diagnosticIds: [DiagnosticIdSchema.parse("diagnostic-1")],
@@ -372,6 +512,7 @@ describe("renderer project selection state", () => {
         resourceType: "rule" as const,
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
+        status: "enabled" as const,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -414,6 +555,7 @@ describe("renderer project selection state", () => {
         resourceType: "rule" as const,
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
+        status: "enabled" as const,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -428,6 +570,38 @@ describe("renderer project selection state", () => {
     expect(openSourceRequestForState(withDetail)).toEqual({ assetId: "asset-1" });
   });
 
+  it("clears inspected asset detail and effective configuration when inspect closes", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+        status: "enabled" as const,
+      },
+      source: {
+        pathDisplay: "/workspace/AGENTS.md",
+        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        observedAt: "2026-06-28T08:00:00.000Z",
+      },
+      redactions: [],
+    };
+    const effective = {
+      effective: { rules: ["Use tests."] },
+      contributors: [],
+      ignored: [],
+      diagnostics: [],
+      snapshotRevision: "revision-1",
+    };
+    const withDetail = reducer(initialState, { type: "assetDetail", detail });
+    const withEffective = reducer(withDetail, { type: "effective", effective });
+    const closed = reducer(withEffective, { type: "assetDetailClosed" });
+
+    expect(closed.assetDetail).toBeUndefined();
+    expect(closed.effective).toBeUndefined();
+  });
+
   it("clears project-scoped details when the project changes", () => {
     const detail = {
       asset: {
@@ -436,6 +610,7 @@ describe("renderer project selection state", () => {
         resourceType: "rule" as const,
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
+        status: "enabled" as const,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -488,6 +663,7 @@ describe("renderer project selection state", () => {
         resourceType: "rule" as const,
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
+        status: "enabled" as const,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -709,6 +885,7 @@ describe("renderer project selection state", () => {
           scopeKind: "project",
           logicalKey: "AGENTS.md",
           contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+          status: "enabled",
           diagnosticCounts: { info: 0, warning: 0, error: 0 },
         },
       ],
@@ -895,6 +1072,7 @@ describe("renderer project selection state", () => {
             scopeKind: "project",
             logicalKey: "AGENTS.md",
             contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+            status: "enabled",
             diagnosticCounts: { info: 0, warning: 0, error: 0 },
           },
           {
@@ -904,6 +1082,7 @@ describe("renderer project selection state", () => {
             scopeKind: "project",
             logicalKey: "STALE.md",
             contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+            status: "enabled",
             diagnosticCounts: { info: 0, warning: 0, error: 0 },
           },
         ],

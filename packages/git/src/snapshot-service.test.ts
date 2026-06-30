@@ -148,6 +148,7 @@ function mcpAsset(): Asset {
     adapterVersion: "1.0.0",
     discoveredAt: now,
     references: ["${TOKEN}"],
+    status: "enabled",
     diagnosticSummary: { info: 0, warning: 0, error: 0 },
   };
 }
@@ -175,6 +176,7 @@ function ruleAsset(): Asset {
     adapterVersion: "1.0.0",
     discoveredAt: now,
     references: [],
+    status: "enabled",
     diagnosticSummary: { info: 0, warning: 0, error: 0 },
   };
 }

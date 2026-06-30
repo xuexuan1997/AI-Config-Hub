@@ -17,6 +17,7 @@ import type {
 } from "@ai-config-hub/shared";
 
 import type { Asset } from "../domain/asset.js";
+import type { AssetStatus } from "../domain/asset.js";
 import type { DeploymentPlan, DeploymentRecord } from "../domain/deployment.js";
 import type { Diagnostic } from "../domain/diagnostic.js";
 import type { EffectiveConfig } from "../domain/effective-config.js";
@@ -30,6 +31,8 @@ export const CORE_COMMAND_NAMES = [
   "assets.list",
   "assets.get",
   "assets.openSource",
+  "assets.disable",
+  "assets.enable",
   "effective.resolve",
   "diagnostics.list",
   "diagnostics.export",
@@ -88,6 +91,15 @@ export interface AssetOpenSourceRequest {
 export interface AssetOpenSourceResult {
   readonly assetId: AssetId;
   readonly opened: true;
+}
+
+export interface AssetStatusChangeRequest {
+  readonly assetId: AssetId;
+}
+
+export interface AssetStatusChangeResult {
+  readonly assetId: AssetId;
+  readonly status: AssetStatus;
 }
 
 export interface EffectiveResolveRequest {
@@ -216,6 +228,14 @@ export interface UseCaseContractMap {
   readonly "assets.openSource": {
     readonly input: AssetOpenSourceRequest;
     readonly output: AssetOpenSourceResult;
+  };
+  readonly "assets.disable": {
+    readonly input: AssetStatusChangeRequest;
+    readonly output: { readonly assetId: AssetId; readonly status: "disabled" };
+  };
+  readonly "assets.enable": {
+    readonly input: AssetStatusChangeRequest;
+    readonly output: { readonly assetId: AssetId; readonly status: "enabled" };
   };
   readonly "effective.resolve": {
     readonly input: EffectiveResolveRequest;
