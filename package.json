@@ -12,7 +12,7 @@
     "build": "pnpm -r --if-present build",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --if-present typecheck",
     "lint": "eslint . && prettier --check . && depcruise --config dependency-cruiser.mjs apps packages",
-    "test": "vitest run --coverage && pnpm test:contracts",
+    "test": "vitest run --coverage --maxWorkers=1 && pnpm test:contracts",
     "test:contracts": "node --test tests/tooling/*.test.mjs tests/packaging/*.test.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
