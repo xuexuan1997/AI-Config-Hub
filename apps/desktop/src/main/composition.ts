@@ -5,7 +5,7 @@ import { homedir, platform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
-import { DeploymentStatusSchema } from "@ai-config-hub/core";
+import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
 import type {
   AdapterEffectiveConfigDraft,
   AdapterReadApi,
@@ -377,6 +377,7 @@ function createServices(
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
         limit: requiresPostFilter ? 10_000 : requestedLimit,
       });
+      const loadStates = await assetLoadStates(runtime, page.items);
       const scopeKinds = scopeKindsForAssets(runtime, page.items);
       const filtered = page.items.filter((asset) => {
         const scopeKind = scopeKinds.get(asset.scopeId) ?? "project";
@@ -395,6 +396,8 @@ function createServices(
           resourceType: asset.resource.kind,
           scopeKind: scopeKinds.get(asset.scopeId) ?? "project",
           logicalKey: asset.locator,
+          sourceDirectory: dirname(asset.canonicalSourcePath),
+          ...assetLoadStateFields(loadStates.get(asset.assetId)),
           contentHash: asset.contentHash,
           status: asset.status,
           diagnosticCounts: asset.diagnosticSummary,
@@ -1487,6 +1490,67 @@ function scopeKindsForAssets(
       .filter(({ domain_id }) => scopeIds.has(domain_id))
       .map(({ domain_id, scope_kind }) => [domain_id, ScopeKindSchema.parse(scope_kind)]),
   );
+}
+
+type AssetListLoadState = {
+  readonly loadState: "loaded" | "covered" | "disabled";
+  readonly coveredByAssetId?: Asset["assetId"];
+  readonly coveredByLogicalKey?: string;
+};
+
+async function assetLoadStates(
+  runtime: DesktopRuntime,
+  listedAssets: readonly Asset[],
+): Promise<ReadonlyMap<string, AssetListLoadState>> {
+  const allAssets = await runtime.repositories.index.listAssets({ limit: 10_000 });
+  const assetsById = new Map(
+    [...allAssets.items, ...listedAssets].map((asset) => [asset.assetId, asset]),
+  );
+  const states = new Map<string, AssetListLoadState>();
+  for (const asset of assetsById.values()) {
+    if (asset.status === "disabled") states.set(asset.assetId, { loadState: "disabled" });
+  }
+
+  for (const config of latestEffectiveConfigs(runtime)) {
+    for (const step of config.steps) {
+      const asset = assetsById.get(step.assetId);
+      if (asset === undefined) continue;
+      const current = states.get(asset.assetId);
+      if (current?.loadState === "disabled") continue;
+      if (step.action === "ignore") {
+        const coveredByAsset =
+          step.coveredByAssetId === undefined ? undefined : assetsById.get(step.coveredByAssetId);
+        states.set(asset.assetId, {
+          loadState: "covered",
+          ...(step.coveredByAssetId === undefined
+            ? {}
+            : { coveredByAssetId: step.coveredByAssetId }),
+          ...(coveredByAsset === undefined ? {} : { coveredByLogicalKey: coveredByAsset.locator }),
+        });
+      } else if (current === undefined) {
+        states.set(asset.assetId, { loadState: "loaded" });
+      }
+    }
+  }
+
+  for (const asset of listedAssets) {
+    if (!states.has(asset.assetId)) states.set(asset.assetId, { loadState: "loaded" });
+  }
+  return states;
+}
+
+function latestEffectiveConfigs(runtime: DesktopRuntime) {
+  const row = runtime.repositories.database
+    .prepare(
+      "SELECT effective_configs_json FROM scan_runs ORDER BY started_at DESC, rowid DESC LIMIT 1",
+    )
+    .get() as { readonly effective_configs_json: string } | undefined;
+  if (row === undefined) return [];
+  return EffectiveConfigSchema.array().parse(JSON.parse(row.effective_configs_json));
+}
+
+function assetLoadStateFields(state: AssetListLoadState | undefined): AssetListLoadState {
+  return state ?? { loadState: "loaded" };
 }
 
 function scanRegistrations(

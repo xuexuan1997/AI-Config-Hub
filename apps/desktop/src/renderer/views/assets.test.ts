@@ -68,6 +68,49 @@ describe("AssetsView", () => {
     expect(html).not.toContain("<th>Type</th>");
   });
 
+  it("defaults to Claude Code assets and renders the review table columns", () => {
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture("asset-claude-root", "mcp:docs", {
+          toolKey: "claude-code",
+          resourceType: "mcp",
+          sourceDirectory: "/workspace",
+          loadState: "covered",
+          coveredByLogicalKey: "mcp:docs",
+        }),
+        assetSummaryFixture("asset-claude-nested", "mcp:docs", {
+          toolKey: "claude-code",
+          resourceType: "mcp",
+          sourceDirectory: "/workspace/src",
+          loadState: "loaded",
+        }),
+        assetSummaryFixture("asset-codex", "mcp:docs", {
+          toolKey: "codex",
+          resourceType: "mcp",
+          sourceDirectory: "/workspace/.codex",
+          loadState: "loaded",
+        }),
+      ],
+    });
+
+    expect(html).toContain('class="tool-filter-list"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain(">Claude Code</button>");
+    expect(html).toContain(">Codex</button>");
+    expect(html).toContain("<th>Logical key</th>");
+    expect(html).toContain("<th>Source directory</th>");
+    expect(html).toContain("<th>Will load</th>");
+    expect(html).toContain("<th>Diagnostics</th>");
+    expect(html).toContain("<th>Detail</th>");
+    expect(html).not.toContain("<th>Tool</th>");
+    expect(html).not.toContain("<th>Resource</th>");
+    expect(html).toContain("/workspace");
+    expect(html).toContain("/workspace/src");
+    expect(html).toContain("No, covered by mcp:docs");
+    expect(html).toContain(">Yes</span>");
+    expect(html).not.toContain("/workspace/.codex");
+  });
+
   it("opens the rule tab first when assets arrive in another order", () => {
     const html = renderAssets({
       assets: [
@@ -172,17 +215,32 @@ function assetSummaryFixture(
   id: string,
   logicalKey: string,
   overrides: Partial<
-    Pick<AppState["assets"][number], "toolKey" | "resourceType" | "scopeKind">
+    Pick<
+      AppState["assets"][number],
+      | "toolKey"
+      | "resourceType"
+      | "scopeKind"
+      | "sourceDirectory"
+      | "loadState"
+      | "coveredByLogicalKey"
+    >
   > = {},
   diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },
 ): AppState["assets"][number] {
   return {
     id: AssetIdSchema.parse(id),
-    toolKey: overrides.toolKey ?? "codex",
+    toolKey: overrides.toolKey ?? "claude-code",
     resourceType: overrides.resourceType ?? "rule",
     scopeKind: overrides.scopeKind ?? "project",
     status: "enabled",
     logicalKey,
+    ...(overrides.sourceDirectory === undefined
+      ? {}
+      : { sourceDirectory: overrides.sourceDirectory }),
+    ...(overrides.loadState === undefined ? {} : { loadState: overrides.loadState }),
+    ...(overrides.coveredByLogicalKey === undefined
+      ? {}
+      : { coveredByLogicalKey: overrides.coveredByLogicalKey }),
     contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     diagnosticCounts,
   };

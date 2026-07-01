@@ -287,6 +287,7 @@ const DiagnosticCountsSchema = z
   })
   .strict()
   .readonly();
+const AssetLoadStateSchema = z.enum(["loaded", "covered", "disabled"]);
 const AssetSummarySchema = z
   .object({
     id: AssetIdSchema,
@@ -294,6 +295,10 @@ const AssetSummarySchema = z
     resourceType: ResourceKindSchema,
     scopeKind: ScopeKindSchema,
     logicalKey: z.string().trim().min(1).max(500),
+    sourceDirectory: z.string().trim().min(1).max(1_000).optional(),
+    loadState: AssetLoadStateSchema.optional(),
+    coveredByAssetId: AssetIdSchema.optional(),
+    coveredByLogicalKey: z.string().trim().min(1).max(500).optional(),
     contentHash: ContentHashSchema,
     status: z.enum(["enabled", "disabled"]),
     diagnosticCounts: DiagnosticCountsSchema,

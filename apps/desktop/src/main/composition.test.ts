@@ -171,6 +171,61 @@ describe("desktop command service composition", () => {
     }
   });
 
+  it("marks covered assets and source directories in asset list summaries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-asset-load-state-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const nested = join(project, "src");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".git"), { recursive: true });
+    await mkdir(nested, { recursive: true });
+    await mkdir(home);
+    await writeFile(
+      join(project, ".mcp.json"),
+      JSON.stringify({ mcpServers: { docs: { command: "root-docs" } } }),
+      "utf8",
+    );
+    await writeFile(
+      join(nested, ".mcp.json"),
+      JSON.stringify({ mcpServers: { docs: { command: "nested-docs" } } }),
+      "utf8",
+    );
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: nested,
+      homeDirectory: home,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+      const canonicalProject = await realpath(project);
+      const canonicalNested = await realpath(nested);
+      const assets = await runtime.services["assets.list"]({
+        toolKeys: ["claude-code"],
+        resourceTypes: ["mcp"],
+        limit: 50,
+      });
+      const rootAsset = assets.items.find((asset) => asset.sourceDirectory === canonicalProject);
+      const nestedAsset = assets.items.find((asset) => asset.sourceDirectory === canonicalNested);
+
+      expect(rootAsset).toMatchObject({
+        logicalKey: "mcp:docs",
+        loadState: "covered",
+        coveredByAssetId: nestedAsset?.id,
+        coveredByLogicalKey: "mcp:docs",
+      });
+      expect(nestedAsset).toMatchObject({
+        logicalKey: "mcp:docs",
+        loadState: "loaded",
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("disables and re-enables existing assets through desktop command services", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-asset-status-"));
     temporaryDirectories.push(root);

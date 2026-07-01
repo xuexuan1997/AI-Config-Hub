@@ -474,6 +474,38 @@ th {
   color: var(--danger-text);
 }
 
+.asset-source-cell {
+  color: var(--muted-text);
+  max-width: 18rem;
+  overflow-wrap: anywhere;
+}
+
+.asset-load-badge {
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.78rem;
+  line-height: 1.15;
+  padding: 0.25rem 0.5rem;
+}
+
+.asset-load-badge.loaded {
+  background: var(--active-bg);
+  border-color: var(--button-bg);
+  color: var(--strong-text);
+}
+
+.asset-load-badge.covered {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.asset-load-badge.disabled {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
 .asset-table-compact {
   margin-top: 0;
 }
@@ -1125,6 +1157,28 @@ main {
 .migration-difference-summary h2 {
   font-size: 0.95rem;
   margin: 0;
+}
+
+.tool-filter-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.tool-filter-button {
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--top-border);
+  border-radius: 8px;
+  color: var(--text);
+  justify-content: flex-start;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  width: 100%;
+}
+
+.tool-filter-button[aria-pressed="true"] {
+  background: var(--active-bg);
+  border-color: var(--button-bg);
+  color: var(--strong-text);
 }
 
 .review-detail-panel dl {

@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -411,7 +411,7 @@ describe("CLI command service composition", () => {
       expect(detail.changes).toEqual(preview.changes);
 
       const historyRoot = join(userData, "history", "local-git");
-      expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+      if (platform() !== "win32") expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
       expect(await readdir(join(historyRoot, "assets"))).toHaveLength(1);
     } finally {
       runtime.close();

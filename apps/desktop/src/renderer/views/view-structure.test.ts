@@ -353,8 +353,12 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain("Counts reflect only the inspected asset");
     expect(selectedAssetHtml).toContain('class="asset-detail-diagnostics"');
     expect(selectedAssetHtml).toContain("<h3>Diagnostics</h3>");
-    expect(selectedAssetHtml).toContain("<td>Codex</td>");
-    expect(selectedAssetHtml).toContain("<td>Rule</td>");
+    expect(selectedAssetHtml).toContain("<th>Source directory</th>");
+    expect(selectedAssetHtml).toContain("<th>Will load</th>");
+    expect(selectedAssetHtml).toContain(
+      '<td class="asset-source-cell" title="/workspace">/workspace</td>',
+    );
+    expect(selectedAssetHtml).toContain('class="asset-load-badge loaded"');
     expect(selectedAssetHtml).toContain("<dd>Codex</dd>");
     expect(selectedAssetHtml).toContain("<dd>Rule</dd>");
     expect(selectedAssetHtml).toContain("<dd>2026-06-28 08:00 UTC</dd>");
@@ -722,15 +726,20 @@ function assetSummaryFixture(
   logicalKey: string,
   diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },
   overrides: Partial<
-    Pick<AppState["assets"][number], "toolKey" | "resourceType" | "scopeKind" | "status">
+    Pick<
+      AppState["assets"][number],
+      "toolKey" | "resourceType" | "scopeKind" | "status" | "sourceDirectory" | "loadState"
+    >
   > = {},
 ): AppState["assets"][number] {
   return {
     id: AssetIdSchema.parse(id),
-    toolKey: overrides.toolKey ?? "codex",
+    toolKey: overrides.toolKey ?? "claude-code",
     resourceType: overrides.resourceType ?? "rule",
     scopeKind: overrides.scopeKind ?? "project",
     logicalKey,
+    sourceDirectory: overrides.sourceDirectory ?? "/workspace",
+    loadState: overrides.loadState ?? "loaded",
     contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     status: overrides.status ?? "enabled",
     diagnosticCounts,

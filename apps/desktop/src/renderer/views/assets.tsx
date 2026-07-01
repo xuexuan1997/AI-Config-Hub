@@ -25,10 +25,13 @@ export function AssetsView(props: {
   const effective = props.state.effective;
   const diagnosticScope = diagnosticScopeFor(locale, detail);
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
-  const assetGroups = useMemo(
-    () => assetGroupsByResourceType(props.state.assets),
-    [props.state.assets],
+  const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
+  const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
+  const visibleAssets = useMemo(
+    () => props.state.assets.filter((asset) => asset.toolKey === selectedToolKey),
+    [props.state.assets, selectedToolKey],
   );
+  const assetGroups = useMemo(() => assetGroupsByResourceType(visibleAssets), [visibleAssets]);
   const firstResourceType = assetGroups[0]?.resourceType;
   const [selectedResourceType, setSelectedResourceType] = useState(firstResourceType);
   const activeResourceType =
@@ -76,18 +79,12 @@ export function AssetsView(props: {
       <section className="review-workspace">
         <aside className="review-filters">
           <h2>{t(locale, "Review filters")}</h2>
-          <div className="filter-pill">
-            <span>{t(locale, "Status")}</span>
-            <strong>{t(locale, "All")}</strong>
-          </div>
-          <div className="filter-pill">
-            <span>{t(locale, "Diagnostics")}</span>
-            <strong>{t(locale, "Problems first")}</strong>
-          </div>
-          <div className="filter-pill">
-            <span>{t(locale, "Scope")}</span>
-            <strong>{t(locale, "Current project")}</strong>
-          </div>
+          <ToolFilterList
+            activeToolKey={selectedToolKey}
+            locale={locale}
+            tools={toolOptions}
+            onSelectToolKey={setSelectedToolKey}
+          />
           <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
           <div className="cards compact" aria-label={diagnosticScope.cardsLabel}>
             <article>
@@ -105,8 +102,10 @@ export function AssetsView(props: {
           </div>
         </aside>
         <section className="review-list-panel">
-          {assetGroups.length === 0 ? (
+          {props.state.assets.length === 0 ? (
             <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
+          ) : assetGroups.length === 0 ? (
+            <p className="empty-state">{t(locale, "No assets match the selected tool.")}</p>
           ) : (
             <AssetTypeTabs
               activeResourceType={activeResourceType}
@@ -167,6 +166,59 @@ export function AssetsView(props: {
 
 type AssetSummary = AppState["assets"][number];
 type AssetStatus = "enabled" | "disabled";
+type AssetLoadState = "loaded" | "covered" | "disabled";
+
+const DEFAULT_TOOL_KEY = "claude-code";
+
+function assetToolOptions(assets: readonly AssetSummary[]): readonly string[] {
+  return [...new Set([DEFAULT_TOOL_KEY, ...assets.map((asset) => asset.toolKey)])].sort(
+    compareToolKeys,
+  );
+}
+
+function compareToolKeys(left: string, right: string): number {
+  const leftPriority = toolPriority(left);
+  const rightPriority = toolPriority(right);
+  return leftPriority === rightPriority ? left.localeCompare(right) : leftPriority - rightPriority;
+}
+
+function toolPriority(toolKey: string): number {
+  switch (toolKey) {
+    case "claude-code":
+      return 0;
+    case "codex":
+      return 1;
+    case "cursor":
+      return 2;
+    case "opencode":
+      return 3;
+    default:
+      return 10;
+  }
+}
+
+function ToolFilterList(props: {
+  readonly tools: readonly string[];
+  readonly activeToolKey: string;
+  readonly locale: DesktopLocale;
+  readonly onSelectToolKey: (toolKey: string) => void;
+}) {
+  return (
+    <div className="tool-filter-list" aria-label={t(props.locale, "Tool filters")}>
+      {props.tools.map((toolKey) => (
+        <button
+          aria-pressed={toolKey === props.activeToolKey}
+          className="tool-filter-button"
+          key={toolKey}
+          type="button"
+          onClick={() => props.onSelectToolKey(toolKey)}
+        >
+          {toolLabel(toolKey)}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function assetGroupsByResourceType(assets: readonly AssetSummary[]) {
   const groups = new Map<string, AssetSummary[]>();
@@ -282,8 +334,8 @@ function AssetTypeTable(props: {
         <thead>
           <tr>
             <th>{t(props.locale, "Logical key")}</th>
-            <th>{t(props.locale, "Tool")}</th>
-            <th>{t(props.locale, "Resource")}</th>
+            <th>{t(props.locale, "Source directory")}</th>
+            <th>{t(props.locale, "Will load")}</th>
             <th>{t(props.locale, "Diagnostics")}</th>
             <th>{t(props.locale, "Detail")}</th>
           </tr>
@@ -298,8 +350,12 @@ function AssetTypeTable(props: {
                   <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
                 </span>
               </td>
-              <td>{toolLabel(asset.toolKey)}</td>
-              <td>{resourceTypeLabel(props.locale, asset.resourceType)}</td>
+              <td className="asset-source-cell" title={sourceDirectoryLabel(props.locale, asset)}>
+                {sourceDirectoryLabel(props.locale, asset)}
+              </td>
+              <td>
+                <AssetLoadBadge asset={asset} locale={props.locale} />
+              </td>
               <td>{formatDiagnosticCounts(props.locale, asset.diagnosticCounts)}</td>
               <td>
                 <button
@@ -349,6 +405,33 @@ function nextAssetStatus(status: AssetStatus): AssetStatus {
 
 function assetStatusActionLabel(locale: DesktopLocale, status: AssetStatus): string {
   return status === "disabled" ? t(locale, "Enable asset") : t(locale, "Disable asset");
+}
+
+function assetLoadStateFor(asset: AssetSummary): AssetLoadState {
+  if (assetStatusFor(asset) === "disabled") return "disabled";
+  return asset.loadState ?? "loaded";
+}
+
+function sourceDirectoryLabel(locale: DesktopLocale, asset: AssetSummary): string {
+  return asset.sourceDirectory ?? t(locale, "Unknown source");
+}
+
+function loadStateLabel(locale: DesktopLocale, asset: AssetSummary): string {
+  const state = assetLoadStateFor(asset);
+  if (state === "disabled") return t(locale, "No, disabled");
+  if (state === "covered") {
+    return asset.coveredByLogicalKey === undefined
+      ? t(locale, "No, covered")
+      : t(locale, "No, covered by {asset}", { asset: asset.coveredByLogicalKey });
+  }
+  return t(locale, "Yes");
+}
+
+function AssetLoadBadge(props: { readonly asset: AssetSummary; readonly locale: DesktopLocale }) {
+  const state = assetLoadStateFor(props.asset);
+  return (
+    <span className={`asset-load-badge ${state}`}>{loadStateLabel(props.locale, props.asset)}</span>
+  );
 }
 
 function formatErrorCount(locale: DesktopLocale, count: number): string {
