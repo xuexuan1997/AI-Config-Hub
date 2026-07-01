@@ -1422,7 +1422,7 @@ function scanRoots(
   if ((requestRoots?.length ?? 0) > 0) {
     return uniquePaths((requestRoots ?? []).map((root) => AbsolutePathSchema.parse(resolve(root))));
   }
-  return uniquePaths([cwd, homeDirectory]);
+  return uniquePaths([...projectRootChain(cwd), homeDirectory]);
 }
 
 function changedScanPaths(
@@ -1435,6 +1435,31 @@ function changedScanPaths(
 
 function uniquePaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {
   return [...new Set(paths)].sort();
+}
+
+function projectRootChain(cwd: AbsolutePath): readonly AbsolutePath[] {
+  const gitRoot = nearestGitRoot(cwd);
+  if (gitRoot === undefined) return [cwd];
+
+  const roots: AbsolutePath[] = [];
+  let cursor = cwd;
+  for (;;) {
+    roots.push(cursor);
+    if (cursor === gitRoot) return roots;
+    const parent = AbsolutePathSchema.parse(dirname(cursor));
+    if (parent === cursor) return roots;
+    cursor = parent;
+  }
+}
+
+function nearestGitRoot(cwd: AbsolutePath): AbsolutePath | undefined {
+  let cursor = cwd;
+  for (;;) {
+    if (existsSync(join(cursor, ".git"))) return cursor;
+    const parent = AbsolutePathSchema.parse(dirname(cursor));
+    if (parent === cursor) return undefined;
+    cursor = parent;
+  }
 }
 
 function scopeKindsForAssets(

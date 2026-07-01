@@ -245,6 +245,42 @@ describe("desktop command service composition", () => {
     }
   });
 
+  it("defaults scans from a subdirectory to tool configuration roots up to the Git root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-ancestor-scan-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const nested = join(project, "src", "app");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".git"), { recursive: true });
+    await mkdir(nested, { recursive: true });
+    await mkdir(home);
+    await writeFile(join(project, "AGENTS.md"), "Use project TypeScript conventions.\n", "utf8");
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: nested,
+      homeDirectory: home,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+      const assets = await runtime.services["assets.list"]({ toolKeys: ["codex"], limit: 50 });
+
+      expect(assets.items).toEqual([
+        expect.objectContaining({
+          resourceType: "rule",
+          scopeKind: "directory",
+          logicalKey: "rule:AGENTS",
+        }),
+      ]);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("replays cursor reset and task snapshot when retained events no longer cover the cursor", () => {
     const taskEvents = new DesktopTaskEvents();
     const taskId = "task:deployment:replay";

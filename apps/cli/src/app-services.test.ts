@@ -130,6 +130,41 @@ describe("CLI command service composition", () => {
     }
   });
 
+  it("defaults scans from a subdirectory to tool configuration roots up to the Git root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-ancestor-scan-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const nested = join(project, "src", "app");
+    const home = join(root, "home");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".git"), { recursive: true });
+    await mkdir(nested, { recursive: true });
+    await mkdir(home);
+    await writeFile(join(project, "AGENTS.md"), "Use project TypeScript conventions.\n", "utf8");
+
+    const runtime = await createCliCommandServices({
+      cwd: nested,
+      homeDirectory: home,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full" });
+      const assets = await runtime.services["assets.list"]({ toolKeys: ["codex"], limit: 50 });
+
+      expect(assets.items).toEqual([
+        expect.objectContaining({
+          resourceType: "rule",
+          scopeKind: "directory",
+          logicalKey: "rule:AGENTS",
+        }),
+      ]);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("filters listed assets by scope kind and diagnostic severity", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-asset-filters-"));
     temporaryDirectories.push(root);
