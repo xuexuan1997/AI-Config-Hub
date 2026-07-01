@@ -20,11 +20,10 @@ import { OverviewView } from "./overview.js";
 import { SettingsView } from "./settings.js";
 
 describe("desktop renderer view structure", () => {
-  it("exposes the selected project path as a readable, titled value outside the edit control", () => {
-    const projectRoot = "/Users/xuexuan/Desktop/project/AI-Config-Hub";
+  it("renders asset review and asset migration as sibling navigation without global project controls", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {
-        state: { ...initialState, projectRoot },
+        state: { ...initialState, projectRoot: "/Users/xuexuan/Desktop/project/AI-Config-Hub" },
         onRoute: vi.fn(),
         onSelectProject: vi.fn(),
         onUseProjectPath: vi.fn(),
@@ -32,35 +31,39 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain('class="project-topbar-main"');
-    expect(html).toContain('class="project-root-value"');
-    expect(html).toContain(`title="${projectRoot}"`);
-    expect(html).toContain('class="project-path-editor"');
-    expect(html).toContain('class="project-path-submit"');
-    expect(html).not.toContain(`name="projectPath" value="${projectRoot}"`);
+    expect(html).toContain(">Asset Review</button>");
+    expect(html).toContain(">Asset Migration</button>");
+    expect(html).not.toContain(">Deployment</button>");
+    expect(html).not.toContain('class="project-topbar-main"');
+    expect(html).not.toContain('class="project-path-editor"');
+    expect(html).not.toContain("Selected project folder");
   });
 
-  it("explains the project folder selection journey before scanning", () => {
+  it("keeps current project controls inside Asset Review", () => {
+    const projectRoot = "/Users/xuexuan/Desktop/project/AI-Config-Hub";
     const html = renderToStaticMarkup(
-      createElement(AppShell, {
-        state: initialState,
-        onRoute: vi.fn(),
+      createElement(AssetsView, {
+        state: { ...initialState, projectRoot },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
         onSelectProject: vi.fn(),
         onUseProjectPath: vi.fn(),
-        children: createElement("span", null, "Workspace"),
+        onScan: vi.fn(),
       }),
     );
 
-    expect(html).toContain("Choose the project folder to scan before reviewing assets.");
-    expect(html).toContain("Selected project folder");
-    expect(html).toContain("No folder selected yet");
-    expect(html).toContain("Browse folder");
-    expect(html).toContain("Opens your system folder picker.");
-    expect(html).toContain("Manual path fallback");
-    expect(html).toContain("Paste a folder path only if the picker is unavailable.");
-    expect(html).toContain("Use typed path");
-    expect(html).not.toContain("Select project");
-    expect(html).not.toContain(">Use path</button>");
+    expect(html).toContain("<h1>Asset Review</h1>");
+    expect(html).toContain('class="review-project-card"');
+    expect(html).toContain("Current project");
+    expect(html).toContain(`title="${projectRoot}"`);
+    expect(html).toContain("Choose project");
+    expect(html).toContain("Scan current project");
   });
 
   it("binds the scroll container identity to the active route", () => {
@@ -179,10 +182,10 @@ describe("desktop renderer view structure", () => {
     );
 
     expect(shellHtml).toContain(">总览</button>");
-    expect(shellHtml).toContain(">资产</button>");
-    expect(shellHtml).toContain("项目设置");
-    expect(shellHtml).toContain("尚未选择文件夹");
-    expect(shellHtml).toContain("浏览文件夹");
+    expect(shellHtml).toContain(">资产审查</button>");
+    expect(shellHtml).toContain(">资产迁移</button>");
+    expect(shellHtml).toContain("配置资产工作台");
+    expect(shellHtml).toContain("导航关系");
     expect(overviewHtml).toContain("配置管理总览");
     expect(overviewHtml).toContain("开始扫描");
     expect(settingsHtml).toContain("<h1>设置</h1>");
@@ -241,13 +244,13 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(assetsHtml).toContain("<h1>资产</h1>");
+    expect(assetsHtml).toContain("<h1>资产审查</h1>");
     expect(assetsHtml).toContain("刷新资产");
     expect(assetsHtml).toContain("尚未索引资产。");
-    expect(migrationHtml).toContain("<h1>迁移预览</h1>");
+    expect(migrationHtml).toContain("<h1>资产迁移</h1>");
     expect(migrationHtml).toContain("目标工具");
-    expect(migrationHtml).toContain("预览迁移");
-    expect(migrationHtml).toContain("请先选择项目再创建迁移预览。");
+    expect(migrationHtml).toContain("预览写入");
+    expect(migrationHtml).toContain("请先选择源项目再创建迁移预览。");
     expect(deploymentHtml).toContain("<h1>部署</h1>");
     expect(deploymentHtml).toContain("部署确认");
     expect(deploymentHtml).toContain("执行部署");
@@ -695,14 +698,15 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Enable asset");
   });
 
-  it("separates migration settings from generated preview results", () => {
+  it("renders migration as an independent source and target project comparison", () => {
     const html = renderToStaticMarkup(
       createElement(MigrationView, {
         state: {
           ...initialState,
-          projectRoot: "/workspace/source",
+          projectRoot: "/workspace/review-only",
           migration: {
             ...initialState.migration,
+            sourceProjectRoot: "/workspace/source",
             targetScopeId: "/workspace/target",
           },
           assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
@@ -716,38 +720,34 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain('class="migration-preview-layout with-preview"');
-    expect(html).toContain('class="migration-control-panel"');
-    expect(html).toContain('class="diff-card migration-result-panel"');
-    expect(html).toContain('value="cursor" selected="">Cursor</option>');
-    expect(html).toContain('for="migration-target-project"');
-    expect(html).toContain('id="migration-target-project"');
-    expect(html).toContain('value="/workspace/target"');
-    expect(html).toContain('value="replace" selected="">Replace existing files</option>');
-    expect(html).toContain("Codex / Rule");
-    expect(html).not.toContain("codex / rule");
-    expect(html).toContain("Plan audit-preview");
-    expect(html).toContain("Plan hash:");
-    expect(html).toContain("Compatibility: Partial");
-    expect(html).toContain("Expires: 2026-06-28 08:10 UTC");
-    expect(html).toContain("<td>Source</td>");
-    expect(html).toContain("<td>rule:AGENTS</td>");
-    expect(html).toContain("Replace file .cursor/rules/agents.mdc");
+    expect(html).toContain("<h1>Asset Migration</h1>");
+    expect(html).toContain('class="migration-project-picker"');
+    expect(html).toContain('class="migration-project-card source"');
+    expect(html).toContain('class="migration-project-card target"');
+    expect(html).toContain("Source project");
+    expect(html).toContain("Target project");
+    expect(html).toContain("/workspace/source");
+    expect(html).toContain("/workspace/target");
+    expect(html).toContain("Scan source");
+    expect(html).toContain("Swap source and target");
+    expect(html).toContain('class="migration-comparison-body"');
+    expect(html).toContain('class="migration-source-panel panel"');
+    expect(html).toContain('class="migration-difference-summary"');
+    expect(html).toContain('class="migration-target-panel panel"');
+    expect(html).toContain("Added to target");
+    expect(html).toContain("Overwritten in target");
+    expect(html).toContain("Rule");
+    expect(html).toContain("1 difference");
+    expect(html).toContain("rule:AGENTS");
+    expect(html).toContain(".cursor/rules/agents.mdc");
     expect(html).toContain(
       "Confirmations: Overwrite existing target files. Deploy a partial conversion with documented warnings.",
     );
-    expect(html).not.toContain("Confirmations: overwrite, partial_conversion");
-    expect(html).not.toContain(">cursor</option>");
-    expect(html).not.toContain(">replace</option>");
+    expect(html).not.toContain("/workspace/review-only");
+    expect(html).not.toContain("Selected project folder");
     expect(html).not.toContain("Plan deployment-plan:audit-preview");
-    expect(html).not.toContain("Compatibility: partial");
     expect(html).not.toContain("2026-06-28T08:10:00.000Z");
     expect(html).not.toContain("asset:codex:rule:agents");
-    expect(html).not.toContain("<td>source</td>");
-    expect(html).not.toContain("replace .cursor/rules/agents.mdc");
-    expect(html.indexOf('class="migration-control-panel"')).toBeLessThan(
-      html.indexOf('class="diff-card migration-result-panel"'),
-    );
   });
 
   it("renders detailed workflow states in Simplified Chinese", () => {

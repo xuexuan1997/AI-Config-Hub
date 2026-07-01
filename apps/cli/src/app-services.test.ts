@@ -156,7 +156,7 @@ describe("CLI command service composition", () => {
       expect(assets.items).toEqual([
         expect.objectContaining({
           resourceType: "rule",
-          scopeKind: "directory",
+          scopeKind: "project",
           logicalKey: "rule:AGENTS",
         }),
       ]);

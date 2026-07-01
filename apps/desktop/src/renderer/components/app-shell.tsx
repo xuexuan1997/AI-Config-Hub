@@ -5,9 +5,8 @@ import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js
 
 const routes: { readonly route: Route; readonly label: string }[] = [
   { route: "overview", label: "Overview" },
-  { route: "assets", label: "Assets" },
-  { route: "migration", label: "Migration" },
-  { route: "deployment", label: "Deployment" },
+  { route: "assets", label: "Asset Review" },
+  { route: "migration", label: "Asset Migration" },
   { route: "history", label: "History" },
   { route: "settings", label: "Settings" },
 ];
@@ -34,67 +33,30 @@ export function AppShell(props: {
       lang={languageAttribute(props.state.settings.values.language)}
     >
       <aside className="sidebar">
-        <div className="brand">AI Config Hub</div>
-        <nav aria-label={t(locale, "Workspaces")}>
-          {routes.map(({ route, label }) => (
-            <button
-              className={props.state.route === route ? "active" : ""}
-              key={route}
-              type="button"
-              onClick={() => props.onRoute(route)}
-            >
-              {t(locale, label)}
-            </button>
-          ))}
-        </nav>
+        <div>
+          <div className="brand">
+            <strong>AI Config Hub</strong>
+            <span>{t(locale, "Configuration asset workbench")}</span>
+          </div>
+          <nav aria-label={t(locale, "Workspaces")}>
+            {routes.map(({ route, label }) => (
+              <button
+                className={props.state.route === route ? "active" : ""}
+                key={route}
+                type="button"
+                onClick={() => props.onRoute(route)}
+              >
+                {t(locale, label)}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="sidebar-foot">
+          <strong>{t(locale, "Navigation model")}</strong>
+          <span>{t(locale, "Review and migration are sibling workflows.")}</span>
+        </div>
       </aside>
       <main data-route={props.state.route} key={props.state.route} ref={mainRef}>
-        <header className="topbar">
-          <div className="project-topbar-main">
-            <div className="project-summary">
-              <p className="eyebrow">{t(locale, "Project setup")}</p>
-              <p className="project-guidance">
-                {t(locale, "Choose the project folder to scan before reviewing assets.")}
-              </p>
-              <span className="project-root-label">{t(locale, "Selected project folder")}</span>
-              <strong className="project-root-value" title={props.state.projectRoot}>
-                {props.state.projectRoot ?? t(locale, "No folder selected yet")}
-              </strong>
-            </div>
-            <div className="project-picker-action">
-              <button type="button" onClick={props.onSelectProject}>
-                {t(locale, "Browse folder")}
-              </button>
-              <span>{t(locale, "Opens your system folder picker.")}</span>
-            </div>
-          </div>
-          <form
-            className="project-path-editor"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = event.currentTarget;
-              const formData = new FormData(form);
-              const projectPath = formData.get("projectPath");
-              props.onUseProjectPath(typeof projectPath === "string" ? projectPath : "");
-              form.reset();
-            }}
-          >
-            <label className="project-path-field">
-              <span>{t(locale, "Manual path fallback")}</span>
-              <input
-                aria-label={t(locale, "Project path")}
-                name="projectPath"
-                placeholder="/Users/you/project"
-              />
-            </label>
-            <span className="project-path-help">
-              {t(locale, "Paste a folder path only if the picker is unavailable.")}
-            </span>
-            <button className="project-path-submit" type="submit">
-              {t(locale, "Use typed path")}
-            </button>
-          </form>
-        </header>
         {props.state.message === undefined ? null : (
           <div className="status-banner">{props.state.message}</div>
         )}

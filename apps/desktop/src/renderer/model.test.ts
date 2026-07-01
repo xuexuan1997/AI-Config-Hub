@@ -17,6 +17,7 @@ import {
   formatUiError,
   historyDetailRequestForEntry,
   initialState,
+  migrationDifferenceSummaryForState,
   migrationHashRowsForPreview,
   migrationSourceDriftRowsForState,
   openSourceRequestForState,
@@ -56,14 +57,14 @@ describe("renderer project selection state", () => {
     expect(selected.message).toBeUndefined();
   });
 
-  it("builds migration previews from the selected project and indexed assets only", () => {
+  it("keeps asset review project selection out of migration previews", () => {
     expect(previewRequestForState(initialState)).toBeUndefined();
 
-    const withProject = reducer(initialState, {
+    const withReviewProject = reducer(initialState, {
       type: "project",
       root: "/home/user/workspace",
     });
-    const withAssets = reducer(withProject, {
+    const withAssets = reducer(withReviewProject, {
       type: "assets",
       assets: [
         {
@@ -79,34 +80,90 @@ describe("renderer project selection state", () => {
       ],
     });
 
+    expect(withAssets.projectRoot).toBe("/home/user/workspace");
+    expect(withAssets.migration.sourceProjectRoot).toBeUndefined();
+    expect(withAssets.migration.targetScopeId).toBeUndefined();
+    expect(previewRequestForState(withAssets)).toBeUndefined();
+  });
+
+  it("builds migration previews from independent source and target project selections", () => {
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
+    });
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: " /home/user/target-workspace ",
+    });
+    const withAssets = reducer(withTargetProject, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+
+    expect(withAssets.projectRoot).toBeUndefined();
     expect(previewRequestForState(withAssets)).toEqual({
       sourceAssetIds: ["asset-1"],
       targetToolKey: "cursor",
-      targetScopeId: "/home/user/workspace",
+      targetScopeId: "/home/user/target-workspace",
       conflictPolicy: "replace",
     });
   });
 
-  it("defaults the migration target project to the selected source project", () => {
-    const withProject = reducer(initialState, {
+  it("swaps migration source and target projects without changing asset review project", () => {
+    const withReviewProject = reducer(initialState, {
       type: "project",
-      root: "/home/user/source-workspace",
+      root: "/home/user/review-workspace",
     });
-    const switchedProject = reducer(withProject, {
-      type: "project",
-      root: "/home/user/next-source-workspace",
+    const withSourceProject = reducer(withReviewProject, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
     });
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: "/home/user/target-workspace",
+    });
+    const withPreview = reducer(withTargetProject, {
+      type: "preview",
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan:swap-test"),
+        planHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        sourceHashes: {
+          [AssetIdSchema.parse("asset-1")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        },
+        targetHashes: {},
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [],
+        requiredConfirmations: [],
+        warnings: [],
+        expiresAt: "2026-06-28T08:10:00.000Z",
+      },
+    });
+    const swapped = reducer(withPreview, { type: "migrationSwapProjects" });
 
-    expect(withProject.migration.targetScopeId).toBe("/home/user/source-workspace");
-    expect(switchedProject.migration.targetScopeId).toBe("/home/user/next-source-workspace");
+    expect(swapped.projectRoot).toBe("/home/user/review-workspace");
+    expect(swapped.migration.sourceProjectRoot).toBe("/home/user/target-workspace");
+    expect(swapped.migration.targetScopeId).toBe("/home/user/source-workspace");
+    expect(swapped.preview).toBeUndefined();
   });
 
   it("builds migration previews for an explicit target project", () => {
-    const withProject = reducer(initialState, {
-      type: "project",
-      root: "/home/user/source-workspace",
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
     });
-    const withAssets = reducer(withProject, {
+    const withAssets = reducer(withSourceProject, {
       type: "assets",
       assets: [
         {
@@ -125,9 +182,9 @@ describe("renderer project selection state", () => {
       type: "migrationTargetProject",
       targetScopeId: " /home/user/target-workspace ",
     });
-    const switchedSourceProject = reducer(withTargetProject, {
+    const switchedReviewProject = reducer(withTargetProject, {
       type: "project",
-      root: "/home/user/next-source-workspace",
+      root: "/home/user/review-workspace",
     });
 
     expect(previewRequestForState(withTargetProject)).toEqual({
@@ -136,15 +193,20 @@ describe("renderer project selection state", () => {
       targetScopeId: "/home/user/target-workspace",
       conflictPolicy: "replace",
     });
-    expect(switchedSourceProject.migration.targetScopeId).toBe("/home/user/target-workspace");
+    expect(switchedReviewProject.migration.sourceProjectRoot).toBe("/home/user/source-workspace");
+    expect(switchedReviewProject.migration.targetScopeId).toBe("/home/user/target-workspace");
   });
 
   it("builds migration previews from explicit migration selections", () => {
-    const withProject = reducer(initialState, {
-      type: "project",
-      root: "/home/user/workspace",
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
     });
-    const withAssets = reducer(withProject, {
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: "/home/user/target-workspace",
+    });
+    const withAssets = reducer(withTargetProject, {
       type: "assets",
       assets: [
         {
@@ -192,17 +254,21 @@ describe("renderer project selection state", () => {
     expect(previewRequestForState(withConflictPolicy)).toEqual({
       sourceAssetIds: ["asset-2"],
       targetToolKey: "opencode",
-      targetScopeId: "/home/user/workspace",
+      targetScopeId: "/home/user/target-workspace",
       conflictPolicy: "fail",
     });
   });
 
   it("keeps disabled assets visible but out of default migration selections", () => {
-    const withProject = reducer(initialState, {
-      type: "project",
-      root: "/home/user/workspace",
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
     });
-    const withAssets = reducer(withProject, {
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: "/home/user/target-workspace",
+    });
+    const withAssets = reducer(withTargetProject, {
       type: "assets",
       assets: [
         {
@@ -249,7 +315,11 @@ describe("renderer project selection state", () => {
       type: "project",
       root: "/home/user/workspace",
     });
-    const withAssets = reducer(withProject, {
+    const withMigrationSource = reducer(withProject, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/workspace",
+    });
+    const withAssets = reducer(withMigrationSource, {
       type: "assets",
       assets: [
         {
@@ -1111,6 +1181,75 @@ describe("renderer project selection state", () => {
         hash: "absent",
       },
     ]);
+  });
+
+  it("summarizes active migration differences from the preview plan", () => {
+    const preview = {
+      planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+      planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+      compatibility: "partial" as const,
+      fieldLosses: [
+        {
+          assetId: AssetIdSchema.parse("asset-field-loss"),
+          droppedFields: ["/unsupported"],
+          retainedFields: ["/name"],
+          transformedFields: [],
+          warnings: ["Unsupported field will be dropped"],
+        },
+      ],
+      requiredConfirmations: ["overwrite"] as const,
+      changes: [
+        {
+          operation: "create" as const,
+          pathDisplay: "/workspace/.cursor/rules/new.mdc",
+          beforeHash: null,
+          afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+          diff: "+ New",
+        },
+        {
+          operation: "replace" as const,
+          pathDisplay: "/workspace/.cursor/rules/existing.mdc",
+          beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+          afterHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+          diff: "- Old\n+ New",
+        },
+      ],
+      warnings: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-warning"),
+          code: "PARTIAL_CONVERSION",
+          severity: "warning" as const,
+          message: "One field cannot be represented by the target tool.",
+          suggestedAction: "Review before deployment.",
+          blocking: false,
+        },
+      ],
+      sourceHashes: {
+        "asset-create": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        "asset-replace": ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+      },
+      targetHashes: {
+        "/workspace/.cursor/rules/new.mdc": null,
+        "/workspace/.cursor/rules/existing.mdc": ContentHashSchema.parse(
+          `sha256:${"e".repeat(64)}`,
+        ),
+      },
+      expiresAt: "2026-06-28T08:10:00.000Z",
+    };
+    const state = reducer(initialState, { type: "preview", preview });
+
+    expect(migrationDifferenceSummaryForState(state)).toEqual({
+      addedToTarget: 1,
+      overwrittenInTarget: 1,
+      targetOnlyKept: 0,
+      conflictsOrWarnings: 2,
+    });
+    expect(migrationDifferenceSummaryForState(initialState)).toEqual({
+      addedToTarget: 0,
+      overwrittenInTarget: 0,
+      targetOnlyKept: 0,
+      conflictsOrWarnings: 0,
+    });
   });
 
   it("detects source asset drift against the current indexed asset hashes", () => {

@@ -50,12 +50,43 @@ export function App(props: { readonly api: DesktopApi }) {
     });
   }
 
+  async function selectMigrationSourceProject() {
+    await runAction("Select migration source project", async () => {
+      const sourceProjectRoot = await props.api.selectProjectRoot();
+      if (sourceProjectRoot === undefined) return;
+      dispatch({
+        type: "migrationSourceProject",
+        sourceProjectRoot,
+      });
+    });
+  }
+
+  async function selectMigrationTargetProject() {
+    await runAction("Select migration target project", async () => {
+      const targetScopeId = await props.api.selectProjectRoot();
+      if (targetScopeId === undefined) return;
+      dispatch({
+        type: "migrationTargetProject",
+        targetScopeId,
+      });
+    });
+  }
+
   function useProjectPath(path: string) {
     const root = path.trim();
     if (root.length === 0) {
       dispatch({ type: "message", message: t(locale, "Enter a project path first.") });
     } else {
       dispatch({ type: "project", root });
+    }
+  }
+
+  function useMigrationSourceProjectPath(path: string) {
+    const root = path.trim();
+    if (root.length === 0) {
+      dispatch({ type: "message", message: t(locale, "Enter a project path first.") });
+    } else {
+      dispatch({ type: "migrationSourceProject", sourceProjectRoot: root });
     }
   }
 
@@ -132,6 +163,49 @@ export function App(props: { readonly api: DesktopApi }) {
         counts: diagnostics.diagnosticCounts,
       });
       dispatch({ type: "history", history: await refreshHistory(props.api) });
+    });
+  }
+
+  async function scanMigrationSource() {
+    await runAction("Start source scan", async () => {
+      const root = state.migration.sourceProjectRoot?.trim();
+      if (root === undefined || root.length === 0) {
+        dispatch({
+          type: "message",
+          message: t(locale, "Choose a source project before scanning migration assets."),
+        });
+        return;
+      }
+      const response = await props.api.invoke("scan.start", {
+        mode: "full",
+        roots: [root],
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "queued" : "error",
+        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+      });
+      if (response.ok) {
+        subscribeTask(response.data.taskId, (event) => {
+          const action = scanActionForTaskEvent(event);
+          if (action !== undefined) dispatch(action);
+          const taskAction = taskActionForTaskEvent(event);
+          if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
+          if (event.type === "completed") {
+            void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
+            void refreshDiagnostics(props.api).then(({ diagnostics, diagnosticCounts }) =>
+              dispatch({ type: "diagnostics", diagnostics, counts: diagnosticCounts }),
+            );
+          }
+        });
+      }
+      dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+      const diagnostics = await refreshDiagnostics(props.api);
+      dispatch({
+        type: "diagnostics",
+        diagnostics: diagnostics.diagnostics,
+        counts: diagnostics.diagnosticCounts,
+      });
     });
   }
 
@@ -360,6 +434,9 @@ export function App(props: { readonly api: DesktopApi }) {
       {state.route === "assets" ? (
         <AssetsView
           state={state}
+          onScan={() => void scan()}
+          onSelectProject={() => void selectProject()}
+          onUseProjectPath={useProjectPath}
           onRefresh={() => {
             void runAction("Refresh assets", async () => {
               dispatch({ type: "assets", assets: await refreshAssets(props.api) });
@@ -449,6 +526,11 @@ export function App(props: { readonly api: DesktopApi }) {
           onToggleSource={(assetId, selected) =>
             dispatch({ type: "migrationSource", assetId, selected })
           }
+          onSourceProject={useMigrationSourceProjectPath}
+          onSelectSourceProject={() => void selectMigrationSourceProject()}
+          onSelectTargetProject={() => void selectMigrationTargetProject()}
+          onSwapProjects={() => dispatch({ type: "migrationSwapProjects" })}
+          onScanSource={() => void scanMigrationSource()}
           onTargetTool={(targetToolKey) => dispatch({ type: "migrationTarget", targetToolKey })}
           onTargetProject={(targetScopeId) =>
             dispatch({ type: "migrationTargetProject", targetScopeId })

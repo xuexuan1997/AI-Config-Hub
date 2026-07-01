@@ -54,6 +54,7 @@ export interface AppSettingsState {
 }
 
 export interface MigrationFormState {
+  readonly sourceProjectRoot?: string;
   readonly sourceAssetIds: readonly MigrationSourceAssetId[];
   readonly targetToolKey: MigrationTargetToolKey;
   readonly targetScopeId?: string;
@@ -146,8 +147,10 @@ export type AppAction =
       readonly assetId: AppState["assets"][number]["id"];
       readonly selected: boolean;
     }
+  | { readonly type: "migrationSourceProject"; readonly sourceProjectRoot: string }
   | { readonly type: "migrationTarget"; readonly targetToolKey: MigrationTargetToolKey }
   | { readonly type: "migrationTargetProject"; readonly targetScopeId: string }
+  | { readonly type: "migrationSwapProjects" }
   | {
       readonly type: "migrationConflictPolicy";
       readonly conflictPolicy: MigrationConflictPolicy;
@@ -245,6 +248,7 @@ function migrationSourceAssetIds(
   state: AppState,
   assets: AppState["assets"],
 ): MigrationFormState["sourceAssetIds"] {
+  if (state.migration.sourceProjectRoot === undefined) return [];
   const enabledAssets = assets.filter(isEnabledMigrationAsset);
   const available = new Set(enabledAssets.map((asset) => asset.id));
   const retained = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
@@ -261,6 +265,12 @@ function normalizedTargetScopeId(
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+function normalizedProjectRoot(projectRoot: string | undefined): string | undefined {
+  if (projectRoot === undefined) return undefined;
+  const trimmed = projectRoot.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
 function migrationWithTargetScopeId(
   migration: MigrationFormState,
   targetScopeId: string | undefined,
@@ -272,20 +282,15 @@ function migrationWithTargetScopeId(
     : { ...withoutTargetScopeId, targetScopeId };
 }
 
-function migrationForProjectChange(state: AppState, root: string | undefined): MigrationFormState {
-  const currentTargetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
-  const currentProjectRoot = normalizedTargetScopeId(state.projectRoot);
-  const followsSourceProject =
-    currentTargetScopeId === undefined || currentTargetScopeId === currentProjectRoot;
-  if (root === undefined) {
-    return followsSourceProject
-      ? migrationWithTargetScopeId(state.migration, undefined)
-      : migrationWithTargetScopeId(state.migration, currentTargetScopeId);
-  }
-  return migrationWithTargetScopeId(
-    state.migration,
-    followsSourceProject ? normalizedTargetScopeId(root) : currentTargetScopeId,
-  );
+function migrationWithSourceProjectRoot(
+  migration: MigrationFormState,
+  sourceProjectRoot: string | undefined,
+): MigrationFormState {
+  const { sourceProjectRoot: discardedSourceProjectRoot, ...withoutSourceProjectRoot } = migration;
+  void discardedSourceProjectRoot;
+  return sourceProjectRoot === undefined
+    ? { ...withoutSourceProjectRoot, sourceAssetIds: [] }
+    : { ...withoutSourceProjectRoot, sourceProjectRoot, sourceAssetIds: [] };
 }
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -304,7 +309,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
             assets: state.assets,
             diagnostics: state.diagnostics,
             diagnosticCounts: state.diagnosticCounts,
-            migration: migrationForProjectChange(state, undefined),
+            migration: state.migration,
             deploymentConfirmed: state.deploymentConfirmed,
             deploymentConfirmationGrants: state.deploymentConfirmationGrants,
             history: state.history,
@@ -321,7 +326,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
           assets: state.assets,
           diagnostics: state.diagnostics,
           diagnosticCounts: state.diagnosticCounts,
-          migration: migrationForProjectChange(state, action.root),
+          migration: state.migration,
           deploymentConfirmed: state.deploymentConfirmed,
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
@@ -420,6 +425,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
         migration: { ...state.migration, sourceAssetIds },
       });
     }
+    case "migrationSourceProject":
+      return clearPreview({
+        ...state,
+        migration: migrationWithSourceProjectRoot(
+          state.migration,
+          normalizedProjectRoot(action.sourceProjectRoot),
+        ),
+      });
     case "migrationTarget":
       return clearPreview({
         ...state,
@@ -433,6 +446,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
           normalizedTargetScopeId(action.targetScopeId),
         ),
       });
+    case "migrationSwapProjects": {
+      const sourceProjectRoot = normalizedProjectRoot(state.migration.sourceProjectRoot);
+      const targetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
+      const migrationWithSwappedSource = migrationWithSourceProjectRoot(
+        state.migration,
+        targetScopeId,
+      );
+      return clearPreview({
+        ...state,
+        migration: migrationWithTargetScopeId(migrationWithSwappedSource, sourceProjectRoot),
+      });
+    }
     case "migrationConflictPolicy":
       return clearPreview({
         ...state,
@@ -608,8 +633,8 @@ export function migrationPreviewBlockersForState(state: AppState): readonly stri
     .map((assetId) => availableAssets.get(assetId))
     .filter((asset) => asset !== undefined);
 
-  if (state.projectRoot === undefined) {
-    blockers.push("Select a project before creating a migration preview.");
+  if (normalizedProjectRoot(state.migration.sourceProjectRoot) === undefined) {
+    blockers.push("Choose a source project before creating a migration preview.");
   }
   if (normalizedTargetScopeId(state.migration.targetScopeId) === undefined) {
     blockers.push("Enter a target project folder.");
@@ -621,6 +646,36 @@ export function migrationPreviewBlockersForState(state: AppState): readonly stri
     blockers.push("Select source assets from one resource type.");
   }
   return blockers;
+}
+
+export interface MigrationDifferenceSummary {
+  readonly addedToTarget: number;
+  readonly overwrittenInTarget: number;
+  readonly targetOnlyKept: number;
+  readonly conflictsOrWarnings: number;
+}
+
+export function migrationDifferenceSummaryForState(state: AppState): MigrationDifferenceSummary {
+  const preview = state.preview;
+  if (preview === undefined) {
+    return { addedToTarget: 0, overwrittenInTarget: 0, targetOnlyKept: 0, conflictsOrWarnings: 0 };
+  }
+  const changedTargetPaths = new Set(preview.changes.map((change) => change.pathDisplay));
+  return {
+    addedToTarget: preview.changes.filter((change) => change.operation === "create").length,
+    overwrittenInTarget: preview.changes.filter((change) => change.operation === "replace").length,
+    targetOnlyKept: Object.entries(preview.targetHashes).filter(
+      ([path, hash]) => hash !== null && !changedTargetPaths.has(path),
+    ).length,
+    conflictsOrWarnings:
+      preview.warnings.length +
+      preview.fieldLosses.filter(
+        (loss) =>
+          loss.droppedFields.length > 0 ||
+          loss.transformedFields.length > 0 ||
+          loss.warnings.length > 0,
+      ).length,
+  };
 }
 
 export function migrationHashRowsForPreview(

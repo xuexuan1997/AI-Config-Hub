@@ -4,6 +4,8 @@ export type DesktopLocale = "en" | "zh-CN";
 
 const ZH_CN: Partial<Record<string, string>> = {
   Assets: "资产",
+  "Asset Migration": "资产迁移",
+  "Asset Review": "资产审查",
   Agent: "代理",
   "Asset detail": "资产详情",
   "Asset detail is unavailable.": "资产详情不可用。",
@@ -19,12 +21,19 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Create a fresh migration preview; the current plan has expired.":
     "请创建新的迁移预览；当前计划已过期。",
   "Browse folder": "浏览文件夹",
+  Choose: "选择",
+  "Choose a source project before creating a migration preview.": "请先选择源项目再创建迁移预览。",
+  "Choose a source project before scanning migration assets.": "请先选择源项目再扫描迁移资产。",
+  "Choose project": "选择项目",
+  "Choose source and target projects independently before writing.":
+    "写入前独立选择源项目和目标项目。",
   Dark: "深色",
   English: "英语",
   "Choose the project folder to scan before reviewing assets.":
     "请先选择要扫描的项目文件夹，然后再查看资产。",
   Close: "关闭",
   "Configuration manager overview": "配置管理总览",
+  "Configuration asset workbench": "配置资产工作台",
   "Counts reflect every indexed asset in this project.": "计数包含此项目中所有已索引资产。",
   "Counts reflect only the inspected asset.": "计数仅包含当前检查的资产。",
   "Deploy with confirmation": "确认后部署",
@@ -33,6 +42,11 @@ const ZH_CN: Partial<Record<string, string>> = {
   Detail: "详情",
   Details: "详情",
   Diagnostics: "诊断",
+  "Difference summary": "差异摘要",
+  "Added to target": "新增到目标",
+  "Overwritten in target": "覆盖目标",
+  "Target-only kept": "目标独有保留",
+  "Conflicts or warnings": "冲突或警告",
   Error: "错误",
   "Diagnostic summary for {asset}": "{asset} 的诊断摘要",
   "Diagnostic asset is unavailable.": "诊断资产不可用。",
@@ -63,6 +77,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Not loaded": "未加载",
   "Opens your system folder picker.": "打开系统文件夹选择器。",
   Overview: "总览",
+  "Problems first": "问题优先",
   "Paste a folder path only if the picker is unavailable.": "仅在选择器不可用时粘贴文件夹路径。",
   "Project path": "项目路径",
   "Project setup": "项目设置",
@@ -76,17 +91,24 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Rescan after edit": "编辑后重新扫描",
   Resource: "资源",
   References: "引用",
+  "Review filters": "审查筛选",
+  "Review and migration are sibling workflows.": "审查和迁移是平级功能。",
   Rule: "规则",
   "{resource} assets": "{resource}资产",
   "Restart required": "需要重启",
   "Revision {revision}": "修订版本 {revision}",
   Saving: "正在保存",
   Scan: "扫描",
+  "Scan source": "扫描源项目",
   "Scan AI tool configuration, inspect normalized assets, preview conversions, deploy with confirmation, and roll back verified changes.":
     "扫描 AI 工具配置，检查标准化资产，预览转换，确认后部署，并回滚已验证的更改。",
   "Scan a project before creating a migration preview.": "请先扫描项目再创建迁移预览。",
+  "Scan a source project before creating a migration preview.": "请先扫描源项目再创建迁移预览。",
+  "Scan current project": "扫描当前项目",
   Settings: "设置",
   "Selected project folder": "已选择的项目文件夹",
+  "Select an asset to inspect its source, problems, and effective config.":
+    "选择资产以查看来源、问题和有效配置。",
   "Select a project before creating a migration preview.": "请先选择项目再创建迁移预览。",
   "Select at least one source asset.": "请选择至少一个源资产。",
   "Select a project and scan at least one asset first.": "请先选择项目并至少扫描一个资产。",
@@ -97,10 +119,14 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Selected asset info": "已选资产信息",
   "Selected asset warnings": "已选资产警告",
   "Source assets": "源资产",
+  "Source project": "源项目",
+  "Source project path": "源项目路径",
   "Open source": "打开来源",
   "Source file opened.": "来源文件已打开。",
   "Inspect asset": "检查资产",
   Inspect: "检查",
+  "Inspect one current project without implying that it is a migration source.":
+    "只审查一个当前项目，不暗示它会成为迁移来源。",
   "Inspect an asset before opening its source file.": "请先检查资产，再打开其来源文件。",
   "Inspect an asset with a selected project before rescanning after edit.":
     "请先在已选择项目中检查资产，再在编辑后重新扫描。",
@@ -140,7 +166,9 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Start scan": "开始扫描",
   System: "跟随系统",
   "Target project folder": "目标项目文件夹",
+  "Target project": "目标项目",
   "Target project path": "目标项目路径",
+  "Target impact": "目标影响",
   "Target tool": "目标工具",
   Theme: "主题",
   "Existing target files": "现有目标文件",
@@ -156,6 +184,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Rollback status": "回滚状态",
   "Preview cross-tool changes before anything writes to disk.": "在写入磁盘之前预览跨工具变更。",
   "Preview migration": "预览迁移",
+  "Preview writes": "预览写入",
+  "Preview writes to see target impact.": "预览写入后查看目标影响。",
   "Plan {plan}": "计划 {plan}",
   Plan: "计划",
   "Plan hash": "计划哈希",
@@ -229,6 +259,10 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Stop on conflicts": "遇到冲突时停止",
   "Merge (not supported yet)": "合并（暂不支持）",
   "Use typed path": "使用输入路径",
+  All: "全部",
+  "Current project": "当前项目",
+  "Navigation model": "导航关系",
+  "Swap source and target": "交换源和目标",
   Workspaces: "工作区",
   "Workspace diagnostic summary": "工作区诊断摘要",
   "Workspace diagnostics": "工作区诊断",
@@ -264,6 +298,7 @@ export function t(
 }
 
 function systemPreferredLanguages(): readonly string[] {
+  if (typeof window === "undefined") return [];
   const navigatorLanguages = globalThis.navigator?.languages;
   if (navigatorLanguages !== undefined && navigatorLanguages.length > 0) {
     return Array.from(navigatorLanguages);

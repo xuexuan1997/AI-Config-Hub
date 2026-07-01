@@ -16,6 +16,9 @@ export function AssetsView(props: {
   readonly onRescanAfterEdit: () => void;
   readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
+  readonly onSelectProject?: () => void;
+  readonly onUseProjectPath?: (path: string) => void;
+  readonly onScan?: () => void;
 }) {
   const locale = localeForState(props.state);
   const detail = props.state.assetDetail;
@@ -45,36 +48,127 @@ export function AssetsView(props: {
 
   return (
     <>
-      <h1>{t(locale, "Assets")}</h1>
-      <button type="button" onClick={props.onRefresh}>
-        {t(locale, "Refresh assets")}
-      </button>
-      <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
-      <div className="cards" aria-label={diagnosticScope.cardsLabel}>
-        <article>
-          <span>{diagnosticScope.diagnosticsLabel}</span>
-          <strong>{formatErrorCount(locale, props.state.diagnosticCounts.error)}</strong>
-        </article>
-        <article>
-          <span>{diagnosticScope.warningsLabel}</span>
-          <strong>{props.state.diagnosticCounts.warning}</strong>
-        </article>
-        <article>
-          <span>{diagnosticScope.infoLabel}</span>
-          <strong>{props.state.diagnosticCounts.info}</strong>
-        </article>
-      </div>
-      {assetGroups.length === 0 ? (
-        <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
-      ) : (
-        <AssetTypeTabs
-          activeResourceType={activeResourceType}
-          groups={assetGroups}
-          locale={locale}
-          onInspect={props.onInspect}
-          onSelectResourceType={setSelectedResourceType}
-        />
-      )}
+      <section className="page-heading">
+        <div>
+          <h1>{t(locale, "Asset Review")}</h1>
+          <p>
+            {t(
+              locale,
+              "Inspect one current project without implying that it is a migration source.",
+            )}
+          </p>
+        </div>
+        <button type="button" onClick={props.onRefresh}>
+          {t(locale, "Refresh assets")}
+        </button>
+      </section>
+      <section className="review-project-card">
+        <div className="review-project-summary">
+          <span>{t(locale, "Current project")}</span>
+          <strong title={props.state.projectRoot}>
+            {props.state.projectRoot ?? t(locale, "No folder selected yet")}
+          </strong>
+        </div>
+        <div className="review-project-actions">
+          <button type="button" onClick={props.onSelectProject}>
+            {t(locale, "Choose project")}
+          </button>
+          <button
+            type="button"
+            disabled={props.state.projectRoot === undefined}
+            onClick={props.onScan}
+          >
+            {t(locale, "Scan current project")}
+          </button>
+        </div>
+        <form
+          className="project-path-editor compact"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const formData = new FormData(form);
+            const projectPath = formData.get("projectPath");
+            props.onUseProjectPath?.(typeof projectPath === "string" ? projectPath : "");
+            form.reset();
+          }}
+        >
+          <label className="project-path-field">
+            <span>{t(locale, "Manual path fallback")}</span>
+            <input
+              aria-label={t(locale, "Project path")}
+              name="projectPath"
+              placeholder="/Users/you/project"
+            />
+          </label>
+          <button className="project-path-submit" type="submit">
+            {t(locale, "Use typed path")}
+          </button>
+        </form>
+      </section>
+      <section className="review-workspace">
+        <aside className="review-filters">
+          <h2>{t(locale, "Review filters")}</h2>
+          <div className="filter-pill">
+            <span>{t(locale, "Status")}</span>
+            <strong>{t(locale, "All")}</strong>
+          </div>
+          <div className="filter-pill">
+            <span>{t(locale, "Diagnostics")}</span>
+            <strong>{t(locale, "Problems first")}</strong>
+          </div>
+          <div className="filter-pill">
+            <span>{t(locale, "Scope")}</span>
+            <strong>{t(locale, "Current project")}</strong>
+          </div>
+          <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
+          <div className="cards compact" aria-label={diagnosticScope.cardsLabel}>
+            <article>
+              <span>{diagnosticScope.diagnosticsLabel}</span>
+              <strong>{formatErrorCount(locale, props.state.diagnosticCounts.error)}</strong>
+            </article>
+            <article>
+              <span>{diagnosticScope.warningsLabel}</span>
+              <strong>{props.state.diagnosticCounts.warning}</strong>
+            </article>
+            <article>
+              <span>{diagnosticScope.infoLabel}</span>
+              <strong>{props.state.diagnosticCounts.info}</strong>
+            </article>
+          </div>
+        </aside>
+        <section className="review-list-panel">
+          {assetGroups.length === 0 ? (
+            <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
+          ) : (
+            <AssetTypeTabs
+              activeResourceType={activeResourceType}
+              groups={assetGroups}
+              locale={locale}
+              onInspect={props.onInspect}
+              onSelectResourceType={setSelectedResourceType}
+            />
+          )}
+        </section>
+        <aside className="review-detail-panel">
+          <h2>{t(locale, "Asset detail")}</h2>
+          {detail === undefined ? (
+            <p>
+              {t(locale, "Select an asset to inspect its source, problems, and effective config.")}
+            </p>
+          ) : (
+            <dl>
+              <dt>{t(locale, "Logical key")}</dt>
+              <dd>{detail.asset.logicalKey}</dd>
+              <dt>{t(locale, "Tool")}</dt>
+              <dd>{toolLabel(detail.asset.toolKey)}</dd>
+              <dt>{t(locale, "Resource")}</dt>
+              <dd>{resourceTypeLabel(locale, detail.asset.resourceType)}</dd>
+              <dt>{t(locale, "Source")}</dt>
+              <dd>{detail.source.pathDisplay}</dd>
+            </dl>
+          )}
+        </aside>
+      </section>
       {detail === undefined ? null : (
         <AssetDetailDialog
           detail={detail}
