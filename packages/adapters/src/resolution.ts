@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
 
-import type { AdapterEffectiveConfigDraft, Asset, ResolutionContext } from "@ai-config-hub/core";
+import type {
+  AdapterEffectiveConfigDraft,
+  Asset,
+  ResolutionContext,
+  Scope,
+} from "@ai-config-hub/core";
 import { ContentHashSchema, type ResourceKind } from "@ai-config-hub/shared";
 
 const kindOrder: Readonly<Record<ResourceKind, number>> = {
@@ -21,6 +26,21 @@ function contains(root: string, target: string): boolean {
 
 function resourceName(asset: Asset): string {
   return asset.resource.data.name ?? asset.locator;
+}
+
+function resolutionKey(asset: Asset, scope: Scope): string {
+  if (asset.resource.kind === "rule") return `rule:${asset.assetId}`;
+  if (asset.resource.kind === "skill" && asset.toolId === "codex") {
+    return `skill:${asset.assetId}`;
+  }
+  if (
+    asset.resource.kind === "skill" &&
+    asset.toolId === "claude-code" &&
+    scope.scopeKind === "directory"
+  ) {
+    return `skill:${resourceName(asset)}:${scope.canonicalRootPath}`;
+  }
+  return `${asset.resource.kind}:${resourceName(asset)}`;
 }
 
 function resolutionHash(assets: readonly Asset[]) {
@@ -65,13 +85,12 @@ export function resolveAssetsByScope(context: ResolutionContext): AdapterEffecti
     });
 
   const active = new Map<string, Asset>();
+  const keysByAssetId = new Map<string, string>();
   const ignored = new Set<string>();
-  const overriddenBy = new Map<string, string>();
+  const overriddenBy = new Map<string, Asset["assetId"]>();
   for (const asset of applicable) {
-    const key =
-      asset.resource.kind === "rule"
-        ? `rule:${asset.assetId}`
-        : `${asset.resource.kind}:${resourceName(asset)}`;
+    const key = resolutionKey(asset, scopes.get(asset.scopeId)!);
+    keysByAssetId.set(asset.assetId, key);
     const previous = active.get(key);
     if (previous !== undefined) {
       ignored.add(previous.assetId);
@@ -85,21 +104,22 @@ export function resolveAssetsByScope(context: ResolutionContext): AdapterEffecti
   const contributingIds = new Set(contributing.map(({ assetId }) => assetId));
   const steps = applicable.map((asset) => {
     if (ignored.has(asset.assetId)) {
+      const coveredByAssetId = overriddenBy.get(asset.assetId);
       return {
         action: "ignore" as const,
         assetId: asset.assetId,
-        reason: `A more specific scope overrides this resource (${overriddenBy.get(asset.assetId) ?? "unknown"})`,
+        ...(coveredByAssetId === undefined ? {} : { coveredByAssetId }),
+        reason: `A more specific scope overrides this resource (${coveredByAssetId ?? "unknown"})`,
       };
     }
+    const assetKey = keysByAssetId.get(asset.assetId);
     return {
       action:
         asset.resource.kind === "rule"
           ? ("inherit" as const)
           : applicable.some(
                 (candidate) =>
-                  candidate !== asset &&
-                  candidate.resource.kind === asset.resource.kind &&
-                  resourceName(candidate) === resourceName(asset),
+                  candidate !== asset && keysByAssetId.get(candidate.assetId) === assetKey,
               )
             ? ("override" as const)
             : ("merge" as const),

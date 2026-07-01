@@ -19,6 +19,7 @@ export const EffectiveConfigStepSchema = z
     action: z.enum(["inherit", "merge", "override", "ignore"]),
     assetId: AssetIdSchema,
     reason: z.string().trim().min(1).max(1_000),
+    coveredByAssetId: AssetIdSchema.optional(),
   })
   .strict()
   .readonly();

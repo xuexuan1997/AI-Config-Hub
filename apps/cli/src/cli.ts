@@ -942,10 +942,17 @@ function renderEffective(data: Record<string, unknown>): string {
   const contributors = arrayValue(data.contributors);
   const ignored = arrayValue(data.ignored);
   const diagnostics = arrayValue(data.diagnostics);
+  const covered = ignored.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const ignoredItem = item as Record<string, unknown>;
+    if (ignoredItem.coveredByAssetId === undefined) return [];
+    return [`${stringValue(ignoredItem.assetId)} -> ${stringValue(ignoredItem.coveredByAssetId)}`];
+  });
   return [
     `Effective resources: ${renderJsonSummary(effective)}`,
     `Contributors: ${contributors.length}`,
     `Ignored: ${ignored.length}`,
+    ...(covered.length === 0 ? [] : [`Covered: ${covered.join(", ")}`]),
     `Diagnostics: ${diagnostics.length}`,
     `Snapshot: ${stringValue(data.snapshotRevision)}`,
   ]

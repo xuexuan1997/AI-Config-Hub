@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { codexRegistration } from "./codex.js";
+import { claudeCodeRegistration } from "./claude-code.js";
 import { neverCancelled } from "./test-support.js";
 
 const scopes = [
@@ -35,6 +36,7 @@ const scopes = [
 
 function asset(input: {
   id: string;
+  toolId?: "codex" | "claude-code";
   scopeId: string;
   path: string;
   resource: unknown;
@@ -42,7 +44,7 @@ function asset(input: {
 }) {
   return AssetSchema.parse({
     assetId: input.id,
-    toolId: "codex",
+    toolId: input.toolId ?? "codex",
     resource: input.resource,
     scopeId: input.scopeId,
     canonicalSourcePath: input.path,
@@ -131,6 +133,7 @@ describe("effective resolution", () => {
     expect(result.draft.resolvedResources).toHaveLength(3);
     expect(result.draft.steps.find(({ assetId }) => assetId === "root-mcp")).toMatchObject({
       action: "ignore",
+      coveredByAssetId: "src-mcp",
     });
   });
 
@@ -146,5 +149,104 @@ describe("effective resolution", () => {
     });
     expect(result.draft.contributingAssetIds).toEqual(["root-mcp"]);
     expect(result.draft.resourceKinds).toEqual(["mcp"]);
+  });
+
+  it("keeps same-name Codex skills from different project directories available", async () => {
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const result = await adapter.resolveEffective({
+      tool,
+      targetPath: AbsolutePathSchema.parse("/project/src/components"),
+      assets: [
+        asset({
+          id: "root-skill",
+          scopeId: "scope-root",
+          path: "/project/.agents/skills/deploy/SKILL.md",
+          hash: "e",
+          resource: {
+            kind: "skill",
+            data: {
+              name: "deploy",
+              description: "Deploy from the repository root",
+              instructions: "Root deploy",
+              references: [],
+              extensions: {},
+            },
+          },
+        }),
+        asset({
+          id: "src-skill",
+          scopeId: "scope-src",
+          path: "/project/src/.agents/skills/deploy/SKILL.md",
+          hash: "f",
+          resource: {
+            kind: "skill",
+            data: {
+              name: "deploy",
+              description: "Deploy from src",
+              instructions: "Src deploy",
+              references: [],
+              extensions: {},
+            },
+          },
+        }),
+      ],
+      scopes,
+      signal: neverCancelled,
+    });
+
+    expect(result.draft.contributingAssetIds).toEqual(["root-skill", "src-skill"]);
+    expect(result.draft.ignoredAssetIds).toEqual([]);
+  });
+
+  it("keeps same-name nested Claude Code project skills available", async () => {
+    const claudeScopes = scopes.map((scope) =>
+      ScopeSchema.parse({ ...scope, toolId: "claude-code" }),
+    );
+    const adapter = claudeCodeRegistration.create({ logger: { debug() {}, warn() {} } });
+    const result = await adapter.resolveEffective({
+      tool: { ...tool, toolId: "claude-code" as const },
+      targetPath: AbsolutePathSchema.parse("/project/src/components"),
+      assets: [
+        asset({
+          id: "root-skill",
+          toolId: "claude-code",
+          scopeId: "scope-root",
+          path: "/project/.claude/skills/deploy/SKILL.md",
+          hash: "e",
+          resource: {
+            kind: "skill",
+            data: {
+              name: "deploy",
+              description: "Deploy from the repository root",
+              instructions: "Root deploy",
+              references: [],
+              extensions: {},
+            },
+          },
+        }),
+        asset({
+          id: "src-skill",
+          toolId: "claude-code",
+          scopeId: "scope-src",
+          path: "/project/src/.claude/skills/deploy/SKILL.md",
+          hash: "f",
+          resource: {
+            kind: "skill",
+            data: {
+              name: "deploy",
+              description: "Deploy from src",
+              instructions: "Src deploy",
+              references: [],
+              extensions: {},
+            },
+          },
+        }),
+      ],
+      scopes: claudeScopes,
+      signal: neverCancelled,
+    });
+
+    expect(result.draft.contributingAssetIds).toEqual(["root-skill", "src-skill"]);
+    expect(result.draft.ignoredAssetIds).toEqual([]);
   });
 });

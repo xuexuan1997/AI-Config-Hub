@@ -132,6 +132,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Overrode lower-priority values because {reason}.": "由于{reason}而覆盖低优先级值。",
   "{action} because {reason}.": "由于{reason}而{action}。",
   "Ignored because {reason}.": "由于{reason}而忽略。",
+  "Covered by {asset}.": "被 {asset} 覆盖。",
   "highest priority scope": "最高优先级范围",
   "target conflict": "目标冲突",
   "Enter a target project folder.": "请输入目标项目文件夹。",

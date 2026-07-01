@@ -402,7 +402,11 @@ const EffectiveResolveResponseSchema = z
     ignored: z
       .array(
         z
-          .object({ assetId: AssetIdSchema, reasonCode: z.string().trim().min(1).max(100) })
+          .object({
+            assetId: AssetIdSchema,
+            reasonCode: z.string().trim().min(1).max(100),
+            coveredByAssetId: AssetIdSchema.optional(),
+          })
           .strict()
           .readonly(),
       )

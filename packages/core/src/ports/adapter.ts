@@ -94,6 +94,7 @@ export interface EffectiveConfigStepDraft {
   readonly action: "inherit" | "merge" | "override" | "ignore";
   readonly assetId: AssetId;
   readonly reason: string;
+  readonly coveredByAssetId?: AssetId;
 }
 
 export interface AdapterEffectiveConfigDraft {

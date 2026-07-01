@@ -645,6 +645,11 @@ function AssetDetailDialog(props: {
                         {t(props.locale, "Ignored because {reason}.", {
                           reason: reasonLabel(props.locale, ignored.reasonCode),
                         })}
+                        {ignored.coveredByAssetId === undefined
+                          ? null
+                          : ` ${t(props.locale, "Covered by {asset}.", {
+                              asset: assetLabel(ignored.coveredByAssetId, props.assetLabels),
+                            })}`}
                       </span>
                     </li>
                   ))}

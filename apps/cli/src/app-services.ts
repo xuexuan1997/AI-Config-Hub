@@ -1066,7 +1066,11 @@ async function resolveEffectiveView(
       })),
     ignored: draft.steps
       .filter((step) => step.action === "ignore")
-      .map((step) => ({ assetId: step.assetId, reasonCode: reasonCode(step.reason) })),
+      .map((step) => ({
+        assetId: step.assetId,
+        reasonCode: reasonCode(step.reason),
+        ...(step.coveredByAssetId === undefined ? {} : { coveredByAssetId: step.coveredByAssetId }),
+      })),
     diagnostics: [],
     snapshotRevision: databaseRevision(runtime),
   };
