@@ -18,14 +18,11 @@ import {
   refreshAssetDetail,
   refreshAssets,
   refreshDiagnostics,
-  refreshHistory,
-  rollbackRequestForState,
   scanActionForTaskEvent,
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
-import { DeploymentView } from "./views/deployment.js";
 import { MigrationView } from "./views/migration.js";
 import { SettingsView } from "./views/settings.js";
 
@@ -132,9 +129,6 @@ export function App(props: { readonly api: DesktopApi }) {
             void refreshDiagnostics(props.api).then(({ diagnostics, diagnosticCounts }) =>
               dispatch({ type: "diagnostics", diagnostics, counts: diagnosticCounts }),
             );
-            void refreshHistory(props.api).then((history) =>
-              dispatch({ type: "history", history }),
-            );
           }
         });
       }
@@ -145,7 +139,6 @@ export function App(props: { readonly api: DesktopApi }) {
         diagnostics: diagnostics.diagnostics,
         counts: diagnostics.diagnosticCounts,
       });
-      dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
 
@@ -258,7 +251,7 @@ export function App(props: { readonly api: DesktopApi }) {
     }
     const previewPlan = state.preview;
     if (previewPlan === undefined) return;
-    await runAction("Execute deployment", async () => {
+    await runAction("Execute migration", async () => {
       const response = await props.api.invoke("deployment.execute", {
         planId: previewPlan.planId,
         confirmedPlanHash: previewPlan.planHash,
@@ -267,25 +260,6 @@ export function App(props: { readonly api: DesktopApi }) {
       const taskId = response.ok ? response.data.taskId : response.error.taskId;
       if (taskId !== undefined) subscribeOperationTask(taskId);
       dispatch({ type: "message", message: response.ok ? undefined : response.error.message });
-      dispatch({ type: "history", history: await refreshHistory(props.api) });
-    });
-  }
-
-  async function rollback() {
-    await runAction("Preview rollback", async () => {
-      const request = rollbackRequestForState(state);
-      if (request === undefined) {
-        dispatch({
-          type: "message",
-          message: t(locale, "No succeeded deployment is available to roll back."),
-        });
-        return;
-      }
-      const response = await props.api.invoke("deployment.rollback", request);
-      const taskId = response.ok ? response.data.taskId : response.error.taskId;
-      if (taskId !== undefined) subscribeOperationTask(taskId);
-      dispatch({ type: "message", message: response.ok ? undefined : response.error.message });
-      dispatch({ type: "history", history: await refreshHistory(props.api) });
     });
   }
 
@@ -297,9 +271,6 @@ export function App(props: { readonly api: DesktopApi }) {
     subscribeTask(taskId, (event) => {
       const action = taskActionForTaskEvent(event);
       if (action !== undefined) dispatch({ type: "taskEvent", action });
-      if (event.type === "completed") {
-        void refreshHistory(props.api).then((history) => dispatch({ type: "history", history }));
-      }
     });
   }
 
@@ -393,17 +364,13 @@ export function App(props: { readonly api: DesktopApi }) {
           onConflictPolicy={(conflictPolicy) =>
             dispatch({ type: "migrationConflictPolicy", conflictPolicy })
           }
-        />
-      ) : null}
-      {state.route === "deployment" ? (
-        <DeploymentView
-          state={state}
-          onConfirm={(confirmed) => dispatch({ type: "deploymentConfirmation", confirmed })}
+          onConfirmMigration={(confirmed) =>
+            dispatch({ type: "deploymentConfirmation", confirmed })
+          }
           onConfirmRequirement={(confirmation, granted) =>
             dispatch({ type: "deploymentConfirmationGrant", confirmation, granted })
           }
-          onDeploy={() => void deploy()}
-          onRollback={() => void rollback()}
+          onExecuteMigration={() => void deploy()}
         />
       ) : null}
       {state.route === "settings" ? (

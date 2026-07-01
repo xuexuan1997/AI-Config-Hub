@@ -2,7 +2,6 @@ import {
   AssetIdSchema,
   ContentHashSchema,
   DeploymentPlanIdSchema,
-  DeploymentRecordIdSchema,
   DiagnosticIdSchema,
   ScopeIdSchema,
   TaskIdSchema,
@@ -15,7 +14,6 @@ import {
   effectiveRequestForState,
   enabledMigrationAssets,
   formatUiError,
-  historyDetailRequestForEntry,
   initialState,
   migrationDifferenceSummaryForState,
   migrationHashRowsForPreview,
@@ -25,7 +23,6 @@ import {
   previewRequestForState,
   reducer,
   refreshAssets,
-  rollbackRequestForState,
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
   scanActionForTaskEvent,
@@ -555,30 +552,6 @@ describe("renderer project selection state", () => {
     expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
   });
 
-  it("uses the newest succeeded deployment history item for rollback", () => {
-    expect(rollbackRequestForState(initialState)).toBeUndefined();
-
-    const state = reducer(initialState, {
-      type: "history",
-      history: [
-        {
-          id: "rollback-1",
-          kind: "rollback",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:05:00.000Z",
-        },
-        {
-          id: "deployment-1",
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-        },
-      ],
-    });
-
-    expect(rollbackRequestForState(state)).toEqual({ deploymentId: "deployment-1" });
-  });
-
   it("maps task completion events onto scan status messages", () => {
     expect(
       scanActionForTaskEvent({
@@ -937,36 +910,17 @@ describe("renderer project selection state", () => {
       diagnostics: [],
       snapshotRevision: "revision-1",
     };
-    const historyDetail = {
-      entry: {
-        id: DeploymentRecordIdSchema.parse("deployment-1"),
-        kind: "deployment" as const,
-        status: "succeeded",
-        createdAt: "2026-06-28T08:00:00.000Z",
-      },
-      plan: {
-        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
-        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
-        requiredConfirmations: [],
-      },
-      changes: [],
-    };
     const withProject = reducer(initialState, { type: "project", root: "/workspace" });
     const withDetail = reducer(withProject, { type: "assetDetail", detail });
     const withEffective = reducer(withDetail, { type: "effective", effective });
-    const withHistoryDetail = reducer(withEffective, {
-      type: "historyDetail",
-      detail: historyDetail,
-    });
-    const switched = reducer(withHistoryDetail, { type: "project", root: "/other-workspace" });
+    const switched = reducer(withEffective, { type: "project", root: "/other-workspace" });
 
     expect(switched.projectRoot).toBe("/other-workspace");
     expect(switched.assetDetail).toBeUndefined();
     expect(switched.effective).toBeUndefined();
-    expect(switched.historyDetail).toBeUndefined();
   });
 
-  it("prunes stale asset and history details after refreshes", () => {
+  it("prunes stale asset details after refreshes", () => {
     const detail = {
       asset: {
         id: AssetIdSchema.parse("asset-1"),
@@ -990,32 +944,12 @@ describe("renderer project selection state", () => {
       diagnostics: [],
       snapshotRevision: "revision-1",
     };
-    const historyDetail = {
-      entry: {
-        id: DeploymentRecordIdSchema.parse("deployment-1"),
-        kind: "deployment" as const,
-        status: "succeeded",
-        createdAt: "2026-06-28T08:00:00.000Z",
-      },
-      plan: {
-        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
-        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
-        requiredConfirmations: [],
-      },
-      changes: [],
-    };
     const withDetail = reducer(initialState, { type: "assetDetail", detail });
     const withEffective = reducer(withDetail, { type: "effective", effective });
-    const withHistoryDetail = reducer(withEffective, {
-      type: "historyDetail",
-      detail: historyDetail,
-    });
-    const assetsRefreshed = reducer(withHistoryDetail, { type: "assets", assets: [] });
-    const historyRefreshed = reducer(withHistoryDetail, { type: "history", history: [] });
+    const assetsRefreshed = reducer(withEffective, { type: "assets", assets: [] });
 
     expect(assetsRefreshed.assetDetail).toBeUndefined();
     expect(assetsRefreshed.effective).toBeUndefined();
-    expect(historyRefreshed.historyDetail).toBeUndefined();
   });
 
   it("requires explicit deployment confirmation for each fresh preview", () => {
@@ -1102,7 +1036,7 @@ describe("renderer project selection state", () => {
     expect(completed.deploymentConfirmationGrants).toEqual([]);
     expect(completed.activeTask?.message).toBe("Deployment complete: 1 succeeded.");
     expect(deploymentBlockersForState(completed, "2026-06-28T08:00:04.000Z")).toEqual([
-      "Create a migration preview before deploying.",
+      "Create a migration preview before migrating.",
     ]);
   });
 
@@ -1161,7 +1095,7 @@ describe("renderer project selection state", () => {
 
   it("blocks deployment without a confirmed fresh preview and when sources drift", () => {
     expect(deploymentBlockersForState(initialState)).toEqual([
-      "Create a migration preview before deploying.",
+      "Create a migration preview before migrating.",
     ]);
 
     const preview = {
@@ -1205,11 +1139,11 @@ describe("renderer project selection state", () => {
     const confirmed = reducer(withPreview, { type: "deploymentConfirmation", confirmed: true });
 
     expect(deploymentBlockersForState(withPreview, "2026-06-28T08:00:00.000Z")).toEqual([
-      "Refresh the scan and create a fresh migration preview before deploying.",
+      "Refresh the scan and create a fresh migration preview before migrating.",
       "Confirm that this writes verified config files.",
     ]);
     expect(deploymentBlockersForState(confirmed, "2026-06-28T08:00:00.000Z")).toEqual([
-      "Refresh the scan and create a fresh migration preview before deploying.",
+      "Refresh the scan and create a fresh migration preview before migrating.",
     ]);
   });
 
@@ -1258,39 +1192,8 @@ describe("renderer project selection state", () => {
     });
 
     expect(deploymentBlockersForState(state)).toContain(
-      "Review recovery history and resolve the active recovery lock before deploying.",
+      "Resolve the active recovery lock before migrating.",
     );
-  });
-
-  it("builds and stores history detail requests for diff inspection", () => {
-    const detail = {
-      entry: {
-        id: DeploymentRecordIdSchema.parse("deployment-1"),
-        kind: "deployment" as const,
-        status: "succeeded",
-        createdAt: "2026-06-28T08:00:00.000Z",
-      },
-      plan: {
-        planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
-        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
-        requiredConfirmations: ["overwrite"] as const,
-      },
-      changes: [
-        {
-          operation: "replace" as const,
-          pathDisplay: "/workspace/.cursor/rules/generated.mdc",
-          beforeHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
-          afterHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
-          diff: "- Old\n+ Use tests.",
-        },
-      ],
-    };
-    const withDetail = reducer(initialState, { type: "historyDetail", detail });
-
-    expect(historyDetailRequestForEntry("deployment-1")).toEqual({
-      id: DeploymentRecordIdSchema.parse("deployment-1"),
-    });
-    expect(withDetail.historyDetail).toBe(detail);
   });
 
   it("summarizes migration preview hashes in stable source and target order", () => {

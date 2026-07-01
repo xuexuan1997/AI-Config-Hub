@@ -26,7 +26,7 @@ test.beforeAll(async ({ browserName }, testInfo) => {
 });
 
 test.describe("Desktop end to end", () => {
-  test("launches with isolated app data, scans, deploys, and rolls back", async () => {
+  test("launches with isolated app data, scans, previews, and migrates", async () => {
     const workspace = await createFixtureWorkspace();
     const cursorRulePath = join(workspace.projectRoot, ".cursor/rules/agents.mdc");
     const app = await electron.launch({
@@ -94,10 +94,10 @@ test.describe("Desktop end to end", () => {
         .getByRole("checkbox");
       if (!(await codexSource.isChecked())) await codexSource.check();
       await codexSkill.check();
-      await expect(page.getByRole("button", { name: "Preview migration" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Preview writes" })).toBeDisabled();
       await expect(page.getByText("Select source assets from one resource type.")).toBeVisible();
       await codexSkill.uncheck();
-      await page.getByRole("button", { name: "Preview migration" }).click();
+      await page.getByRole("button", { name: "Preview writes" }).click();
       await expect(page.locator(".preview-summary")).toContainText(/Plan [0-9a-f]{64}/, {
         timeout: 30_000,
       });
@@ -105,50 +105,21 @@ test.describe("Desktop end to end", () => {
         page.getByRole("heading", { name: /Replace file .*\.cursor\/rules\/agents\.mdc/ }),
       ).toBeVisible();
 
-      await page.getByRole("button", { name: "Deployment" }).click();
-      await expect(page.getByRole("button", { name: "Execute rollback" })).toBeDisabled();
-      await expect(
-        page.getByText("No succeeded deployment is available to roll back."),
-      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Deployment" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "History" })).toHaveCount(0);
       await page.getByLabel("I understand this writes verified config files.").check();
-      await expect(page.getByRole("button", { name: "Execute deployment" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Execute migration" })).toBeDisabled();
       await expect(
         page.getByText("Confirm required migration actions: Overwrite existing target files."),
       ).toBeVisible();
       await page.getByLabel("Overwrite existing target files.").check();
-      await page.getByRole("button", { name: "Execute deployment" }).click();
+      await page.getByRole("button", { name: "Execute migration" }).click();
       await expect(page.getByText("Deployment complete: 1 succeeded.")).toBeVisible({
         timeout: 30_000,
       });
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
       expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor rule.");
-
-      await page.getByRole("button", { name: "History" }).click();
-      await page.getByRole("button", { name: "Refresh history" }).click();
-      await expect(
-        page
-          .locator(".history-list li")
-          .filter({ hasText: "Deployment" })
-          .filter({ hasText: "Succeeded" }),
-      ).toBeVisible();
-
-      await page.getByRole("button", { name: "Deployment" }).click();
-      await page.getByRole("button", { name: "Execute rollback" }).click();
-      await expect(page.getByText("Rollback complete: 1 succeeded.")).toBeVisible({
-        timeout: 30_000,
-      });
-      await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
-      expect(await readFile(cursorRulePath, "utf8")).toBe("Existing Cursor rule.\n");
-
-      await page.getByRole("button", { name: "History" }).click();
-      await page.getByRole("button", { name: "Refresh history" }).click();
-      await expect(
-        page
-          .locator(".history-list li")
-          .filter({ hasText: "Rollback" })
-          .filter({ hasText: "Succeeded" }),
-      ).toBeVisible();
     } finally {
       await app.close();
       await workspace.dispose();

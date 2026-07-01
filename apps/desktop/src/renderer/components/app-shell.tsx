@@ -6,7 +6,6 @@ import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js
 const routes: { readonly route: Route; readonly label: string }[] = [
   { route: "assets", label: "Asset Review" },
   { route: "migration", label: "Asset Migration" },
-  { route: "deployment", label: "Deployment" },
   { route: "settings", label: "Settings" },
 ];
 

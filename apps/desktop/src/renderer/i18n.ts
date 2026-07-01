@@ -15,7 +15,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Confirm that this writes verified config files.": "确认这会写入已验证的配置文件。",
   "Confirmations: {confirmations}": "确认项：{confirmations}",
   "Confirm required migration actions:": "确认必需的迁移动作：",
-  "Create a migration preview before deploying.": "请先创建迁移预览再部署。",
+  "Create a migration preview before migrating.": "请先创建迁移预览再迁移。",
   "Deploy only from a fresh preview plan hash with explicit confirmation.":
     "仅从新的预览计划哈希部署，并需要明确确认。",
   "Create a fresh migration preview; the current plan has expired.":
@@ -175,12 +175,11 @@ const ZH_CN: Partial<Record<string, string>> = {
   Theme: "主题",
   "Existing target files": "现有目标文件",
   "Execute deployment": "执行部署",
+  "Execute migration": "执行迁移",
   "Execute rollback": "执行回滚",
   "I understand this writes verified config files.": "我确认这会写入已验证的配置文件。",
-  "Refresh the scan and create a fresh migration preview before deploying.":
-    "请刷新扫描并创建新的迁移预览后再部署。",
-  "Review recovery history and resolve the active recovery lock before deploying.":
-    "请查看恢复历史并解决当前恢复锁后再部署。",
+  "Refresh the scan and create a fresh migration preview before migrating.":
+    "请刷新扫描并创建新的迁移预览后再迁移。",
   "Review history": "查看历史",
   Rollback: "回滚",
   "Rollback status": "回滚状态",
@@ -210,8 +209,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   Warnings: "警告",
   "Source drift": "源漂移",
   "Source drift warnings": "源漂移警告",
-  "Refresh the scan and create a fresh preview before deploying.":
-    "请刷新扫描并创建新的预览后再部署。",
+  "Refresh the scan and create a fresh preview before migrating.":
+    "请刷新扫描并创建新的预览后再迁移。",
   Asset: "资产",
   "Expected hash": "预期哈希",
   "Current hash": "当前哈希",
@@ -257,6 +256,10 @@ const ZH_CN: Partial<Record<string, string>> = {
   Completed: "已完成",
   "Replace existing files": "替换现有文件",
   "Deployment confirmations": "部署确认",
+  "Migration confirmations": "迁移确认",
+  "Migration status": "迁移状态",
+  "Recovery lock active. Resolve it before retrying.": "恢复锁已激活。请先解决后再重试。",
+  "Resolve the active recovery lock before migrating.": "请先解决当前恢复锁再迁移。",
   "Required confirmations": "必需确认",
   "Stop on conflicts": "遇到冲突时停止",
   "Merge (not supported yet)": "合并（暂不支持）",

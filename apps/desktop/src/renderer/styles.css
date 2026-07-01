@@ -785,7 +785,8 @@ pre {
   overflow-wrap: anywhere;
 }
 
-.deployment-confirmation-panel {
+.deployment-confirmation-panel,
+.migration-confirmation-panel {
   display: grid;
   gap: 0.75rem;
   margin: 1rem 0;
@@ -826,7 +827,8 @@ pre {
   margin: 0.65rem 0;
 }
 
-.deployment-action-row {
+.deployment-action-row,
+.migration-action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
