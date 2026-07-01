@@ -2,6 +2,7 @@
 node_modules/
 .pnpm-store/
 .codex-backups/
+.superpowers/
 dist/
 coverage/
 test-results/

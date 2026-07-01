@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Config Hub Desktop UX Prototype</title>
+<style>
+:root {
+  color: #172033;
+  background: #f3f6fb;
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #f3f6fb;
+  color: #172033;
+}
+.prototype-shell {
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 28px;
+}
+.subtitle {
+  color: #66758d;
+  margin: 6px 0 0;
+}
+button {
+  border: 0;
+  cursor: default;
+  font: inherit;
+}
+@media (max-width: 760px) {
+  .prototype-shell { padding: 14px; }
+}
+</style>
+</head>
+<body>
+<main class="prototype-shell">
+<style>
+  .v3-wrap {
+    display: grid;
+    gap: 18px;
+  }
+
+  .principle {
+    background: #f8fafc;
+    border: 1px solid #d8dfeb;
+    border-radius: 10px;
+    color: #344256;
+    display: grid;
+    gap: 6px;
+    padding: 14px 16px;
+  }
+
+  .desktop {
+    background: #eef3f8;
+    border: 1px solid #cfd8e8;
+    border-radius: 10px;
+    color: #172033;
+    display: grid;
+    font-family:
+      Inter,
+      "Microsoft YaHei",
+      "PingFang SC",
+      system-ui,
+      sans-serif;
+    grid-template-columns: 210px minmax(0, 1fr);
+    min-height: 850px;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    background: #111827;
+    color: #dbe4f3;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 18px 14px;
+  }
+
+  .brand {
+    border-bottom: 1px solid rgb(255 255 255 / 10%);
+    display: grid;
+    gap: 4px;
+    padding-bottom: 16px;
+  }
+
+  .brand strong {
+    color: #fff;
+    font-size: 16px;
+  }
+
+  .brand span,
+  .muted {
+    color: #66758d;
+    font-size: 12px;
+  }
+
+  .nav {
+    display: grid;
+    gap: 6px;
+    margin-top: 16px;
+  }
+
+  .nav button {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #cbd5e1;
+    font-size: 14px;
+    padding: 10px 11px;
+    text-align: left;
+  }
+
+  .nav button.active {
+    background: #243147;
+    border-color: #344158;
+    color: #fff;
+  }
+
+  .sidebar-foot {
+    background: rgb(255 255 255 / 6%);
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 8px;
+    display: grid;
+    gap: 4px;
+    padding: 10px;
+  }
+
+  .sidebar-foot strong {
+    color: #fff;
+    font-size: 13px;
+  }
+
+  .main {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .page-head {
+    align-items: center;
+    background: #fff;
+    border-bottom: 1px solid #d8dfeb;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 14px 18px;
+  }
+
+  .page-title {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .page-title h3 {
+    font-size: 18px;
+    margin: 0;
+  }
+
+  .page-title p {
+    color: #66758d;
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .tab {
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 9px 12px;
+  }
+
+  .btn-primary {
+    background: #315efb;
+    color: #fff;
+  }
+
+  .btn-secondary {
+    background: #eef3ff;
+    color: #2446c2;
+  }
+
+  .btn-ghost {
+    background: #fff;
+    border: 1px solid #d8dfeb;
+    color: #344256;
+  }
+
+  .canvas {
+    display: grid;
+    gap: 18px;
+    padding: 18px;
+  }
+
+  .module {
+    background: #fff;
+    border: 1px solid #cfd8e8;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .module-head {
+    align-items: center;
+    border-bottom: 1px solid #d8dfeb;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 14px 16px;
+  }
+
+  .current-project {
+    align-items: center;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .project-pill {
+    background: #f8fafc;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    padding: 9px 11px;
+  }
+
+  .project-pill strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tabs {
+    align-items: center;
+    border-bottom: 1px solid #d8dfeb;
+    display: flex;
+    gap: 6px;
+    overflow: auto;
+    padding: 10px 12px;
+  }
+
+  .tab {
+    background: #f8fafc;
+    border: 1px solid #d8dfeb;
+    color: #50627f;
+    white-space: nowrap;
+  }
+
+  .tab.active {
+    background: #172033;
+    border-color: #172033;
+    color: #fff;
+  }
+
+  .asset-body {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 235px minmax(0, 1fr) 330px;
+    padding: 14px;
+  }
+
+  .panel {
+    background: #fff;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .panel-title {
+    align-items: center;
+    border-bottom: 1px solid #d8dfeb;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 12px;
+  }
+
+  .panel-title strong {
+    font-size: 13px;
+  }
+
+  .filters {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .filter-pill,
+  .summary-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    display: flex;
+    font-size: 13px;
+    justify-content: space-between;
+    padding: 9px 10px;
+  }
+
+  .asset-row,
+  .side-row {
+    align-items: center;
+    border-bottom: 1px solid #e6ebf4;
+    display: grid;
+    gap: 10px;
+    padding: 11px 12px;
+  }
+
+  .asset-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .side-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .asset-row.selected,
+  .side-row.changed {
+    background: #eef3ff;
+    box-shadow: inset 3px 0 0 #315efb;
+  }
+
+  .asset-row strong,
+  .side-row strong {
+    display: block;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .asset-row span,
+  .side-row span {
+    color: #66758d;
+    display: block;
+    font-size: 12px;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chip {
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+
+  .chip.error {
+    background: #fff1f2;
+    color: #be123c;
+  }
+
+  .chip.warn {
+    background: #fffbeb;
+    color: #a16207;
+  }
+
+  .chip.ok {
+    background: #ecfdf5;
+    color: #047857;
+  }
+
+  .chip.info {
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
+  .detail {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .info-block {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .info-block strong {
+    font-size: 12px;
+  }
+
+  .info-block span {
+    color: #475569;
+    font-size: 12px;
+  }
+
+  .migration-picker {
+    align-items: end;
+    border-bottom: 1px solid #d8dfeb;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    padding: 14px 16px;
+  }
+
+  .swap-button {
+    align-items: center;
+    background: #fff;
+    border: 1px solid #d8dfeb;
+    border-radius: 999px;
+    color: #66758d;
+    display: inline-grid;
+    font-size: 15px;
+    font-weight: 900;
+    height: 32px;
+    justify-items: center;
+    margin-bottom: 5px;
+    width: 32px;
+  }
+
+  .migration-project {
+    background: #f8fafc;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 9px 11px;
+  }
+
+  .migration-project .project-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .migration-project strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-link {
+    align-self: center;
+    background: transparent;
+    border: 0;
+    color: #315efb;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 4px 0;
+  }
+
+  .migration-body {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .diff-lite {
+    background: #f8fafc;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .diff-lite h4 {
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .diff-item {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    display: grid;
+    gap: 4px;
+    padding: 9px 10px;
+  }
+
+  .diff-item strong {
+    font-size: 12px;
+  }
+
+  .diff-item span {
+    color: #66758d;
+    font-size: 12px;
+  }
+
+  .approval-card {
+    background: #fff;
+    border: 2px solid #315efb;
+    border-radius: 10px;
+    cursor: pointer;
+    padding: 16px 18px;
+  }
+
+  .approval-card h3 {
+    margin-top: 0;
+  }
+
+  @media (max-width: 1200px) {
+    .desktop,
+    .asset-body,
+    .migration-picker,
+    .migration-body {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="v3-wrap">
+  <div>
+    <h2>修正版 v3：迁移页不继承当前工程</h2>
+    <p class="subtitle">资产审查和资产迁移完全独立。当前工程只在资产审查页有效；迁移页自己选择源工程与目标工程。</p>
+  </div>
+
+  <div class="principle">
+    <strong>这版调整</strong>
+    <span>资产审查：页面内部显示“当前工程”，用于扫描和查看该工程资产。</span>
+    <span>资产迁移：没有“当前工程”概念，只有独立的源工程和目标工程，并可快速交换。</span>
+    <span>中间差异区改成轻量摘要，不再使用黑色复杂面板。</span>
+  </div>
+
+  <div class="desktop">
+    <aside class="sidebar">
+      <div>
+        <div class="brand">
+          <strong>AI Config Hub</strong>
+          <span>配置资产工作台</span>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button type="button">总览</button>
+          <button class="active" type="button">资产审查</button>
+          <button type="button">资产迁移</button>
+          <button type="button">历史</button>
+          <button type="button">设置</button>
+        </nav>
+      </div>
+      <div class="sidebar-foot">
+        <strong>导航关系</strong>
+        <span>审查和迁移是平级功能</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="page-head">
+        <div class="page-title">
+          <h3>资产审查</h3>
+          <p>查看当前工程资产的来源、状态、问题和有效配置。</p>
+        </div>
+        <button class="btn-secondary" type="button">切到资产迁移</button>
+      </header>
+
+      <div class="canvas">
+        <section class="module">
+          <div class="module-head">
+            <div class="current-project">
+              <div class="project-pill">
+                <span class="muted">当前工程，仅资产审查页有效</span>
+                <strong>E:/project/AI-Config-Hub</strong>
+              </div>
+              <button class="btn-ghost" type="button">选择工程</button>
+              <button class="btn-primary" type="button">扫描当前工程</button>
+            </div>
+          </div>
+
+          <div class="tabs" aria-label="资产类型">
+            <button class="tab active" type="button">Skills · 12</button>
+            <button class="tab" type="button">Rules · 8</button>
+            <button class="tab" type="button">MCP · 5</button>
+            <button class="tab" type="button">Prompts · 7</button>
+            <button class="tab" type="button">Settings · 4</button>
+          </div>
+
+          <div class="asset-body">
+            <aside class="panel">
+              <div class="panel-title">
+                <strong>Skills 筛选</strong>
+                <span class="muted">类型内筛选</span>
+              </div>
+              <div class="filters">
+                <div class="filter-pill"><span>状态</span><strong>全部</strong></div>
+                <div class="filter-pill"><span>问题</span><strong>有问题优先</strong></div>
+                <div class="filter-pill"><span>来源</span><strong>.codex/skills</strong></div>
+                <div class="filter-pill"><span>排序</span><strong>最近修改</strong></div>
+              </div>
+            </aside>
+
+            <section class="panel">
+              <div class="panel-title">
+                <strong>Skills 资产列表</strong>
+                <span class="muted">当前工程 12 项</span>
+              </div>
+              <div class="asset-row selected">
+                <div>
+                  <strong>skill:release</strong>
+                  <span>.codex/skills/release/SKILL.md</span>
+                </div>
+                <span class="chip error">路径冲突</span>
+                <button class="btn-ghost" type="button">查看</button>
+              </div>
+              <div class="asset-row">
+                <div>
+                  <strong>skill:plugin-creator</strong>
+                  <span>.codex/skills/plugin-creator/SKILL.md</span>
+                </div>
+                <span class="chip ok">正常</span>
+                <button class="btn-ghost" type="button">查看</button>
+              </div>
+              <div class="asset-row">
+                <div>
+                  <strong>skill:linux-packaging</strong>
+                  <span>.codex/skills/linux-packaging/SKILL.md</span>
+                </div>
+                <span class="chip warn">字段缺失</span>
+                <button class="btn-ghost" type="button">查看</button>
+              </div>
+            </section>
+
+            <aside class="panel">
+              <div class="panel-title">
+                <strong>资产详情</strong>
+                <span class="muted">只读审查</span>
+              </div>
+              <div class="detail">
+                <div class="info-block">
+                  <strong>来源</strong>
+                  <span>.codex/skills/release/SKILL.md</span>
+                </div>
+                <div class="info-block">
+                  <strong>状态</strong>
+                  <span>已解析；可读取 name、description、trigger rules。</span>
+                </div>
+                <div class="info-block">
+                  <strong>问题</strong>
+                  <span>同名 skill 在索引中出现重复，需人工确认来源。</span>
+                </div>
+                <button class="btn-secondary" type="button">打开源文件</button>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="module">
+          <div class="module-head">
+            <div>
+              <h3>资产迁移</h3>
+              <p class="muted">独立选择源工程和目标工程；类型切换时，两边资产列表同步切换，中间只显示差异摘要。</p>
+            </div>
+            <button class="btn-primary" type="button">执行迁移</button>
+          </div>
+
+          <div class="migration-picker">
+            <div class="migration-project">
+              <div class="project-copy">
+                <span class="muted">源工程</span>
+                <strong>E:/project/AI-Config-Hub</strong>
+              </div>
+              <button class="project-link" type="button">选择</button>
+            </div>
+            <button class="swap-button" type="button" title="交换源工程和目标工程">⇄</button>
+            <div class="migration-project">
+              <div class="project-copy">
+                <span class="muted">目标工程</span>
+                <strong>D:/workspace/Agent-Tools</strong>
+              </div>
+              <button class="project-link" type="button">选择</button>
+            </div>
+          </div>
+
+          <div class="tabs" aria-label="迁移资产类型，同步切换">
+            <button class="tab active" type="button">Skills · 差异 3</button>
+            <button class="tab" type="button">Rules · 差异 1</button>
+            <button class="tab" type="button">MCP · 差异 0</button>
+            <button class="tab" type="button">Prompts · 差异 2</button>
+            <button class="tab" type="button">Settings · 差异 1</button>
+          </div>
+
+          <div class="migration-body">
+            <section class="panel">
+              <div class="panel-title">
+                <strong>源工程 Skills</strong>
+                <span class="muted">12 项</span>
+              </div>
+              <div class="side-row changed">
+                <div>
+                  <strong>skill:release</strong>
+                  <span>目标缺失</span>
+                </div>
+                <span class="chip info">新增</span>
+              </div>
+              <div class="side-row changed">
+                <div>
+                  <strong>skill:plugin-creator</strong>
+                  <span>源版本较新</span>
+                </div>
+                <span class="chip warn">覆盖</span>
+              </div>
+              <div class="side-row">
+                <div>
+                  <strong>skill:linux-packaging</strong>
+                  <span>两边一致</span>
+                </div>
+                <span class="chip ok">一致</span>
+              </div>
+            </section>
+
+            <section class="diff-lite">
+              <h4>差异摘要</h4>
+              <div class="summary-card"><span>新增到目标</span><strong>1</strong></div>
+              <div class="summary-card"><span>覆盖目标</span><strong>1</strong></div>
+              <div class="summary-card"><span>目标独有保留</span><strong>1</strong></div>
+              <div class="diff-item">
+                <strong>当前选择</strong>
+                <span>仅迁移差异项；目标独有资产默认保留。</span>
+              </div>
+              <button class="btn-secondary" type="button">预览写入</button>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title">
+                <strong>目标工程 Skills</strong>
+                <span class="muted">10 项</span>
+              </div>
+              <div class="side-row changed">
+                <div>
+                  <strong>skill:release</strong>
+                  <span>缺失，待新增</span>
+                </div>
+                <span class="chip info">待新增</span>
+              </div>
+              <div class="side-row changed">
+                <div>
+                  <strong>skill:plugin-creator</strong>
+                  <span>目标版本较旧</span>
+                </div>
+                <span class="chip warn">待覆盖</span>
+              </div>
+              <div class="side-row changed">
+                <div>
+                  <strong>skill:legacy-deploy</strong>
+                  <span>源工程不存在</span>
+                </div>
+                <span class="chip ok">保留</span>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="approval-card" data-choice="approve-v3-architecture" onclick="toggleSelect(this)">
+    <h3>确认 v3 信息架构</h3>
+    <p>如果这版对，我就把正式 UX 规格写成：资产审查页有当前工程；资产迁移页独立选择源/目标，提供同步类型 tabs、轻量差异摘要和源/目标交换。</p>
+  </div>
+</div>
+
+</main>
+</body>
+</html>
