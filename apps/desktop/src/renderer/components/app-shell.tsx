@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
+import { localeForState, t } from "../i18n.js";
 import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
@@ -19,6 +20,7 @@ export function AppShell(props: {
   readonly children: ReactNode;
 }) {
   const mainRef = useRef<HTMLElement | null>(null);
+  const locale = localeForState(props.state);
 
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0, left: 0 });
@@ -33,7 +35,7 @@ export function AppShell(props: {
     >
       <aside className="sidebar">
         <div className="brand">AI Config Hub</div>
-        <nav aria-label="Workspaces">
+        <nav aria-label={t(locale, "Workspaces")}>
           {routes.map(({ route, label }) => (
             <button
               className={props.state.route === route ? "active" : ""}
@@ -41,7 +43,7 @@ export function AppShell(props: {
               type="button"
               onClick={() => props.onRoute(route)}
             >
-              {label}
+              {t(locale, label)}
             </button>
           ))}
         </nav>
@@ -50,20 +52,20 @@ export function AppShell(props: {
         <header className="topbar">
           <div className="project-topbar-main">
             <div className="project-summary">
-              <p className="eyebrow">Project setup</p>
+              <p className="eyebrow">{t(locale, "Project setup")}</p>
               <p className="project-guidance">
-                Choose the project folder to scan before reviewing assets.
+                {t(locale, "Choose the project folder to scan before reviewing assets.")}
               </p>
-              <span className="project-root-label">Selected project folder</span>
+              <span className="project-root-label">{t(locale, "Selected project folder")}</span>
               <strong className="project-root-value" title={props.state.projectRoot}>
-                {props.state.projectRoot ?? "No folder selected yet"}
+                {props.state.projectRoot ?? t(locale, "No folder selected yet")}
               </strong>
             </div>
             <div className="project-picker-action">
               <button type="button" onClick={props.onSelectProject}>
-                Browse folder
+                {t(locale, "Browse folder")}
               </button>
-              <span>Opens your system folder picker.</span>
+              <span>{t(locale, "Opens your system folder picker.")}</span>
             </div>
           </div>
           <form
@@ -78,18 +80,18 @@ export function AppShell(props: {
             }}
           >
             <label className="project-path-field">
-              <span>Manual path fallback</span>
+              <span>{t(locale, "Manual path fallback")}</span>
               <input
-                aria-label="Project path"
+                aria-label={t(locale, "Project path")}
                 name="projectPath"
                 placeholder="/Users/you/project"
               />
             </label>
             <span className="project-path-help">
-              Paste a folder path only if the picker is unavailable.
+              {t(locale, "Paste a folder path only if the picker is unavailable.")}
             </span>
             <button className="project-path-submit" type="submit">
-              Use typed path
+              {t(locale, "Use typed path")}
             </button>
           </form>
         </header>

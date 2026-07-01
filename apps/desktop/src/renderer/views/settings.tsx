@@ -1,3 +1,4 @@
+import { localeForState, t } from "../i18n.js";
 import type { AppState, LanguageSetting, ThemeSetting } from "../model.js";
 import { LANGUAGE_SETTING_OPTIONS, THEME_SETTING_OPTIONS } from "../model.js";
 
@@ -7,6 +8,7 @@ export function SettingsView(props: {
   readonly onLanguageChange: (language: LanguageSetting) => void;
   readonly onReload: () => void;
 }) {
+  const locale = localeForState(props.state);
   const disabled =
     props.state.settings.status === "loading" ||
     props.state.settings.status === "saving" ||
@@ -16,16 +18,16 @@ export function SettingsView(props: {
     <section className="settings-panel">
       <div className="settings-heading">
         <div>
-          <p className="eyebrow">General</p>
-          <h1>Settings</h1>
+          <p className="eyebrow">{t(locale, "General")}</p>
+          <h1>{t(locale, "Settings")}</h1>
         </div>
         <button type="button" onClick={props.onReload}>
-          Reload
+          {t(locale, "Reload")}
         </button>
       </div>
       <div className="settings-grid">
         <div className="field">
-          <label htmlFor="settings-theme">Theme</label>
+          <label htmlFor="settings-theme">{t(locale, "Theme")}</label>
           <select
             disabled={disabled}
             id="settings-theme"
@@ -34,13 +36,13 @@ export function SettingsView(props: {
           >
             {THEME_SETTING_OPTIONS.map((theme) => (
               <option key={theme} value={theme}>
-                {themeLabel(theme)}
+                {themeLabel(locale, theme)}
               </option>
             ))}
           </select>
         </div>
         <div className="field">
-          <label htmlFor="settings-language">Language</label>
+          <label htmlFor="settings-language">{t(locale, "Language")}</label>
           <select
             disabled={disabled}
             id="settings-language"
@@ -51,55 +53,61 @@ export function SettingsView(props: {
           >
             {LANGUAGE_SETTING_OPTIONS.map((language) => (
               <option key={language} value={language}>
-                {languageLabel(language)}
+                {languageLabel(locale, language)}
               </option>
             ))}
           </select>
         </div>
       </div>
       <div className="settings-meta">
-        <span>{settingsStatusLabel(props.state.settings.status)}</span>
-        <span>Revision {props.state.settings.revision}</span>
-        {props.state.settings.requiresRestart ? <span>Restart required</span> : null}
-        {props.state.settings.readOnlyRecovery ? <span>Recovery mode</span> : null}
+        <span>{settingsStatusLabel(locale, props.state.settings.status)}</span>
+        <span>{t(locale, "Revision {revision}", { revision: props.state.settings.revision })}</span>
+        {props.state.settings.requiresRestart ? <span>{t(locale, "Restart required")}</span> : null}
+        {props.state.settings.readOnlyRecovery ? <span>{t(locale, "Recovery mode")}</span> : null}
       </div>
     </section>
   );
 }
 
-function themeLabel(theme: ThemeSetting): string {
+function themeLabel(locale: ReturnType<typeof localeForState>, theme: ThemeSetting): string {
   switch (theme) {
     case "system":
-      return "System";
+      return t(locale, "System");
     case "light":
-      return "Light";
+      return t(locale, "Light");
     case "dark":
-      return "Dark";
+      return t(locale, "Dark");
   }
 }
 
-function languageLabel(language: LanguageSetting): string {
+function languageLabel(
+  locale: ReturnType<typeof localeForState>,
+  language: LanguageSetting,
+): string {
   switch (language) {
     case "system":
-      return "System";
+      return t(locale, "System");
     case "en":
-      return "English";
+      return t(locale, "English");
     case "zh-CN":
-      return "Simplified Chinese";
+      return t(locale, "Simplified Chinese");
   }
 }
 
-function settingsStatusLabel(status: AppState["settings"]["status"]): string {
+function settingsStatusLabel(
+  locale: ReturnType<typeof localeForState>,
+  status: AppState["settings"]["status"],
+): string {
   switch (status) {
     case "idle":
-      return "Not loaded";
+      return t(locale, "Not loaded");
     case "loading":
-      return "Loading";
+      return t(locale, "Loading");
     case "ready":
-      return "Ready";
+      return t(locale, "Ready");
     case "saving":
-      return "Saving";
+      return t(locale, "Saving");
     case "error":
-      return "Error";
+      return t(locale, "Error");
   }
 }

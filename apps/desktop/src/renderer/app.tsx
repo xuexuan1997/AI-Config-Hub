@@ -4,6 +4,7 @@ import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/
 
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
+import { localeForState, t } from "./i18n.js";
 import {
   deploymentBlockersForState,
   deploymentConfirmationsForState,
@@ -33,6 +34,7 @@ import { SettingsView } from "./views/settings.js";
 
 export function App(props: { readonly api: DesktopApi }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const locale = localeForState(state);
 
   async function runAction(action: string, work: () => Promise<void>) {
     try {
@@ -51,7 +53,7 @@ export function App(props: { readonly api: DesktopApi }) {
   function useProjectPath(path: string) {
     const root = path.trim();
     if (root.length === 0) {
-      dispatch({ type: "message", message: "Enter a project path first." });
+      dispatch({ type: "message", message: t(locale, "Enter a project path first.") });
     } else {
       dispatch({ type: "project", root });
     }
@@ -163,7 +165,10 @@ export function App(props: { readonly api: DesktopApi }) {
     if (!previousPreviewRequest.sourceAssetIds.every((assetId) => availableAssetIds.has(assetId))) {
       dispatch({
         type: "message",
-        message: "Selected migration sources changed after the rescan; create a new preview.",
+        message: t(
+          locale,
+          "Selected migration sources changed after the rescan; create a new preview.",
+        ),
       });
       return;
     }
@@ -179,13 +184,16 @@ export function App(props: { readonly api: DesktopApi }) {
     await runAction("Open source", async () => {
       const request = openSourceRequestForState(state);
       if (request === undefined) {
-        dispatch({ type: "message", message: "Inspect an asset before opening its source file." });
+        dispatch({
+          type: "message",
+          message: t(locale, "Inspect an asset before opening its source file."),
+        });
         return;
       }
       const response = await props.api.invoke("assets.openSource", request);
       dispatch({
         type: "message",
-        message: response.ok ? "Source file opened." : response.error.message,
+        message: response.ok ? t(locale, "Source file opened.") : response.error.message,
       });
     });
   }
@@ -229,7 +237,10 @@ export function App(props: { readonly api: DesktopApi }) {
       if (assetId === undefined || projectRoot === undefined) {
         dispatch({
           type: "message",
-          message: "Inspect an asset with a selected project before rescanning after edit.",
+          message: t(
+            locale,
+            "Inspect an asset with a selected project before rescanning after edit.",
+          ),
         });
         return;
       }
@@ -266,14 +277,14 @@ export function App(props: { readonly api: DesktopApi }) {
     await runAction("Preview migration", async () => {
       const blockers = migrationPreviewBlockersForState(state);
       if (blockers.length > 0) {
-        dispatch({ type: "message", message: blockers[0] });
+        dispatch({ type: "message", message: t(locale, blockers[0] ?? "") });
         return;
       }
       const request = previewRequestForState(state);
       if (request === undefined) {
         dispatch({
           type: "message",
-          message: "Select a project and scan at least one asset first.",
+          message: t(locale, "Select a project and scan at least one asset first."),
         });
         return;
       }
@@ -286,7 +297,7 @@ export function App(props: { readonly api: DesktopApi }) {
   async function deploy() {
     const blockers = deploymentBlockersForState(state);
     if (blockers.length > 0) {
-      dispatch({ type: "message", message: blockers[0] });
+      dispatch({ type: "message", message: t(locale, blockers[0] ?? "") });
       return;
     }
     const previewPlan = state.preview;
@@ -310,7 +321,7 @@ export function App(props: { readonly api: DesktopApi }) {
       if (request === undefined) {
         dispatch({
           type: "message",
-          message: "No succeeded deployment is available to roll back.",
+          message: t(locale, "No succeeded deployment is available to roll back."),
         });
         return;
       }
@@ -364,7 +375,7 @@ export function App(props: { readonly api: DesktopApi }) {
             void runAction("Inspect asset", async () => {
               const detail = await refreshAssetDetail(props.api, assetId);
               if (detail === undefined) {
-                dispatch({ type: "message", message: "Asset detail is unavailable." });
+                dispatch({ type: "message", message: t(locale, "Asset detail is unavailable.") });
                 return;
               }
               dispatch({ type: "assetDetail", detail });
@@ -382,8 +393,10 @@ export function App(props: { readonly api: DesktopApi }) {
               if (request === undefined) {
                 dispatch({
                   type: "message",
-                  message:
+                  message: t(
+                    locale,
                     "Inspect an asset with a selected project before resolving effective configuration.",
+                  ),
                 });
                 return;
               }
@@ -412,7 +425,10 @@ export function App(props: { readonly api: DesktopApi }) {
             void runAction("Locate diagnostic", async () => {
               const detail = await refreshAssetDetail(props.api, assetId);
               if (detail === undefined) {
-                dispatch({ type: "message", message: "Diagnostic asset is unavailable." });
+                dispatch({
+                  type: "message",
+                  message: t(locale, "Diagnostic asset is unavailable."),
+                });
                 return;
               }
               dispatch({ type: "assetDetail", detail });

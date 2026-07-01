@@ -16,6 +16,7 @@ import { AssetsView } from "./assets.js";
 import { DeploymentView } from "./deployment.js";
 import { HistoryView } from "./history.js";
 import { MigrationView } from "./migration.js";
+import { OverviewView } from "./overview.js";
 import { SettingsView } from "./settings.js";
 
 describe("desktop renderer view structure", () => {
@@ -122,7 +123,7 @@ describe("desktop renderer view structure", () => {
         state: {
           ...initialState,
           settings: {
-            values: { theme: "dark", language: "zh-CN" },
+            values: { theme: "dark", language: "en" },
             revision: 2,
             status: "ready",
             readOnlyRecovery: false,
@@ -141,8 +142,119 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('value="dark" selected="">Dark</option>');
     expect(html).toContain('for="settings-language"');
     expect(html).toContain('id="settings-language"');
-    expect(html).toContain('value="zh-CN" selected="">Simplified Chinese</option>');
+    expect(html).toContain('value="zh-CN">Simplified Chinese</option>');
     expect(html).toContain("Revision 2");
+  });
+
+  it("renders core desktop chrome and settings in Simplified Chinese", () => {
+    const zhState: AppState = {
+      ...initialState,
+      settings: {
+        ...initialState.settings,
+        values: { theme: "system", language: "zh-CN" },
+        revision: 3,
+        status: "ready",
+      },
+    };
+
+    const shellHtml = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: zhState,
+        onRoute: vi.fn(),
+        onSelectProject: vi.fn(),
+        onUseProjectPath: vi.fn(),
+        children: createElement("span", null, "工作区"),
+      }),
+    );
+    const overviewHtml = renderToStaticMarkup(
+      createElement(OverviewView, { state: zhState, onScan: vi.fn() }),
+    );
+    const settingsHtml = renderToStaticMarkup(
+      createElement(SettingsView, {
+        state: zhState,
+        onThemeChange: vi.fn(),
+        onLanguageChange: vi.fn(),
+        onReload: vi.fn(),
+      }),
+    );
+
+    expect(shellHtml).toContain(">总览</button>");
+    expect(shellHtml).toContain(">资产</button>");
+    expect(shellHtml).toContain("项目设置");
+    expect(shellHtml).toContain("尚未选择文件夹");
+    expect(shellHtml).toContain("浏览文件夹");
+    expect(overviewHtml).toContain("配置管理总览");
+    expect(overviewHtml).toContain("开始扫描");
+    expect(settingsHtml).toContain("<h1>设置</h1>");
+    expect(settingsHtml).toContain('value="zh-CN" selected="">简体中文</option>');
+    expect(settingsHtml).toContain("修订版本 3");
+  });
+
+  it("renders primary workflow views in Simplified Chinese", () => {
+    const zhState: AppState = {
+      ...initialState,
+      settings: {
+        ...initialState.settings,
+        values: { theme: "system", language: "zh-CN" },
+        status: "ready",
+      },
+    };
+
+    const assetsHtml = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: zhState,
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+    const migrationHtml = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: zhState,
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onTargetProject: vi.fn(),
+        onConflictPolicy: vi.fn(),
+      }),
+    );
+    const deploymentHtml = renderToStaticMarkup(
+      createElement(DeploymentView, {
+        state: zhState,
+        onConfirm: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onDeploy: vi.fn(),
+        onRollback: vi.fn(),
+        onReviewHistory: vi.fn(),
+      }),
+    );
+    const historyHtml = renderToStaticMarkup(
+      createElement(HistoryView, {
+        state: zhState,
+        onRefresh: vi.fn(),
+        onLoadDetail: vi.fn(),
+      }),
+    );
+
+    expect(assetsHtml).toContain("<h1>资产</h1>");
+    expect(assetsHtml).toContain("刷新资产");
+    expect(assetsHtml).toContain("尚未索引资产。");
+    expect(migrationHtml).toContain("<h1>迁移预览</h1>");
+    expect(migrationHtml).toContain("目标工具");
+    expect(migrationHtml).toContain("预览迁移");
+    expect(migrationHtml).toContain("请先选择项目再创建迁移预览。");
+    expect(deploymentHtml).toContain("<h1>部署</h1>");
+    expect(deploymentHtml).toContain("部署确认");
+    expect(deploymentHtml).toContain("执行部署");
+    expect(deploymentHtml).toContain("请先创建迁移预览再部署。");
+    expect(historyHtml).toContain("<h1>历史</h1>");
+    expect(historyHtml).toContain("刷新历史");
+    expect(historyHtml).toContain("暂无部署历史。");
   });
 
   it("groups deployment confirmations and actions into scannable sections", () => {
@@ -636,6 +748,158 @@ describe("desktop renderer view structure", () => {
     expect(html.indexOf('class="migration-control-panel"')).toBeLessThan(
       html.indexOf('class="diff-card migration-result-panel"'),
     );
+  });
+
+  it("renders detailed workflow states in Simplified Chinese", () => {
+    const zhSettings: AppState["settings"] = {
+      ...initialState.settings,
+      values: { theme: "system", language: "zh-CN" },
+      status: "ready",
+    };
+    const assetDetail = assetDetailFixture("asset-1", "rule:AGENTS");
+    const historyDetailState: AppState = {
+      ...initialState,
+      settings: zhSettings,
+      history: [
+        {
+          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: "2026-06-28T08:00:00.000Z",
+          phase: "completed",
+          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+          cancellable: false,
+          snapshot: {
+            status: "recorded",
+            commitId: "1234567890abcdef",
+            authoredAt: "2026-06-28T08:00:00.000Z",
+            message: "AI Config Hub deployment snapshot",
+          },
+        },
+      ],
+      historyDetail: {
+        entry: {
+          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
+          kind: "deployment",
+          status: "succeeded",
+          createdAt: "2026-06-28T08:00:00.000Z",
+        },
+        plan: {
+          planId: DeploymentPlanIdSchema.parse("deployment-plan:audit-preview"),
+          planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          requiredConfirmations: ["overwrite", "partial_conversion"],
+        },
+        changes: [
+          {
+            operation: "replace",
+            pathDisplay: ".cursor/rules/agents.mdc",
+            beforeHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            afterHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+            diff: "- Existing Cursor rule.\n+ Use local TypeScript conventions.",
+          },
+        ],
+      },
+    };
+
+    const assetsHtml = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          settings: zhSettings,
+          assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+          assetDetail: {
+            ...assetDetail,
+            asset: {
+              ...assetDetail.asset,
+              references: ["README.md"],
+              normalized: { body: "Use local TypeScript conventions." },
+            },
+          },
+          effective: {
+            effective: { body: "Use local TypeScript conventions." },
+            contributors: [],
+            ignored: [],
+            diagnostics: [],
+            snapshotRevision: "revision-1",
+          },
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+    const migrationHtml = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          settings: zhSettings,
+          projectRoot: "/workspace/source",
+          migration: { ...initialState.migration, targetScopeId: "/workspace/target" },
+          assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onTargetProject: vi.fn(),
+        onConflictPolicy: vi.fn(),
+      }),
+    );
+    const deploymentHtml = renderToStaticMarkup(
+      createElement(DeploymentView, {
+        state: {
+          ...initialState,
+          settings: zhSettings,
+          activeTask: {
+            taskId: "task:deployment:1",
+            taskKind: "deployment",
+            phase: "completed",
+            status: "succeeded",
+            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+            message: "Deployment complete: 1 succeeded.",
+            recoveryLock: false,
+          },
+        },
+        onConfirm: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onDeploy: vi.fn(),
+        onRollback: vi.fn(),
+        onReviewHistory: vi.fn(),
+      }),
+    );
+    const historyHtml = renderToStaticMarkup(
+      createElement(HistoryView, {
+        state: historyDetailState,
+        onRefresh: vi.fn(),
+        onLoadDetail: vi.fn(),
+      }),
+    );
+
+    expect(assetsHtml).toContain('aria-label="资产详情"');
+    expect(assetsHtml).toContain("检查资产");
+    expect(assetsHtml).toContain("打开来源");
+    expect(assetsHtml).toContain("状态</dt><dd>已启用</dd>");
+    expect(assetsHtml).toContain("<h3>引用</h3>");
+    expect(assetsHtml).toContain("<h3>标准化</h3>");
+    expect(assetsHtml).toContain("<h3>有效配置</h3>");
+    expect(assetsHtml).toContain("无贡献资产。");
+    expect(assetsHtml).toContain("无有效诊断。");
+    expect(migrationHtml).toContain("计划 audit-preview");
+    expect(migrationHtml).toContain("兼容性：部分");
+    expect(migrationHtml).toContain("确认项：覆盖现有目标文件。 部署包含警告的部分转换。");
+    expect(migrationHtml).toContain("替换文件 .cursor/rules/agents.mdc");
+    expect(deploymentHtml).toContain("<h2>部署状态</h2>");
+    expect(deploymentHtml).toContain("状态：已完成");
+    expect(historyHtml).toContain("<strong>部署</strong>");
+    expect(historyHtml).toContain("<span>成功</span>");
+    expect(historyHtml).toContain("阶段：已完成");
+    expect(historyHtml).toContain("<h2>部署详情</h2>");
+    expect(historyHtml).toContain("<strong>替换文件</strong>");
   });
 });
 

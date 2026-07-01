@@ -1,3 +1,4 @@
+import { localeForState, t } from "../i18n.js";
 import {
   deploymentBlockersForState,
   deploymentConfirmationLabel,
@@ -14,6 +15,7 @@ export function DeploymentView(props: {
   readonly onRollback: () => void;
   readonly onReviewHistory: () => void;
 }) {
+  const locale = localeForState(props.state);
   const blockers = deploymentBlockersForState(props.state);
   const rollbackUnavailable = rollbackRequestForState(props.state) === undefined;
   const requiredConfirmations = props.state.preview?.requiredConfirmations ?? [];
@@ -25,27 +27,36 @@ export function DeploymentView(props: {
       : undefined;
   return (
     <>
-      <h1>Deployment</h1>
-      <p>Deploy only from a fresh preview plan hash with explicit confirmation.</p>
+      <h1>{t(locale, "Deployment")}</h1>
+      <p>{t(locale, "Deploy only from a fresh preview plan hash with explicit confirmation.")}</p>
       {activeTask === undefined ? null : (
         <section className="task-status">
-          <h2>{activeTask.taskKind === "deployment" ? "Deployment status" : "Rollback status"}</h2>
+          <h2>
+            {activeTask.taskKind === "deployment"
+              ? t(locale, "Deployment status")
+              : t(locale, "Rollback status")}
+          </h2>
           <p className="task-status-summary">
-            <span>Status: {phaseLabel(activeTask.phase)}</span>
+            <span>
+              {t(locale, "Status: {status}", { status: phaseLabel(locale, activeTask.phase) })}
+            </span>
             {activeTask.progress === undefined ? null : <span>{progressLabel(activeTask)}</span>}
           </p>
           {activeTask.message === undefined ? null : <p>{activeTask.message}</p>}
           {activeTask.recoveryLock ? (
             <div className="recovery-lock">
-              <p>Recovery lock active. Review history before retrying.</p>
+              <p>{t(locale, "Recovery lock active. Review history before retrying.")}</p>
               <button type="button" onClick={props.onReviewHistory}>
-                Review history
+                {t(locale, "Review history")}
               </button>
             </div>
           ) : null}
         </section>
       )}
-      <section className="deployment-confirmation-panel" aria-label="Deployment confirmations">
+      <section
+        className="deployment-confirmation-panel"
+        aria-label={t(locale, "Deployment confirmations")}
+      >
         <label className="confirmation-item">
           <input
             checked={props.state.deploymentConfirmed}
@@ -53,11 +64,11 @@ export function DeploymentView(props: {
             type="checkbox"
             onChange={(event) => props.onConfirm(event.currentTarget.checked)}
           />
-          <span>I understand this writes verified config files.</span>
+          <span>{t(locale, "I understand this writes verified config files.")}</span>
         </label>
         {requiredConfirmations.length === 0 ? null : (
           <fieldset className="confirmation-list">
-            <legend>Required confirmations</legend>
+            <legend>{t(locale, "Required confirmations")}</legend>
             {requiredConfirmations.map((confirmation) => (
               <label key={confirmation} className="confirmation-item">
                 <input
@@ -67,7 +78,7 @@ export function DeploymentView(props: {
                     props.onConfirmRequirement(confirmation, event.currentTarget.checked)
                   }
                 />
-                <span>{deploymentConfirmationLabel(confirmation)}</span>
+                <span>{t(locale, deploymentConfirmationLabel(confirmation))}</span>
               </label>
             ))}
           </fieldset>
@@ -75,56 +86,89 @@ export function DeploymentView(props: {
       </section>
       <div className="deployment-action-row">
         <button type="button" disabled={blockers.length > 0} onClick={props.onDeploy}>
-          Execute deployment
+          {t(locale, "Execute deployment")}
         </button>
       </div>
       {blockers.length === 0 ? null : (
         <ul className="blocker-panel">
           {blockers.map((blocker) => (
-            <li key={blocker}>{blocker}</li>
+            <li key={blocker}>
+              {localizeDeploymentBlocker(
+                locale,
+                blocker,
+                missingConfirmationLabels(requiredConfirmations, grantedConfirmations),
+              )}
+            </li>
           ))}
         </ul>
       )}
       <div className="deployment-action-row">
         <button type="button" disabled={rollbackUnavailable} onClick={props.onRollback}>
-          Execute rollback
+          {t(locale, "Execute rollback")}
         </button>
       </div>
       {rollbackUnavailable ? (
-        <p className="deployment-blocker">No succeeded deployment is available to roll back.</p>
+        <p className="deployment-blocker">
+          {t(locale, "No succeeded deployment is available to roll back.")}
+        </p>
       ) : null}
     </>
   );
 }
 
-function phaseLabel(phase: NonNullable<AppState["activeTask"]>["phase"]): string {
+function missingConfirmationLabels(
+  requiredConfirmations: readonly DeploymentConfirmation[],
+  grantedConfirmations: ReadonlySet<DeploymentConfirmation>,
+): readonly string[] {
+  return requiredConfirmations
+    .filter((confirmation) => !grantedConfirmations.has(confirmation))
+    .map(deploymentConfirmationLabel);
+}
+
+function localizeDeploymentBlocker(
+  locale: ReturnType<typeof localeForState>,
+  blocker: string,
+  missingConfirmations: readonly string[],
+): string {
+  if (blocker.startsWith("Confirm required migration actions:")) {
+    return `${t(locale, "Confirm required migration actions:")} ${missingConfirmations
+      .map((confirmation) => t(locale, confirmation))
+      .join(" ")}`;
+  }
+  return t(locale, blocker);
+}
+
+function phaseLabel(
+  locale: ReturnType<typeof localeForState>,
+  phase: NonNullable<AppState["activeTask"]>["phase"],
+): string {
   switch (phase) {
     case "queued":
-      return "Queued";
+      return t(locale, "Queued");
     case "discovering":
-      return "Discovering";
+      return t(locale, "Discovering");
     case "reading":
-      return "Reading";
+      return t(locale, "Reading");
     case "parsing":
-      return "Parsing";
+      return t(locale, "Parsing");
     case "validating":
-      return "Validating";
+      return t(locale, "Validating");
     case "committing":
-      return "Committing";
+      return t(locale, "Committing");
     case "preflight":
-      return "Preflight";
+      return t(locale, "Preflight");
     case "backing_up":
-      return "Backing up";
+      return t(locale, "Backing up");
     case "writing":
-      return "Writing";
+      return t(locale, "Writing");
     case "verifying":
-      return "Verifying";
+      return t(locale, "Verifying");
     case "restoring":
-      return "Restoring";
+      return t(locale, "Restoring");
     case "rolling_back":
-      return "Rolling back";
+      return t(locale, "Rolling back");
     case "completed":
-      return "Completed";
+      return t(locale, "Completed");
   }
 }
 

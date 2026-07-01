@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { localeForState, t, type DesktopLocale } from "../i18n.js";
 import type { AppState } from "../model.js";
 
 export function AssetsView(props: {
@@ -16,9 +17,10 @@ export function AssetsView(props: {
   readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
+  const locale = localeForState(props.state);
   const detail = props.state.assetDetail;
   const effective = props.state.effective;
-  const diagnosticScope = diagnosticScopeFor(detail);
+  const diagnosticScope = diagnosticScopeFor(locale, detail);
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
   const assetGroups = useMemo(
     () => assetGroupsByResourceType(props.state.assets),
@@ -43,15 +45,15 @@ export function AssetsView(props: {
 
   return (
     <>
-      <h1>Assets</h1>
+      <h1>{t(locale, "Assets")}</h1>
       <button type="button" onClick={props.onRefresh}>
-        Refresh assets
+        {t(locale, "Refresh assets")}
       </button>
       <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
       <div className="cards" aria-label={diagnosticScope.cardsLabel}>
         <article>
           <span>{diagnosticScope.diagnosticsLabel}</span>
-          <strong>{formatErrorCount(props.state.diagnosticCounts.error)}</strong>
+          <strong>{formatErrorCount(locale, props.state.diagnosticCounts.error)}</strong>
         </article>
         <article>
           <span>{diagnosticScope.warningsLabel}</span>
@@ -63,11 +65,12 @@ export function AssetsView(props: {
         </article>
       </div>
       {assetGroups.length === 0 ? (
-        <p className="empty-state">No assets indexed yet.</p>
+        <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
       ) : (
         <AssetTypeTabs
           activeResourceType={activeResourceType}
           groups={assetGroups}
+          locale={locale}
           onInspect={props.onInspect}
           onSelectResourceType={setSelectedResourceType}
         />
@@ -78,6 +81,7 @@ export function AssetsView(props: {
           effective={effective}
           diagnostics={props.state.diagnostics}
           assetLabels={assetLabels}
+          locale={locale}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
           onRescanAfterEdit={props.onRescanAfterEdit}
@@ -91,6 +95,7 @@ export function AssetsView(props: {
           <h2>{diagnosticScope.panelHeading}</h2>
           <DiagnosticList
             diagnostics={props.state.diagnostics}
+            locale={locale}
             onLocateDiagnostic={props.onLocateDiagnostic}
           />
         </section>
@@ -147,6 +152,7 @@ function resourceTypePriority(resourceType: string): number {
 function AssetTypeTabs(props: {
   readonly groups: readonly { readonly resourceType: string; readonly assets: AssetSummary[] }[];
   readonly activeResourceType: string | undefined;
+  readonly locale: DesktopLocale;
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onSelectResourceType: (resourceType: string) => void;
 }) {
@@ -158,7 +164,11 @@ function AssetTypeTabs(props: {
   const activePanelId = assetTypePanelId(activeGroup.resourceType);
   return (
     <div className="asset-type-tabs">
-      <div className="asset-tab-list" role="tablist" aria-label="Asset resource types">
+      <div
+        className="asset-tab-list"
+        role="tablist"
+        aria-label={t(props.locale, "Asset resource types")}
+      >
         {props.groups.map((group) => {
           const selected = group.resourceType === activeGroup.resourceType;
           const panelId = assetTypePanelId(group.resourceType);
@@ -174,8 +184,8 @@ function AssetTypeTabs(props: {
               type="button"
               onClick={() => props.onSelectResourceType(group.resourceType)}
             >
-              <strong>{resourceTypeLabel(group.resourceType)}</strong>
-              <span>{formatAssetCount(group.assets.length)}</span>
+              <strong>{resourceTypeLabel(props.locale, group.resourceType)}</strong>
+              <span>{formatAssetCount(props.locale, group.assets.length)}</span>
             </button>
           );
         })}
@@ -186,7 +196,7 @@ function AssetTypeTabs(props: {
         id={activePanelId}
         role="tabpanel"
       >
-        <AssetTypeTable group={activeGroup} onInspect={props.onInspect} />
+        <AssetTypeTable group={activeGroup} locale={props.locale} onInspect={props.onInspect} />
       </section>
     </div>
   );
@@ -194,23 +204,27 @@ function AssetTypeTabs(props: {
 
 function AssetTypeTable(props: {
   readonly group: { readonly resourceType: string; readonly assets: AssetSummary[] };
+  readonly locale: DesktopLocale;
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
-  const groupLabel = resourceTypeLabel(props.group.resourceType);
+  const groupLabel = resourceTypeLabel(props.locale, props.group.resourceType);
   return (
-    <section className="asset-type-group" aria-label={`${groupLabel} assets`}>
+    <section
+      className="asset-type-group"
+      aria-label={t(props.locale, "{resource} assets", { resource: groupLabel })}
+    >
       <header className="asset-type-heading">
-        <h2>{groupLabel} assets</h2>
-        <span>{formatAssetCount(props.group.assets.length)}</span>
+        <h2>{t(props.locale, "{resource} assets", { resource: groupLabel })}</h2>
+        <span>{formatAssetCount(props.locale, props.group.assets.length)}</span>
       </header>
       <table className="asset-table-compact">
         <thead>
           <tr>
-            <th>Logical key</th>
-            <th>Tool</th>
-            <th>Resource</th>
-            <th>Diagnostics</th>
-            <th>Detail</th>
+            <th>{t(props.locale, "Logical key")}</th>
+            <th>{t(props.locale, "Tool")}</th>
+            <th>{t(props.locale, "Resource")}</th>
+            <th>{t(props.locale, "Diagnostics")}</th>
+            <th>{t(props.locale, "Detail")}</th>
           </tr>
         </thead>
         <tbody>
@@ -219,20 +233,20 @@ function AssetTypeTable(props: {
               <td className="asset-primary-cell">
                 <strong>{asset.logicalKey}</strong>
                 <span className="asset-row-meta">
-                  {scopeKindLabel(asset.scopeKind)}
-                  <AssetStatusBadge status={assetStatusFor(asset)} />
+                  {scopeKindLabel(props.locale, asset.scopeKind)}
+                  <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
                 </span>
               </td>
               <td>{toolLabel(asset.toolKey)}</td>
-              <td>{resourceTypeLabel(asset.resourceType)}</td>
-              <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
+              <td>{resourceTypeLabel(props.locale, asset.resourceType)}</td>
+              <td>{formatDiagnosticCounts(props.locale, asset.diagnosticCounts)}</td>
               <td>
                 <button
                   className="asset-inspect-button"
                   type="button"
                   onClick={() => props.onInspect(asset.id)}
                 >
-                  Inspect
+                  {t(props.locale, "Inspect")}
                 </button>
               </td>
             </tr>
@@ -255,7 +269,8 @@ function domIdentifier(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
 }
 
-function formatAssetCount(count: number): string {
+function formatAssetCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个资产`;
   return `${count} ${count === 1 ? "asset" : "assets"}`;
 }
 
@@ -263,23 +278,35 @@ function assetStatusFor(asset: { readonly status?: string }): AssetStatus {
   return asset.status === "disabled" ? "disabled" : "enabled";
 }
 
-function assetStatusLabel(status: AssetStatus): string {
-  return status === "disabled" ? "Disabled" : "Enabled";
+function assetStatusLabel(locale: DesktopLocale, status: AssetStatus): string {
+  return status === "disabled" ? t(locale, "Disabled") : t(locale, "Enabled");
 }
 
 function nextAssetStatus(status: AssetStatus): AssetStatus {
   return status === "disabled" ? "enabled" : "disabled";
 }
 
-function assetStatusActionLabel(status: AssetStatus): string {
-  return status === "disabled" ? "Enable asset" : "Disable asset";
+function assetStatusActionLabel(locale: DesktopLocale, status: AssetStatus): string {
+  return status === "disabled" ? t(locale, "Enable asset") : t(locale, "Disable asset");
 }
 
-function formatErrorCount(count: number): string {
+function formatErrorCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个错误`;
   return `${count} ${count === 1 ? "error" : "errors"}`;
 }
 
-function formatDiagnosticCounts(counts: AppState["diagnosticCounts"]): string {
+function formatDiagnosticCounts(
+  locale: DesktopLocale,
+  counts: AppState["diagnosticCounts"],
+): string {
+  if (locale === "zh-CN") {
+    const parts = [
+      counts.error > 0 ? `${counts.error} 个错误` : undefined,
+      counts.warning > 0 ? `${counts.warning} 个警告` : undefined,
+      counts.info > 0 ? `${counts.info} 条信息` : undefined,
+    ].filter((part) => part !== undefined);
+    return parts.length === 0 ? t(locale, "No diagnostics") : parts.join("，");
+  }
   const parts = [
     counts.error > 0 ? formatSeverityCount(counts.error, "error") : undefined,
     counts.warning > 0 ? formatSeverityCount(counts.warning, "warning") : undefined,
@@ -292,18 +319,24 @@ function formatSeverityCount(count: number, severity: "error" | "warning"): stri
   return `${count} ${count === 1 ? severity : `${severity}s`}`;
 }
 
-function diagnosticLabel(diagnostic: AppState["diagnostics"][number]): string {
-  return `${severityLabel(diagnostic.severity)}: ${sentenceCaseIdentifier(diagnostic.code)}`;
+function diagnosticLabel(
+  locale: DesktopLocale,
+  diagnostic: AppState["diagnostics"][number],
+): string {
+  return `${severityLabel(locale, diagnostic.severity)}: ${sentenceCaseIdentifier(diagnostic.code)}`;
 }
 
-function severityLabel(severity: AppState["diagnostics"][number]["severity"]): string {
+function severityLabel(
+  locale: DesktopLocale,
+  severity: AppState["diagnostics"][number]["severity"],
+): string {
   switch (severity) {
     case "error":
-      return "Error";
+      return t(locale, "Error");
     case "warning":
-      return "Warning";
+      return t(locale, "Warning");
     case "info":
-      return "Info";
+      return t(locale, "Info");
   }
 }
 
@@ -322,35 +355,40 @@ function toolLabel(toolKey: string): string {
   }
 }
 
-function resourceTypeLabel(resourceType: string): string {
+function resourceTypeLabel(locale: DesktopLocale, resourceType: string): string {
   if (resourceType.toLowerCase() === "mcp") return "MCP";
-  return titleizeIdentifier(resourceType);
+  return t(locale, titleizeIdentifier(resourceType));
 }
 
-function scopeKindLabel(scopeKind: string): string {
-  return `${titleizeIdentifier(scopeKind)} scope`;
+function scopeKindLabel(locale: DesktopLocale, scopeKind: string): string {
+  const label = titleizeIdentifier(scopeKind);
+  if (locale === "zh-CN") return t(locale, "{scope} scope", { scope: t(locale, label) });
+  return `${label} scope`;
 }
 
 function assetLabel(assetId: string, assetLabels: ReadonlyMap<string, string>): string {
   return assetLabels.get(assetId) ?? displayIdentifier(assetId);
 }
 
-function contributionLabel(action: string, reasonCode: string): string {
-  const reason = reasonLabel(reasonCode);
+function contributionLabel(locale: DesktopLocale, action: string, reasonCode: string): string {
+  const reason = reasonLabel(locale, reasonCode);
   switch (action) {
     case "inherit":
-      return `Inherited from ${reason}.`;
+      return t(locale, "Inherited from {reason}.", { reason });
     case "merge":
-      return `Merged because ${reason}.`;
+      return t(locale, "Merged because {reason}.", { reason });
     case "override":
-      return `Overrode lower-priority values because ${reason}.`;
+      return t(locale, "Overrode lower-priority values because {reason}.", { reason });
     default:
-      return `${sentenceCaseIdentifier(action)} because ${reason}.`;
+      return t(locale, "{action} because {reason}.", {
+        action: sentenceCaseIdentifier(action),
+        reason,
+      });
   }
 }
 
-function reasonLabel(reasonCode: string): string {
-  return lowerFirst(sentenceCaseIdentifier(reasonCode));
+function reasonLabel(locale: DesktopLocale, reasonCode: string): string {
+  return t(locale, lowerFirst(sentenceCaseIdentifier(reasonCode)));
 }
 
 function displayIdentifier(identifier: string): string {
@@ -393,32 +431,33 @@ function lowerFirst(value: string): string {
   return value.length === 0 ? value : value[0]?.toLowerCase() + value.slice(1);
 }
 
-function diagnosticScopeFor(detail: AppState["assetDetail"]) {
+function diagnosticScopeFor(locale: DesktopLocale, detail: AppState["assetDetail"]) {
   if (detail === undefined) {
     return {
-      cardsLabel: "Workspace diagnostic summary",
-      diagnosticsLabel: "Workspace diagnostics",
-      warningsLabel: "Workspace warnings",
-      infoLabel: "Workspace info",
-      panelLabel: "Workspace diagnostics",
-      panelHeading: "Workspace diagnostics",
-      summary: "Counts reflect every indexed asset in this project.",
+      cardsLabel: t(locale, "Workspace diagnostic summary"),
+      diagnosticsLabel: t(locale, "Workspace diagnostics"),
+      warningsLabel: t(locale, "Workspace warnings"),
+      infoLabel: t(locale, "Workspace info"),
+      panelLabel: t(locale, "Workspace diagnostics"),
+      panelHeading: t(locale, "Workspace diagnostics"),
+      summary: t(locale, "Counts reflect every indexed asset in this project."),
     };
   }
 
   return {
-    cardsLabel: `Diagnostic summary for ${detail.asset.logicalKey}`,
-    diagnosticsLabel: "Selected asset diagnostics",
-    warningsLabel: "Selected asset warnings",
-    infoLabel: "Selected asset info",
-    panelLabel: `Diagnostics for ${detail.asset.logicalKey}`,
-    panelHeading: `Diagnostics for ${detail.asset.logicalKey}`,
-    summary: "Counts reflect only the inspected asset.",
+    cardsLabel: t(locale, "Diagnostic summary for {asset}", { asset: detail.asset.logicalKey }),
+    diagnosticsLabel: t(locale, "Selected asset diagnostics"),
+    warningsLabel: t(locale, "Selected asset warnings"),
+    infoLabel: t(locale, "Selected asset info"),
+    panelLabel: t(locale, "Diagnostics for {asset}", { asset: detail.asset.logicalKey }),
+    panelHeading: t(locale, "Diagnostics for {asset}", { asset: detail.asset.logicalKey }),
+    summary: t(locale, "Counts reflect only the inspected asset."),
   };
 }
 
 function LocateDiagnosticButton(props: {
   readonly assetId: AppState["assets"][number]["id"];
+  readonly locale: DesktopLocale;
   readonly onLocate: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   return (
@@ -427,20 +466,21 @@ function LocateDiagnosticButton(props: {
       type="button"
       onClick={() => props.onLocate(props.assetId)}
     >
-      Locate
+      {t(props.locale, "Locate")}
     </button>
   );
 }
 
 function DiagnosticList(props: {
   readonly diagnostics: AppState["diagnostics"];
+  readonly locale: DesktopLocale;
   readonly onLocateDiagnostic?: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   return (
     <ul className="diagnostic-list">
       {props.diagnostics.map((diagnostic) => (
         <li key={diagnostic.id}>
-          <strong>{diagnosticLabel(diagnostic)}</strong>
+          <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
           <span>{diagnostic.message}</span>
           {diagnostic.location === undefined ? null : (
             <small>
@@ -453,6 +493,7 @@ function DiagnosticList(props: {
           {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
             <LocateDiagnosticButton
               assetId={diagnostic.assetId}
+              locale={props.locale}
               onLocate={props.onLocateDiagnostic}
             />
           )}
@@ -462,8 +503,12 @@ function DiagnosticList(props: {
   );
 }
 
-function AssetStatusBadge(props: { readonly status: AssetStatus }) {
-  return <span className={`asset-status ${props.status}`}>{assetStatusLabel(props.status)}</span>;
+function AssetStatusBadge(props: { readonly locale: DesktopLocale; readonly status: AssetStatus }) {
+  return (
+    <span className={`asset-status ${props.status}`}>
+      {assetStatusLabel(props.locale, props.status)}
+    </span>
+  );
 }
 
 function AssetDetailDialog(props: {
@@ -471,6 +516,7 @@ function AssetDetailDialog(props: {
   readonly effective: AppState["effective"];
   readonly diagnostics: AppState["diagnostics"];
   readonly assetLabels: ReadonlyMap<string, string>;
+  readonly locale: DesktopLocale;
   readonly onOpenSource: () => void;
   readonly onToggleAssetStatus: (
     assetId: AppState["assets"][number]["id"],
@@ -491,63 +537,64 @@ function AssetDetailDialog(props: {
         className="asset-detail-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Asset detail"
+        aria-label={t(props.locale, "Asset detail")}
       >
         <header className="asset-detail-header">
           <div>
-            <span className="eyebrow">Inspect asset</span>
+            <span className="eyebrow">{t(props.locale, "Inspect asset")}</span>
             <h2>{detail.asset.logicalKey}</h2>
           </div>
           <button className="asset-detail-close" type="button" onClick={props.onCloseInspect}>
-            Close
+            {t(props.locale, "Close")}
           </button>
         </header>
         <div className="asset-detail-scroll">
           <div className="detail-actions">
             <button type="button" onClick={props.onOpenSource}>
-              Open source
+              {t(props.locale, "Open source")}
             </button>
             <button
               type="button"
               onClick={() => props.onToggleAssetStatus(detail.asset.id, targetStatus)}
             >
-              {assetStatusActionLabel(status)}
+              {assetStatusActionLabel(props.locale, status)}
             </button>
             <button type="button" onClick={props.onRescanAfterEdit}>
-              Rescan after edit
+              {t(props.locale, "Rescan after edit")}
             </button>
             <button type="button" onClick={props.onLoadEffective}>
-              Load effective configuration
+              {t(props.locale, "Load effective configuration")}
             </button>
           </div>
           <dl>
-            <dt>Tool</dt>
+            <dt>{t(props.locale, "Tool")}</dt>
             <dd>{toolLabel(detail.asset.toolKey)}</dd>
-            <dt>Resource</dt>
-            <dd>{resourceTypeLabel(detail.asset.resourceType)}</dd>
-            <dt>Status</dt>
-            <dd>{assetStatusLabel(status)}</dd>
-            <dt>Scope</dt>
+            <dt>{t(props.locale, "Resource")}</dt>
+            <dd>{resourceTypeLabel(props.locale, detail.asset.resourceType)}</dd>
+            <dt>{t(props.locale, "Status")}</dt>
+            <dd>{assetStatusLabel(props.locale, status)}</dd>
+            <dt>{t(props.locale, "Scope")}</dt>
             <dd>{detail.asset.scopeId}</dd>
-            <dt>Source</dt>
+            <dt>{t(props.locale, "Source")}</dt>
             <dd>{detail.source.pathDisplay}</dd>
-            <dt>Observed</dt>
+            <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
           <section className="asset-detail-diagnostics">
-            <h3>Diagnostics</h3>
+            <h3>{t(props.locale, "Diagnostics")}</h3>
             {props.diagnostics.length === 0 ? (
-              <p>No diagnostics for this asset.</p>
+              <p>{t(props.locale, "No diagnostics for this asset.")}</p>
             ) : (
               <DiagnosticList
                 diagnostics={props.diagnostics}
+                locale={props.locale}
                 onLocateDiagnostic={props.onLocateDiagnostic}
               />
             )}
           </section>
           {detail.asset.references === undefined || detail.asset.references.length === 0 ? null : (
             <>
-              <h3>References</h3>
+              <h3>{t(props.locale, "References")}</h3>
               <ul>
                 {detail.asset.references.map((reference) => (
                   <li key={reference}>{reference}</li>
@@ -557,17 +604,17 @@ function AssetDetailDialog(props: {
           )}
           {detail.asset.normalized === undefined ? null : (
             <>
-              <h3>Normalized</h3>
+              <h3>{t(props.locale, "Normalized")}</h3>
               <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
             </>
           )}
           {effective === undefined ? null : (
             <>
-              <h3>Effective configuration</h3>
+              <h3>{t(props.locale, "Effective configuration")}</h3>
               <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
-              <h3>Contributors</h3>
+              <h3>{t(props.locale, "Contributors")}</h3>
               {effective.contributors.length === 0 ? (
-                <p>No contributing assets.</p>
+                <p>{t(props.locale, "No contributing assets.")}</p>
               ) : (
                 <ul>
                   {effective.contributors.map((contributor) => (
@@ -575,32 +622,42 @@ function AssetDetailDialog(props: {
                       key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
                     >
                       <strong>{assetLabel(contributor.assetId, props.assetLabels)}</strong>{" "}
-                      <span>{contributionLabel(contributor.action, contributor.reasonCode)}</span>
+                      <span>
+                        {contributionLabel(
+                          props.locale,
+                          contributor.action,
+                          contributor.reasonCode,
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
-              <h3>Ignored assets</h3>
+              <h3>{t(props.locale, "Ignored assets")}</h3>
               {effective.ignored.length === 0 ? (
-                <p>No ignored assets.</p>
+                <p>{t(props.locale, "No ignored assets.")}</p>
               ) : (
                 <ul>
                   {effective.ignored.map((ignored) => (
                     <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
                       <strong>{assetLabel(ignored.assetId, props.assetLabels)}</strong>{" "}
-                      <span>Ignored because {reasonLabel(ignored.reasonCode)}.</span>
+                      <span>
+                        {t(props.locale, "Ignored because {reason}.", {
+                          reason: reasonLabel(props.locale, ignored.reasonCode),
+                        })}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
-              <h3>Effective diagnostics</h3>
+              <h3>{t(props.locale, "Effective diagnostics")}</h3>
               {effective.diagnostics.length === 0 ? (
-                <p>No effective diagnostics.</p>
+                <p>{t(props.locale, "No effective diagnostics.")}</p>
               ) : (
                 <ul className="diagnostic-list">
                   {effective.diagnostics.map((diagnostic) => (
                     <li key={diagnostic.id}>
-                      <strong>{diagnosticLabel(diagnostic)}</strong>
+                      <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
                       <span>{diagnostic.message}</span>
                     </li>
                   ))}

@@ -1,3 +1,4 @@
+import { localeForState, t, type DesktopLocale } from "../i18n.js";
 import {
   deploymentConfirmationLabel,
   MIGRATION_CONFLICT_POLICY_OPTIONS,
@@ -18,6 +19,7 @@ export function MigrationView(props: {
   readonly onTargetProject: (targetScopeId: string) => void;
   readonly onConflictPolicy: (conflictPolicy: MigrationConflictPolicy) => void;
 }) {
+  const locale = localeForState(props.state);
   const preview = props.state.preview;
   const previewBlockers = migrationPreviewBlockersForState(props.state);
   const driftRows = migrationSourceDriftRowsForState(props.state).filter(
@@ -26,8 +28,8 @@ export function MigrationView(props: {
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
   return (
     <>
-      <h1>Migration preview</h1>
-      <p>Preview cross-tool changes before anything writes to disk.</p>
+      <h1>{t(locale, "Migration preview")}</h1>
+      <p>{t(locale, "Preview cross-tool changes before anything writes to disk.")}</p>
       <div
         className={
           preview === undefined
@@ -36,9 +38,9 @@ export function MigrationView(props: {
         }
       >
         <div className="migration-control-panel">
-          <section className="migration-form" aria-label="Migration settings">
+          <section className="migration-form" aria-label={t(locale, "Migration settings")}>
             <div className="field">
-              <label htmlFor="migration-target">Target tool</label>
+              <label htmlFor="migration-target">{t(locale, "Target tool")}</label>
               <select
                 id="migration-target"
                 value={props.state.migration.targetToolKey}
@@ -52,17 +54,17 @@ export function MigrationView(props: {
               </select>
             </div>
             <div className="field">
-              <label htmlFor="migration-target-project">Target project folder</label>
+              <label htmlFor="migration-target-project">{t(locale, "Target project folder")}</label>
               <input
                 id="migration-target-project"
                 type="text"
                 value={props.state.migration.targetScopeId ?? ""}
-                placeholder={props.state.projectRoot ?? "Target project path"}
+                placeholder={props.state.projectRoot ?? t(locale, "Target project path")}
                 onChange={(event) => props.onTargetProject(event.currentTarget.value)}
               />
             </div>
             <div className="field">
-              <label htmlFor="migration-conflict">Existing target files</label>
+              <label htmlFor="migration-conflict">{t(locale, "Existing target files")}</label>
               <select
                 id="migration-conflict"
                 value={props.state.migration.conflictPolicy}
@@ -72,15 +74,15 @@ export function MigrationView(props: {
               >
                 {MIGRATION_CONFLICT_POLICY_OPTIONS.map((policy) => (
                   <option key={policy} value={policy}>
-                    {conflictPolicyLabel(policy)}
+                    {conflictPolicyLabel(locale, policy)}
                   </option>
                 ))}
               </select>
             </div>
             <fieldset className="asset-picker">
-              <legend>Source assets</legend>
+              <legend>{t(locale, "Source assets")}</legend>
               {props.state.assets.length === 0 ? (
-                <p>Scan a project before creating a migration preview.</p>
+                <p>{t(locale, "Scan a project before creating a migration preview.")}</p>
               ) : (
                 props.state.assets.map((asset) => (
                   <label key={asset.id} className="asset-option">
@@ -101,12 +103,12 @@ export function MigrationView(props: {
             </fieldset>
           </section>
           <button type="button" disabled={previewBlockers.length > 0} onClick={props.onPreview}>
-            Preview migration
+            {t(locale, "Preview migration")}
           </button>
           {previewBlockers.length === 0 ? null : (
             <ul className="migration-blockers">
               {previewBlockers.map((blocker) => (
-                <li key={blocker}>{blocker}</li>
+                <li key={blocker}>{t(locale, blocker)}</li>
               ))}
             </ul>
           )}
@@ -114,16 +116,30 @@ export function MigrationView(props: {
         {preview === undefined ? null : (
           <div className="diff-card migration-result-panel">
             <header className="preview-summary">
-              <strong>Plan {displayIdentifier(preview.planId)}</strong>
-              <span>Plan hash: {preview.planHash}</span>
-              <span>Compatibility: {compatibilityLabel(preview.compatibility)}</span>
+              <strong>
+                {t(locale, "Plan {plan}", { plan: displayIdentifier(preview.planId) })}
+              </strong>
+              <span>{t(locale, "Plan hash: {hash}", { hash: preview.planHash })}</span>
               <span>
-                Confirmations:{" "}
-                {preview.requiredConfirmations.length === 0
-                  ? "none"
-                  : preview.requiredConfirmations.map(deploymentConfirmationLabel).join(" ")}
+                {t(locale, "Compatibility: {compatibility}", {
+                  compatibility: compatibilityLabel(locale, preview.compatibility),
+                })}
               </span>
-              <span>Expires: {formatTimestamp(preview.expiresAt)}</span>
+              <span>
+                {t(locale, "Confirmations: {confirmations}", {
+                  confirmations:
+                    preview.requiredConfirmations.length === 0
+                      ? t(locale, "none")
+                      : preview.requiredConfirmations
+                          .map((confirmation) =>
+                            t(locale, deploymentConfirmationLabel(confirmation)),
+                          )
+                          .join(" "),
+                })}
+              </span>
+              <span>
+                {t(locale, "Expires: {expires}", { expires: formatTimestamp(preview.expiresAt) })}
+              </span>
             </header>
             {preview.warnings.length === 0 ? null : (
               <ul className="warning-list">
@@ -133,24 +149,28 @@ export function MigrationView(props: {
               </ul>
             )}
             {preview.fieldLosses.length === 0 ? null : (
-              <section className="field-loss-panel" aria-label="Field loss details">
-                <h2>Field loss</h2>
+              <section className="field-loss-panel" aria-label={t(locale, "Field loss details")}>
+                <h2>{t(locale, "Field loss")}</h2>
                 {preview.fieldLosses.map((loss) => (
                   <div key={loss.assetId} className="field-loss-detail">
                     <h3>{assetLabel(loss.assetId, assetLabels)}</h3>
                     <dl>
-                      <dt>Dropped</dt>
+                      <dt>{t(locale, "Dropped")}</dt>
                       <dd>
-                        {loss.droppedFields.length === 0 ? "none" : loss.droppedFields.join(", ")}
+                        {loss.droppedFields.length === 0
+                          ? t(locale, "none")
+                          : loss.droppedFields.join(", ")}
                       </dd>
-                      <dt>Retained</dt>
+                      <dt>{t(locale, "Retained")}</dt>
                       <dd>
-                        {loss.retainedFields.length === 0 ? "none" : loss.retainedFields.join(", ")}
+                        {loss.retainedFields.length === 0
+                          ? t(locale, "none")
+                          : loss.retainedFields.join(", ")}
                       </dd>
-                      <dt>Transformed</dt>
+                      <dt>{t(locale, "Transformed")}</dt>
                       <dd>
                         {loss.transformedFields.length === 0
-                          ? "none"
+                          ? t(locale, "none")
                           : loss.transformedFields
                               .map(
                                 (field) =>
@@ -158,53 +178,55 @@ export function MigrationView(props: {
                               )
                               .join("; ")}
                       </dd>
-                      <dt>Warnings</dt>
-                      <dd>{loss.warnings.length === 0 ? "none" : loss.warnings.join("; ")}</dd>
+                      <dt>{t(locale, "Warnings")}</dt>
+                      <dd>
+                        {loss.warnings.length === 0 ? t(locale, "none") : loss.warnings.join("; ")}
+                      </dd>
                     </dl>
                   </div>
                 ))}
               </section>
             )}
             {driftRows.length === 0 ? null : (
-              <section className="drift-panel" aria-label="Source drift warnings">
-                <h2>Source drift</h2>
-                <p>Refresh the scan and create a fresh preview before deploying.</p>
+              <section className="drift-panel" aria-label={t(locale, "Source drift warnings")}>
+                <h2>{t(locale, "Source drift")}</h2>
+                <p>{t(locale, "Refresh the scan and create a fresh preview before deploying.")}</p>
                 <table>
                   <thead>
                     <tr>
-                      <th scope="col">Asset</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Expected hash</th>
-                      <th scope="col">Current hash</th>
+                      <th scope="col">{t(locale, "Asset")}</th>
+                      <th scope="col">{t(locale, "Status")}</th>
+                      <th scope="col">{t(locale, "Expected hash")}</th>
+                      <th scope="col">{t(locale, "Current hash")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {driftRows.map((row) => (
                       <tr key={row.assetId}>
                         <td>{assetLabel(row.assetId, assetLabels)}</td>
-                        <td>{driftStatusLabel(row.status)}</td>
+                        <td>{driftStatusLabel(locale, row.status)}</td>
                         <td>{row.expectedHash}</td>
-                        <td>{row.currentHash ?? "missing"}</td>
+                        <td>{row.currentHash ?? t(locale, "missing")}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </section>
             )}
-            <section className="hash-snapshot" aria-label="Migration hash snapshot">
-              <h2>Hash snapshot</h2>
+            <section className="hash-snapshot" aria-label={t(locale, "Migration hash snapshot")}>
+              <h2>{t(locale, "Hash snapshot")}</h2>
               <table>
                 <thead>
                   <tr>
-                    <th scope="col">Kind</th>
-                    <th scope="col">Item</th>
-                    <th scope="col">Expected hash</th>
+                    <th scope="col">{t(locale, "Kind")}</th>
+                    <th scope="col">{t(locale, "Item")}</th>
+                    <th scope="col">{t(locale, "Expected hash")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {migrationHashRowsForPreview(preview).map((row) => (
                     <tr key={`${row.kind}:${row.label}`}>
-                      <td>{hashRowKindLabel(row.kind)}</td>
+                      <td>{hashRowKindLabel(locale, row.kind)}</td>
                       <td>
                         {row.kind === "source" ? assetLabel(row.label, assetLabels) : row.label}
                       </td>
@@ -217,13 +239,13 @@ export function MigrationView(props: {
             {preview.changes.map((change) => (
               <section key={change.pathDisplay} className="planned-change">
                 <h2>
-                  {changeOperationLabel(change.operation)} {change.pathDisplay}
+                  {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
                 </h2>
                 <dl>
-                  <dt>Before</dt>
-                  <dd>{change.beforeHash ?? "absent"}</dd>
-                  <dt>After</dt>
-                  <dd>{change.afterHash ?? "absent"}</dd>
+                  <dt>{t(locale, "Before")}</dt>
+                  <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
+                  <dt>{t(locale, "After")}</dt>
+                  <dd>{change.afterHash ?? t(locale, "absent")}</dd>
                 </dl>
                 <pre>{change.diff}</pre>
               </section>
@@ -258,62 +280,66 @@ function resourceTypeLabel(resourceType: string): string {
   return titleizeIdentifier(resourceType);
 }
 
-function conflictPolicyLabel(policy: MigrationConflictPolicy): string {
+function conflictPolicyLabel(locale: DesktopLocale, policy: MigrationConflictPolicy): string {
   switch (policy) {
     case "replace":
-      return "Replace existing files";
+      return t(locale, "Replace existing files");
     case "fail":
-      return "Stop on conflicts";
+      return t(locale, "Stop on conflicts");
     case "merge":
-      return "Merge (not supported yet)";
+      return t(locale, "Merge (not supported yet)");
   }
 }
 
 function compatibilityLabel(
+  locale: DesktopLocale,
   compatibility: NonNullable<AppState["preview"]>["compatibility"],
 ): string {
   switch (compatibility) {
     case "full":
-      return "Full";
+      return t(locale, "Full");
     case "partial":
-      return "Partial";
+      return t(locale, "Partial");
   }
 }
 
 function hashRowKindLabel(
+  locale: DesktopLocale,
   kind: ReturnType<typeof migrationHashRowsForPreview>[number]["kind"],
 ): string {
   switch (kind) {
     case "source":
-      return "Source";
+      return t(locale, "Source");
     case "target":
-      return "Target";
+      return t(locale, "Target");
   }
 }
 
 function driftStatusLabel(
+  locale: DesktopLocale,
   status: ReturnType<typeof migrationSourceDriftRowsForState>[number]["status"],
 ): string {
   switch (status) {
     case "current":
-      return "Current";
+      return t(locale, "Current");
     case "changed":
-      return "Changed";
+      return t(locale, "Changed");
     case "missing":
-      return "Missing";
+      return t(locale, "Missing");
   }
 }
 
 function changeOperationLabel(
+  locale: DesktopLocale,
   operation: NonNullable<AppState["preview"]>["changes"][number]["operation"],
 ): string {
   switch (operation) {
     case "create":
-      return "Create file";
+      return t(locale, "Create file");
     case "replace":
-      return "Replace file";
+      return t(locale, "Replace file");
     case "delete":
-      return "Delete file";
+      return t(locale, "Delete file");
   }
 }
 
