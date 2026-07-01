@@ -18,6 +18,7 @@ const files = {
     "---\nname: release\ndescription: Ship releases\nreferences: [checklist.md]\n---\nFollow the checklist.\n",
   "/project/.mcp.json": `{
     "mcpServers": {
+      "empty": {},
       "docs": { "command": "npx", "args": ["docs", "--token=top-secret-canary"], "env": { "TOKEN": "top-secret-canary" } },
       "remote": { "type": "http", "url": "https://user:top-secret-canary@example.test/mcp" }
     }
@@ -86,6 +87,7 @@ describe("Claude Code adapter read path", () => {
     expect(assets.map(({ resource }) => resource.kind)).toEqual(
       expect.arrayContaining(["rule", "agent", "skill", "mcp", "mcp"]),
     );
+    expect(assets.map(({ locator }) => locator)).not.toContain("mcp:empty");
     expect(JSON.stringify(parsed)).not.toContain("top-secret-canary");
     expect(
       new Set(assets.map(({ canonicalSourcePath, locator }) => `${canonicalSourcePath}#${locator}`))

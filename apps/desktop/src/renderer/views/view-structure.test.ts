@@ -352,7 +352,8 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain('class="diagnostic-scope-label"');
     expect(selectedAssetHtml).toContain("Selected asset diagnostics");
     expect(selectedAssetHtml).toContain("Counts reflect only the inspected asset");
-    expect(selectedAssetHtml).toContain("Diagnostics for rule:AGENTS");
+    expect(selectedAssetHtml).toContain('class="asset-detail-diagnostics"');
+    expect(selectedAssetHtml).toContain("<h3>Diagnostics</h3>");
     expect(selectedAssetHtml).toContain("<td>Codex</td>");
     expect(selectedAssetHtml).toContain("<td>Rule</td>");
     expect(selectedAssetHtml).toContain("<dd>Codex</dd>");
@@ -458,7 +459,7 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("<td>0 errors</td>");
   });
 
-  it("groups assets by resource type in compact sections", () => {
+  it("renders asset resource types as compact quick-switching tabs", () => {
     const html = renderToStaticMarkup(
       createElement(AssetsView, {
         state: {
@@ -495,20 +496,26 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain('class="asset-groups"');
+    expect(html).toContain('class="asset-type-tabs"');
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('role="tab"');
+    expect(html).toContain('aria-controls="asset-panel-rule"');
+    expect(html).toContain('aria-controls="asset-panel-skill"');
+    expect(html).toContain('aria-controls="asset-panel-mcp"');
+    expect(html).toContain('role="tabpanel"');
+    expect(html).toContain('id="asset-panel-rule"');
     expect(html).toContain('class="asset-type-group" aria-label="Rule assets"');
-    expect(html).toContain('class="asset-type-group" aria-label="Skill assets"');
-    expect(html).toContain('class="asset-type-group" aria-label="Mcp assets"');
     expect(html).toContain('class="asset-row-compact"');
     expect(html).toContain('class="asset-row-meta"');
     expect(html).toContain('class="asset-status disabled"');
     expect(html).toContain("Disabled");
     expect(html).toContain("<h2>Rule assets</h2>");
-    expect(html).toContain("<h2>Skill assets</h2>");
-    expect(html).toContain("<h2>Mcp assets</h2>");
+    expect(html).toContain("<strong>Skill</strong><span>1 asset</span>");
+    expect(html).toContain("<strong>MCP</strong><span>1 asset</span>");
     expect(html.indexOf("<h2>Rule assets</h2>")).toBeLessThan(html.indexOf("rule:AGENTS"));
-    expect(html.indexOf("<h2>Skill assets</h2>")).toBeLessThan(html.indexOf("skill:release"));
-    expect(html.indexOf("<h2>Mcp assets</h2>")).toBeLessThan(html.indexOf("mcp:github"));
+    expect(html).not.toContain("skill:release");
+    expect(html).not.toContain("mcp:github");
+    expect(html).not.toContain('class="asset-groups"');
     expect(html).not.toContain("<th>Type</th>");
   });
 

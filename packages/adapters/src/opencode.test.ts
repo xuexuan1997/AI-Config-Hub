@@ -20,6 +20,7 @@ const files = {
       "planner": { "description": "Plans work", "prompt": "Plan carefully.", "model": "openai/gpt-5", "mode": "subagent" }
     },
     "mcp": {
+      "empty": {},
       "local": { "type": "local", "command": ["npx", "docs", "--api-key=top-secret-canary"], "environment": { "TOKEN": "top-secret-canary" } },
       "remote": { "type": "remote", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer top-secret-canary" } }
     }
@@ -68,6 +69,7 @@ describe("OpenCode adapter read path", () => {
       kind: "agent",
       data: { name: "planner", instructions: "Plan carefully." },
     });
+    expect(assets.map(({ locator }) => locator)).not.toContain("mcp:empty");
     expect(JSON.stringify(results)).not.toContain("top-secret-canary");
   });
 });

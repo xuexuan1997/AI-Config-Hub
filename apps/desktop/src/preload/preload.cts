@@ -17,6 +17,8 @@ const API_COMMAND_NAMES = [
   "assets.list",
   "assets.get",
   "assets.openSource",
+  "assets.disable",
+  "assets.enable",
   "effective.resolve",
   "diagnostics.list",
   "diagnostics.export",

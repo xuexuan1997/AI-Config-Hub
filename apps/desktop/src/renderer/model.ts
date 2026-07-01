@@ -128,6 +128,11 @@ export type AppAction =
   | { readonly type: "message"; readonly message: string | undefined }
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
+  | {
+      readonly type: "assetStatus";
+      readonly assetId: AppState["assets"][number]["id"];
+      readonly status: NonNullable<AppState["assets"][number]["status"]>;
+    }
   | { readonly type: "assetDetail"; readonly detail: CommandResponse<"assets.get"> }
   | { readonly type: "assetDetailClosed" }
   | { readonly type: "effective"; readonly effective: CommandResponse<"effective.resolve"> }
@@ -366,6 +371,31 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ? refreshed
           : clearAssetDetail(refreshed),
       );
+    }
+    case "assetStatus": {
+      const assets = state.assets.map((asset) =>
+        asset.id === action.assetId ? { ...asset, status: action.status } : asset,
+      );
+      const assetDetail =
+        state.assetDetail?.asset.id === action.assetId
+          ? {
+              ...state.assetDetail,
+              asset: { ...state.assetDetail.asset, status: action.status },
+            }
+          : state.assetDetail;
+      const refreshed = {
+        ...state,
+        assets,
+        ...(assetDetail === undefined ? {} : { assetDetail }),
+        migration: {
+          ...state.migration,
+          sourceAssetIds: migrationSourceAssetIds(state, assets),
+        },
+      };
+      return state.migration.sourceAssetIds.includes(action.assetId) ||
+        state.preview?.sourceHashes[action.assetId] !== undefined
+        ? clearPreview(refreshed)
+        : refreshed;
     }
     case "assetDetail": {
       const { effective: discardedEffective, ...withoutEffective } = state;

@@ -36,6 +36,10 @@ export function withoutKeys(
   );
 }
 
+export function isEmptyRecord(value: Readonly<Record<string, unknown>>): boolean {
+  return Object.keys(value).length === 0;
+}
+
 function inferredName(candidate: DiscoveredResource): string {
   const file = basename(candidate.sourcePath);
   if (file === "SKILL.md") return basename(dirname(candidate.sourcePath));
@@ -203,17 +207,23 @@ export function parseMcpJson(
     const servers = requireObject(document["mcpServers"], "mcpServers");
     const assets = Object.entries(servers)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, config]) => ({
-        toolId: candidate.toolId,
-        canonicalSourcePath: candidate.sourcePath,
-        locator: `mcp:${name}`,
-        scope: candidate.scope,
-        sourceFormat: candidate.sourceFormat,
-        sourceContentHash,
-        resource: mcpResource(name, config),
-        references: [],
-        extensions: {},
-      }));
+      .flatMap(([name, config]) => {
+        const mcpConfig = requireObject(config, `MCP server ${name}`);
+        if (isEmptyRecord(mcpConfig)) return [];
+        return [
+          {
+            toolId: candidate.toolId,
+            canonicalSourcePath: candidate.sourcePath,
+            locator: `mcp:${name}`,
+            scope: candidate.scope,
+            sourceFormat: candidate.sourceFormat,
+            sourceContentHash,
+            resource: mcpResource(name, mcpConfig),
+            references: [],
+            extensions: {},
+          },
+        ];
+      });
     return { status: "parsed", assets, diagnostics: [] };
   } catch (error) {
     return rejectedParse(candidate, error);

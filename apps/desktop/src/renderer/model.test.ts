@@ -244,6 +244,83 @@ describe("renderer project selection state", () => {
     ]);
   });
 
+  it("updates an inspected asset status without requiring a full asset refresh", () => {
+    const withProject = reducer(initialState, {
+      type: "project",
+      root: "/home/user/workspace",
+    });
+    const withAssets = reducer(withProject, {
+      type: "assets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const withPreview = reducer(withAssets, {
+      type: "preview",
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan:status-test"),
+        planHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        sourceHashes: Object.fromEntries([
+          [AssetIdSchema.parse("asset-1"), ContentHashSchema.parse(`sha256:${"a".repeat(64)}`)],
+        ]),
+        targetHashes: {},
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [],
+        requiredConfirmations: [],
+        warnings: [],
+        expiresAt: "2026-06-28T08:10:00.000Z",
+      },
+    });
+    const withDetail = reducer(withPreview, {
+      type: "assetDetail",
+      detail: {
+        asset: {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeId: ScopeIdSchema.parse("/home/user/workspace"),
+          logicalKey: "AGENTS.md",
+          status: "enabled",
+        },
+        source: {
+          pathDisplay: "/home/user/workspace/AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          observedAt: "2026-06-28T08:00:00.000Z",
+        },
+        redactions: [],
+      },
+    });
+
+    const disabled = reducer(withDetail, {
+      type: "assetStatus",
+      assetId: AssetIdSchema.parse("asset-1"),
+      status: "disabled",
+    });
+    const enabled = reducer(disabled, {
+      type: "assetStatus",
+      assetId: AssetIdSchema.parse("asset-1"),
+      status: "enabled",
+    });
+
+    expect(disabled.assets[0]?.status).toBe("disabled");
+    expect(disabled.assetDetail?.asset.status).toBe("disabled");
+    expect(disabled.migration.sourceAssetIds).toEqual([]);
+    expect(disabled.preview).toBeUndefined();
+    expect(enabled.assets[0]?.status).toBe("enabled");
+    expect(enabled.assetDetail?.asset.status).toBe("enabled");
+    expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
+  });
+
   it("uses the newest succeeded deployment history item for rollback", () => {
     expect(rollbackRequestForState(initialState)).toBeUndefined();
 

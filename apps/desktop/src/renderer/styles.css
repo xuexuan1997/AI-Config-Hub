@@ -27,6 +27,13 @@
     sans-serif;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--app-bg);
   color: var(--text);
@@ -83,12 +90,16 @@ select {
   color: var(--text);
   display: grid;
   grid-template-columns: 260px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
   background: var(--sidebar-bg);
   border-right: 1px solid var(--top-border);
+  min-height: 0;
+  overflow: auto;
   padding: 1.5rem;
 }
 
@@ -115,6 +126,9 @@ nav button.active {
 }
 
 main {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
   padding: 1.5rem;
 }
 
@@ -258,10 +272,45 @@ th {
   text-align: left;
 }
 
-.asset-groups {
+.asset-type-tabs {
   display: grid;
   gap: 0.85rem;
   margin-top: 1rem;
+}
+
+.asset-tab-list {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.asset-type-tab {
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--text);
+  display: inline-grid;
+  gap: 0.1rem;
+  min-width: 110px;
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+}
+
+.asset-type-tab[aria-selected="true"] {
+  background: var(--active-bg);
+  border-color: var(--button-bg);
+  color: var(--strong-text);
+}
+
+.asset-type-tab span {
+  font-size: 0.78rem;
+}
+
+.asset-type-panel,
+.asset-groups {
+  display: grid;
+  gap: 0.85rem;
 }
 
 .asset-type-group {
@@ -428,6 +477,16 @@ pre {
 
 .asset-detail-scroll pre {
   max-height: 360px;
+}
+
+.asset-detail-diagnostics {
+  border-top: 1px solid var(--panel-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.asset-detail-diagnostics h3 {
+  margin-top: 0;
 }
 
 .diagnostic-list {

@@ -65,6 +65,16 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByRole("dialog", { name: "Asset detail" })).toContainText(
         workspace.projectRoot,
       );
+      await page
+        .getByRole("dialog", { name: "Asset detail" })
+        .getByRole("button", { name: "Disable asset" })
+        .click();
+      await expect(page.getByRole("dialog", { name: "Asset detail" })).toContainText("Disabled");
+      await page
+        .getByRole("dialog", { name: "Asset detail" })
+        .getByRole("button", { name: "Enable asset" })
+        .click();
+      await expect(page.getByRole("dialog", { name: "Asset detail" })).toContainText("Enabled");
       await page.getByRole("button", { name: "Close" }).click();
       await expect(page.getByRole("dialog", { name: "Asset detail" })).toBeHidden();
 

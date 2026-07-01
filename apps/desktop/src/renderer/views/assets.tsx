@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+
 import type { AppState } from "../model.js";
 
 export function AssetsView(props: {
@@ -18,7 +20,27 @@ export function AssetsView(props: {
   const effective = props.state.effective;
   const diagnosticScope = diagnosticScopeFor(detail);
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
-  const assetGroups = assetGroupsByResourceType(props.state.assets);
+  const assetGroups = useMemo(
+    () => assetGroupsByResourceType(props.state.assets),
+    [props.state.assets],
+  );
+  const firstResourceType = assetGroups[0]?.resourceType;
+  const [selectedResourceType, setSelectedResourceType] = useState(firstResourceType);
+  const activeResourceType =
+    selectedResourceType !== undefined &&
+    assetGroups.some((group) => group.resourceType === selectedResourceType)
+      ? selectedResourceType
+      : firstResourceType;
+
+  useEffect(() => {
+    if (
+      firstResourceType !== undefined &&
+      !assetGroups.some((group) => group.resourceType === selectedResourceType)
+    ) {
+      setSelectedResourceType(firstResourceType);
+    }
+  }, [assetGroups, firstResourceType, selectedResourceType]);
+
   return (
     <>
       <h1>Assets</h1>
@@ -43,99 +65,34 @@ export function AssetsView(props: {
       {assetGroups.length === 0 ? (
         <p className="empty-state">No assets indexed yet.</p>
       ) : (
-        <div className="asset-groups">
-          {assetGroups.map((group) => {
-            const groupLabel = resourceTypeLabel(group.resourceType);
-            return (
-              <section
-                key={group.resourceType}
-                className="asset-type-group"
-                aria-label={`${groupLabel} assets`}
-              >
-                <header className="asset-type-heading">
-                  <h2>{groupLabel} assets</h2>
-                  <span>{formatAssetCount(group.assets.length)}</span>
-                </header>
-                <table className="asset-table-compact">
-                  <thead>
-                    <tr>
-                      <th>Logical key</th>
-                      <th>Tool</th>
-                      <th>Resource</th>
-                      <th>Diagnostics</th>
-                      <th>Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.assets.map((asset) => (
-                      <tr key={asset.id} className="asset-row-compact">
-                        <td className="asset-primary-cell">
-                          <strong>{asset.logicalKey}</strong>
-                          <span className="asset-row-meta">
-                            {scopeKindLabel(asset.scopeKind)}
-                            <AssetStatusBadge status={assetStatusFor(asset)} />
-                          </span>
-                        </td>
-                        <td>{toolLabel(asset.toolKey)}</td>
-                        <td>{resourceTypeLabel(asset.resourceType)}</td>
-                        <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
-                        <td>
-                          <button
-                            className="asset-inspect-button"
-                            type="button"
-                            onClick={() => props.onInspect(asset.id)}
-                          >
-                            Inspect
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
-            );
-          })}
-        </div>
+        <AssetTypeTabs
+          activeResourceType={activeResourceType}
+          groups={assetGroups}
+          onInspect={props.onInspect}
+          onSelectResourceType={setSelectedResourceType}
+        />
       )}
       {detail === undefined ? null : (
         <AssetDetailDialog
           detail={detail}
           effective={effective}
+          diagnostics={props.state.diagnostics}
           assetLabels={assetLabels}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
           onRescanAfterEdit={props.onRescanAfterEdit}
           onLoadEffective={props.onLoadEffective}
           onCloseInspect={props.onCloseInspect}
+          onLocateDiagnostic={props.onLocateDiagnostic}
         />
       )}
-      {props.state.diagnostics.length === 0 ? null : (
+      {detail !== undefined || props.state.diagnostics.length === 0 ? null : (
         <section className="detail-panel" aria-label={diagnosticScope.panelLabel}>
           <h2>{diagnosticScope.panelHeading}</h2>
-          <ul className="diagnostic-list">
-            {props.state.diagnostics.map((diagnostic) => (
-              <li key={diagnostic.id}>
-                <strong>{diagnosticLabel(diagnostic)}</strong>
-                <span>{diagnostic.message}</span>
-                {diagnostic.location === undefined ? null : (
-                  <small>
-                    {diagnostic.location.pathDisplay}
-                    {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
-                    {diagnostic.location.column === undefined
-                      ? ""
-                      : `:${diagnostic.location.column}`}
-                  </small>
-                )}
-                <small>{diagnostic.suggestedAction}</small>
-                {diagnostic.assetId === undefined ? null : (
-                  <LocateDiagnosticButton
-                    assetId={diagnostic.assetId}
-                    onLocate={props.onLocateDiagnostic}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
+          <DiagnosticList
+            diagnostics={props.state.diagnostics}
+            onLocateDiagnostic={props.onLocateDiagnostic}
+          />
         </section>
       )}
     </>
@@ -158,7 +115,144 @@ function assetGroupsByResourceType(assets: readonly AssetSummary[]) {
   return Array.from(groups, ([resourceType, groupAssets]) => ({
     resourceType,
     assets: groupAssets,
-  }));
+  })).sort(compareAssetGroups);
+}
+
+function compareAssetGroups(
+  left: { readonly resourceType: string },
+  right: { readonly resourceType: string },
+): number {
+  const leftPriority = resourceTypePriority(left.resourceType);
+  const rightPriority = resourceTypePriority(right.resourceType);
+  return leftPriority === rightPriority
+    ? left.resourceType.localeCompare(right.resourceType)
+    : leftPriority - rightPriority;
+}
+
+function resourceTypePriority(resourceType: string): number {
+  switch (resourceType) {
+    case "rule":
+      return 0;
+    case "agent":
+      return 1;
+    case "skill":
+      return 2;
+    case "mcp":
+      return 3;
+    default:
+      return 10;
+  }
+}
+
+function AssetTypeTabs(props: {
+  readonly groups: readonly { readonly resourceType: string; readonly assets: AssetSummary[] }[];
+  readonly activeResourceType: string | undefined;
+  readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
+  readonly onSelectResourceType: (resourceType: string) => void;
+}) {
+  const activeGroup =
+    props.groups.find((group) => group.resourceType === props.activeResourceType) ??
+    props.groups[0];
+  if (activeGroup === undefined) return null;
+
+  const activePanelId = assetTypePanelId(activeGroup.resourceType);
+  return (
+    <div className="asset-type-tabs">
+      <div className="asset-tab-list" role="tablist" aria-label="Asset resource types">
+        {props.groups.map((group) => {
+          const selected = group.resourceType === activeGroup.resourceType;
+          const panelId = assetTypePanelId(group.resourceType);
+          const tabId = assetTypeTabId(group.resourceType);
+          return (
+            <button
+              aria-controls={panelId}
+              aria-selected={selected}
+              className="asset-type-tab"
+              id={tabId}
+              key={group.resourceType}
+              role="tab"
+              type="button"
+              onClick={() => props.onSelectResourceType(group.resourceType)}
+            >
+              <strong>{resourceTypeLabel(group.resourceType)}</strong>
+              <span>{formatAssetCount(group.assets.length)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <section
+        aria-labelledby={assetTypeTabId(activeGroup.resourceType)}
+        className="asset-type-panel"
+        id={activePanelId}
+        role="tabpanel"
+      >
+        <AssetTypeTable group={activeGroup} onInspect={props.onInspect} />
+      </section>
+    </div>
+  );
+}
+
+function AssetTypeTable(props: {
+  readonly group: { readonly resourceType: string; readonly assets: AssetSummary[] };
+  readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
+}) {
+  const groupLabel = resourceTypeLabel(props.group.resourceType);
+  return (
+    <section className="asset-type-group" aria-label={`${groupLabel} assets`}>
+      <header className="asset-type-heading">
+        <h2>{groupLabel} assets</h2>
+        <span>{formatAssetCount(props.group.assets.length)}</span>
+      </header>
+      <table className="asset-table-compact">
+        <thead>
+          <tr>
+            <th>Logical key</th>
+            <th>Tool</th>
+            <th>Resource</th>
+            <th>Diagnostics</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.group.assets.map((asset) => (
+            <tr key={asset.id} className="asset-row-compact">
+              <td className="asset-primary-cell">
+                <strong>{asset.logicalKey}</strong>
+                <span className="asset-row-meta">
+                  {scopeKindLabel(asset.scopeKind)}
+                  <AssetStatusBadge status={assetStatusFor(asset)} />
+                </span>
+              </td>
+              <td>{toolLabel(asset.toolKey)}</td>
+              <td>{resourceTypeLabel(asset.resourceType)}</td>
+              <td>{formatDiagnosticCounts(asset.diagnosticCounts)}</td>
+              <td>
+                <button
+                  className="asset-inspect-button"
+                  type="button"
+                  onClick={() => props.onInspect(asset.id)}
+                >
+                  Inspect
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function assetTypePanelId(resourceType: string): string {
+  return `asset-panel-${domIdentifier(resourceType)}`;
+}
+
+function assetTypeTabId(resourceType: string): string {
+  return `asset-tab-${domIdentifier(resourceType)}`;
+}
+
+function domIdentifier(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
 }
 
 function formatAssetCount(count: number): string {
@@ -229,6 +323,7 @@ function toolLabel(toolKey: string): string {
 }
 
 function resourceTypeLabel(resourceType: string): string {
+  if (resourceType.toLowerCase() === "mcp") return "MCP";
   return titleizeIdentifier(resourceType);
 }
 
@@ -337,6 +432,36 @@ function LocateDiagnosticButton(props: {
   );
 }
 
+function DiagnosticList(props: {
+  readonly diagnostics: AppState["diagnostics"];
+  readonly onLocateDiagnostic?: (assetId: AppState["assets"][number]["id"]) => void;
+}) {
+  return (
+    <ul className="diagnostic-list">
+      {props.diagnostics.map((diagnostic) => (
+        <li key={diagnostic.id}>
+          <strong>{diagnosticLabel(diagnostic)}</strong>
+          <span>{diagnostic.message}</span>
+          {diagnostic.location === undefined ? null : (
+            <small>
+              {diagnostic.location.pathDisplay}
+              {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
+              {diagnostic.location.column === undefined ? "" : `:${diagnostic.location.column}`}
+            </small>
+          )}
+          <small>{diagnostic.suggestedAction}</small>
+          {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
+            <LocateDiagnosticButton
+              assetId={diagnostic.assetId}
+              onLocate={props.onLocateDiagnostic}
+            />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function AssetStatusBadge(props: { readonly status: AssetStatus }) {
   return <span className={`asset-status ${props.status}`}>{assetStatusLabel(props.status)}</span>;
 }
@@ -344,6 +469,7 @@ function AssetStatusBadge(props: { readonly status: AssetStatus }) {
 function AssetDetailDialog(props: {
   readonly detail: NonNullable<AppState["assetDetail"]>;
   readonly effective: AppState["effective"];
+  readonly diagnostics: AppState["diagnostics"];
   readonly assetLabels: ReadonlyMap<string, string>;
   readonly onOpenSource: () => void;
   readonly onToggleAssetStatus: (
@@ -353,6 +479,7 @@ function AssetDetailDialog(props: {
   readonly onRescanAfterEdit: () => void;
   readonly onLoadEffective: () => void;
   readonly onCloseInspect: () => void;
+  readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   const detail = props.detail;
   const effective = props.effective;
@@ -407,6 +534,17 @@ function AssetDetailDialog(props: {
             <dt>Observed</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
+          <section className="asset-detail-diagnostics">
+            <h3>Diagnostics</h3>
+            {props.diagnostics.length === 0 ? (
+              <p>No diagnostics for this asset.</p>
+            ) : (
+              <DiagnosticList
+                diagnostics={props.diagnostics}
+                onLocateDiagnostic={props.onLocateDiagnostic}
+              />
+            )}
+          </section>
           {detail.asset.references === undefined || detail.asset.references.length === 0 ? null : (
             <>
               <h3>References</h3>

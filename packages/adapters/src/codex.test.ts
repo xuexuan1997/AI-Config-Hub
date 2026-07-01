@@ -85,4 +85,38 @@ describe("Codex adapter read path", () => {
     expect(JSON.stringify(results)).toContain("$DOCS_TOKEN");
     expect(JSON.stringify(results)).toContain("$REMOTE_TOKEN");
   });
+
+  it("skips empty MCP server dictionaries instead of rejecting the config", async () => {
+    const read = memoryReadApi({
+      "/project/.codex/config.toml": `
+[mcp_servers.empty]
+
+[mcp_servers.docs]
+command = "npx"
+args = ["docs"]
+`,
+    });
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const discovery = await adapter.discover({
+      tool,
+      allowedRoots: tool.configRoots,
+      read,
+      signal: neverCancelled,
+    });
+    const candidate = discovery.candidates.find(
+      ({ sourcePath }) => sourcePath === "/project/.codex/config.toml",
+    );
+    if (candidate === undefined) throw new Error("Expected Codex config candidate");
+
+    const result = await adapter.parse({
+      tool,
+      candidate,
+      snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      signal: neverCancelled,
+    });
+
+    expect(result.status).toBe("parsed");
+    expect(result.assets.map(({ locator }) => locator)).toEqual(["mcp:docs"]);
+    expect(result.diagnostics).toEqual([]);
+  });
 });

@@ -22,7 +22,6 @@ export function AppShell(props: {
 
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0, left: 0 });
-    window.scrollTo({ top: 0, left: 0 });
   }, [props.state.route]);
 
   return (

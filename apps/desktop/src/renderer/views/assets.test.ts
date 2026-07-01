@@ -1,13 +1,18 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssetIdSchema, ContentHashSchema, ScopeIdSchema } from "@ai-config-hub/shared";
+import {
+  AssetIdSchema,
+  ContentHashSchema,
+  DiagnosticIdSchema,
+  ScopeIdSchema,
+} from "@ai-config-hub/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import { initialState, reducer, type AppState } from "../model.js";
 import { AssetsView } from "./assets.js";
 
 describe("AssetsView", () => {
-  it("groups assets by resource type in compact sections", () => {
+  it("renders asset resource types as quick-switching tabs", () => {
     const html = renderAssets({
       assets: [
         assetSummaryFixture(
@@ -43,19 +48,47 @@ describe("AssetsView", () => {
       ],
     });
 
-    expect(html).toContain('class="asset-groups"');
-    expect(html).toContain('class="asset-type-group" aria-label="Rule assets"');
-    expect(html).toContain('class="asset-type-group" aria-label="Skill assets"');
-    expect(html).toContain('class="asset-type-group" aria-label="Mcp assets"');
+    expect(html).toContain('class="asset-type-tabs"');
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('role="tab"');
+    expect(html).toContain('aria-controls="asset-panel-rule"');
+    expect(html).toContain('aria-controls="asset-panel-skill"');
+    expect(html).toContain('aria-controls="asset-panel-mcp"');
+    expect(html).toContain('role="tabpanel"');
+    expect(html).toContain('id="asset-panel-rule"');
     expect(html).toContain('class="asset-row-compact"');
     expect(html).toContain('class="asset-row-meta"');
-    expect(html).toContain("<h2>Rule assets</h2>");
-    expect(html).toContain("<h2>Skill assets</h2>");
-    expect(html).toContain("<h2>Mcp assets</h2>");
-    expect(html.indexOf("<h2>Rule assets</h2>")).toBeLessThan(html.indexOf("rule:AGENTS"));
-    expect(html.indexOf("<h2>Skill assets</h2>")).toBeLessThan(html.indexOf("skill:release"));
-    expect(html.indexOf("<h2>Mcp assets</h2>")).toBeLessThan(html.indexOf("mcp:github"));
+    expect(html).toContain("Rule");
+    expect(html).toContain("Skill");
+    expect(html).toContain("MCP");
+    expect(html).toContain("rule:AGENTS");
+    expect(html).not.toContain("skill:release");
+    expect(html).not.toContain("mcp:github");
+    expect(html).not.toContain('class="asset-groups"');
     expect(html).not.toContain("<th>Type</th>");
+  });
+
+  it("opens the rule tab first when assets arrive in another order", () => {
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture(
+          "asset-skill",
+          "skill:release",
+          { resourceType: "skill" },
+          {
+            info: 0,
+            warning: 0,
+            error: 0,
+          },
+        ),
+        assetSummaryFixture("asset-rule", "rule:AGENTS", { resourceType: "rule" }),
+      ],
+    });
+
+    expect(html).toContain('aria-controls="asset-panel-rule" aria-selected="true"');
+    expect(html).toContain("<h2>Rule assets</h2>");
+    expect(html).toContain("rule:AGENTS");
+    expect(html).not.toContain("skill:release");
   });
 
   it("renders inspected asset detail as a modal dialog instead of an inline panel", () => {
@@ -89,6 +122,33 @@ describe("AssetsView", () => {
 
     expect(closed.assetDetail).toBeUndefined();
     expect(closed.effective).toBeUndefined();
+  });
+
+  it("shows selected asset diagnostics inside the asset detail dialog", () => {
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-1"),
+          code: "PARTIAL_CONVERSION",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-1"),
+          message: "One field cannot be represented by the target tool.",
+          suggestedAction: "Review the generated output before deployment.",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+    });
+
+    expect(html).toContain('class="asset-detail-diagnostics"');
+    expect(html).toContain("<h3>Diagnostics</h3>");
+    expect(html).toContain("<strong>Warning: Partial conversion</strong>");
+    expect(html).toContain("One field cannot be represented by the target tool.");
+    expect(html).not.toContain(
+      '<section class="detail-panel" aria-label="Diagnostics for rule:AGENTS">',
+    );
   });
 });
 

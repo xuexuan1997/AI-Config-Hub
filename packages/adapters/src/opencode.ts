@@ -33,6 +33,7 @@ import {
 } from "./discovery.js";
 import {
   parseMarkdownAsset,
+  isEmptyRecord,
   rejectedParse,
   stringList,
   stringValue,
@@ -106,12 +107,13 @@ function parseConfigMcp(context: ParseContext): ParseResult {
     const servers = requireObject(document["mcp"], "mcp");
     const assets = Object.entries(servers)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, value]) => {
+      .flatMap(([name, value]) => {
         const config = requireObject(value, `MCP server ${name}`);
+        if (isEmptyRecord(config)) return [];
         const command = stringList(config["command"]);
         const resource =
           command.length > 0 ? localMcp(name, config, command) : remoteMcp(name, config);
-        return asset(context, `mcp:${name}`, resource);
+        return [asset(context, `mcp:${name}`, resource)];
       });
     return { status: "parsed", assets, diagnostics: [] };
   } catch (error) {

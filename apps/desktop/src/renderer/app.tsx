@@ -204,9 +204,15 @@ export function App(props: { readonly api: DesktopApi }) {
         return;
       }
 
-      dispatch({ type: "assets", assets: await refreshAssets(props.api) });
+      const statusAction = {
+        type: "assetStatus",
+        assetId: response.data.assetId,
+        status: response.data.status,
+      } as const;
+      dispatch(statusAction);
       const detail = await refreshAssetDetail(props.api, assetId);
       if (detail !== undefined) dispatch({ type: "assetDetail", detail });
+      dispatch(statusAction);
       const diagnostics = await refreshDiagnostics(props.api, assetId);
       dispatch({
         type: "diagnostics",

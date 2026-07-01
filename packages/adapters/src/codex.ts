@@ -24,6 +24,7 @@ import { conversionCapabilities } from "./conversion.js";
 import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
 import {
   parseMarkdownAsset,
+  isEmptyRecord,
   rejectedParse,
   stringList,
   stringValue,
@@ -103,8 +104,9 @@ function parseMcp(context: ParseContext): ParseResult {
     const servers = requireObject(document["mcp_servers"], "mcp_servers");
     const assets = Object.entries(servers)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, value]) => {
+      .flatMap(([name, value]) => {
         const config = requireObject(value, `MCP server ${name}`);
+        if (isEmptyRecord(config)) return [];
         const command = stringValue(config["command"]);
         const url = stringValue(config["url"]);
         const resource =
@@ -127,7 +129,7 @@ function parseMcp(context: ParseContext): ParseResult {
                 },
               })
             : remoteMcp(name, config, url);
-        return baseAsset(context, `mcp:${name}`, resource);
+        return [baseAsset(context, `mcp:${name}`, resource)];
       });
     return { status: "parsed", assets, diagnostics: [] };
   } catch (error) {
