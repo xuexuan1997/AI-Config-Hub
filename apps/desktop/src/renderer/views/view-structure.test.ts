@@ -16,7 +16,6 @@ import { AssetsView } from "./assets.js";
 import { DeploymentView } from "./deployment.js";
 import { HistoryView } from "./history.js";
 import { MigrationView } from "./migration.js";
-import { OverviewView } from "./overview.js";
 import { SettingsView } from "./settings.js";
 
 describe("desktop renderer view structure", () => {
@@ -25,15 +24,19 @@ describe("desktop renderer view structure", () => {
       createElement(AppShell, {
         state: { ...initialState, projectRoot: "/Users/xuexuan/Desktop/project/AI-Config-Hub" },
         onRoute: vi.fn(),
-        onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
         children: createElement("span", null, "Workspace"),
       }),
     );
 
     expect(html).toContain(">Asset Review</button>");
     expect(html).toContain(">Asset Migration</button>");
-    expect(html).not.toContain(">Deployment</button>");
+    expect(html).toContain(">Deployment</button>");
+    expect(html).toContain(">Settings</button>");
+    expect(html).not.toContain(">Overview</button>");
+    expect(html).not.toContain(">History</button>");
+    expect(html).not.toContain('class="sidebar-foot"');
+    expect(html).not.toContain("Navigation model");
+    expect(html).not.toContain("Review and migration are sibling workflows.");
     expect(html).not.toContain('class="project-topbar-main"');
     expect(html).not.toContain('class="project-path-editor"');
     expect(html).not.toContain("Selected project folder");
@@ -44,17 +47,13 @@ describe("desktop renderer view structure", () => {
     const html = renderToStaticMarkup(
       createElement(AssetsView, {
         state: { ...initialState, projectRoot },
-        onRefresh: vi.fn(),
         onInspect: vi.fn(),
         onLoadEffective: vi.fn(),
         onOpenSource: vi.fn(),
         onToggleAssetStatus: vi.fn(),
-        onRescanAfterEdit: vi.fn(),
         onCloseInspect: vi.fn(),
         onLocateDiagnostic: vi.fn(),
         onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
-        onScan: vi.fn(),
       }),
     );
 
@@ -63,22 +62,24 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Current project");
     expect(html).toContain(`title="${projectRoot}"`);
     expect(html).toContain("Choose project");
-    expect(html).toContain("Scan current project");
+    expect(html).toContain("Scans automatically after project selection.");
+    expect(html).not.toContain("Refresh assets");
+    expect(html).not.toContain("Scan current project");
+    expect(html).not.toContain("Manual path fallback");
+    expect(html).not.toContain("Use typed path");
   });
 
   it("binds the scroll container identity to the active route", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {
-        state: { ...initialState, route: "history" },
+        state: { ...initialState, route: "migration" },
         onRoute: vi.fn(),
-        onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
-        children: createElement("span", null, "History"),
+        children: createElement("span", null, "Migration"),
       }),
     );
 
-    expect(html).toContain('<main data-route="history">');
-    expect(html).toContain('<section class="workspace" data-route="history">');
+    expect(html).toContain('<main data-route="migration">');
+    expect(html).toContain('<section class="workspace" data-route="migration">');
   });
 
   it("adds settings to desktop navigation", () => {
@@ -86,8 +87,6 @@ describe("desktop renderer view structure", () => {
       createElement(AppShell, {
         state: { ...initialState, route: "settings" },
         onRoute: vi.fn(),
-        onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
         children: createElement("span", null, "Settings"),
       }),
     );
@@ -108,8 +107,6 @@ describe("desktop renderer view structure", () => {
           },
         },
         onRoute: vi.fn(),
-        onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
         children: createElement("span", null, "Workspace"),
       }),
     );
@@ -164,13 +161,8 @@ describe("desktop renderer view structure", () => {
       createElement(AppShell, {
         state: zhState,
         onRoute: vi.fn(),
-        onSelectProject: vi.fn(),
-        onUseProjectPath: vi.fn(),
         children: createElement("span", null, "工作区"),
       }),
-    );
-    const overviewHtml = renderToStaticMarkup(
-      createElement(OverviewView, { state: zhState, onScan: vi.fn() }),
     );
     const settingsHtml = renderToStaticMarkup(
       createElement(SettingsView, {
@@ -181,13 +173,13 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(shellHtml).toContain(">总览</button>");
     expect(shellHtml).toContain(">资产审查</button>");
     expect(shellHtml).toContain(">资产迁移</button>");
+    expect(shellHtml).not.toContain(">总览</button>");
+    expect(shellHtml).not.toContain(">历史</button>");
     expect(shellHtml).toContain("配置资产工作台");
-    expect(shellHtml).toContain("导航关系");
-    expect(overviewHtml).toContain("配置管理总览");
-    expect(overviewHtml).toContain("开始扫描");
+    expect(shellHtml).not.toContain('class="sidebar-foot"');
+    expect(shellHtml).not.toContain("导航关系");
     expect(settingsHtml).toContain("<h1>设置</h1>");
     expect(settingsHtml).toContain('value="zh-CN" selected="">简体中文</option>');
     expect(settingsHtml).toContain("修订版本 3");
@@ -222,7 +214,6 @@ describe("desktop renderer view structure", () => {
         onPreview: vi.fn(),
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
-        onTargetProject: vi.fn(),
         onConflictPolicy: vi.fn(),
       }),
     );
@@ -233,7 +224,6 @@ describe("desktop renderer view structure", () => {
         onConfirmRequirement: vi.fn(),
         onDeploy: vi.fn(),
         onRollback: vi.fn(),
-        onReviewHistory: vi.fn(),
       }),
     );
     const historyHtml = renderToStaticMarkup(
@@ -245,7 +235,7 @@ describe("desktop renderer view structure", () => {
     );
 
     expect(assetsHtml).toContain("<h1>资产审查</h1>");
-    expect(assetsHtml).toContain("刷新资产");
+    expect(assetsHtml).toContain("选择项目后自动扫描。");
     expect(assetsHtml).toContain("尚未索引资产。");
     expect(migrationHtml).toContain("<h1>资产迁移</h1>");
     expect(migrationHtml).toContain("目标工具");
@@ -281,7 +271,6 @@ describe("desktop renderer view structure", () => {
         onConfirmRequirement: vi.fn(),
         onDeploy: vi.fn(),
         onRollback: vi.fn(),
-        onReviewHistory: vi.fn(),
       }),
     );
 
@@ -310,7 +299,6 @@ describe("desktop renderer view structure", () => {
         onConfirmRequirement: vi.fn(),
         onDeploy: vi.fn(),
         onRollback: vi.fn(),
-        onReviewHistory: vi.fn(),
       }),
     );
 
@@ -709,13 +697,12 @@ describe("desktop renderer view structure", () => {
             sourceProjectRoot: "/workspace/source",
             targetScopeId: "/workspace/target",
           },
-          assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          migrationSourceAssets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
           preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
         },
         onPreview: vi.fn(),
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
-        onTargetProject: vi.fn(),
         onConflictPolicy: vi.fn(),
       }),
     );
@@ -728,8 +715,10 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Target project");
     expect(html).toContain("/workspace/source");
     expect(html).toContain("/workspace/target");
-    expect(html).toContain("Scan source");
-    expect(html).toContain("Swap source and target");
+    expect(html).toContain('aria-label="Swap source and target"');
+    expect(html).toContain(">⇄</button>");
+    expect(html).not.toContain("Scan source");
+    expect(html).not.toContain('type="text"');
     expect(html).toContain('class="migration-comparison-body"');
     expect(html).toContain('class="migration-source-panel panel"');
     expect(html).toContain('class="migration-difference-summary"');
@@ -737,6 +726,9 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Added to target");
     expect(html).toContain("Overwritten in target");
     expect(html).toContain("Rule");
+    expect(html).toContain("<strong>Agent</strong><span>0 differences</span>");
+    expect(html).toContain("<strong>Skill</strong><span>0 differences</span>");
+    expect(html).toContain("<strong>MCP</strong><span>0 differences</span>");
     expect(html).toContain("1 difference");
     expect(html).toContain("rule:AGENTS");
     expect(html).toContain(".cursor/rules/agents.mdc");
@@ -840,13 +832,12 @@ describe("desktop renderer view structure", () => {
           settings: zhSettings,
           projectRoot: "/workspace/source",
           migration: { ...initialState.migration, targetScopeId: "/workspace/target" },
-          assets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          migrationSourceAssets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
           preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
         },
         onPreview: vi.fn(),
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
-        onTargetProject: vi.fn(),
         onConflictPolicy: vi.fn(),
       }),
     );
@@ -869,7 +860,6 @@ describe("desktop renderer view structure", () => {
         onConfirmRequirement: vi.fn(),
         onDeploy: vi.fn(),
         onRollback: vi.fn(),
-        onReviewHistory: vi.fn(),
       }),
     );
     const historyHtml = renderToStaticMarkup(

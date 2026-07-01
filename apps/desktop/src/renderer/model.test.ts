@@ -27,10 +27,11 @@ import {
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
   scanActionForTaskEvent,
+  type AppState,
 } from "./model.js";
 
 describe("renderer project selection state", () => {
-  it("turns missing Linux file chooser errors into a manual path fallback message", () => {
+  it("turns missing file chooser errors into a retryable picker message", () => {
     const message = formatUiError(
       new Error("No such interface “org.freedesktop.portal.FileChooser” on object"),
       "Select project",
@@ -38,8 +39,9 @@ describe("renderer project selection state", () => {
 
     expect(message).toContain("Select project failed");
     expect(message).toContain("system file chooser is unavailable");
-    expect(message).toContain("paste the project folder path");
-    expect(message).toContain("Use typed path");
+    expect(message).toContain("check desktop file picker permissions");
+    expect(message).not.toContain("Manual path fallback");
+    expect(message).not.toContain("Use typed path");
   });
 
   it("stores a manually entered project path and clears the prior error", () => {
@@ -96,7 +98,7 @@ describe("renderer project selection state", () => {
       targetScopeId: " /home/user/target-workspace ",
     });
     const withAssets = reducer(withTargetProject, {
-      type: "assets",
+      type: "migrationSourceAssets",
       assets: [
         {
           id: AssetIdSchema.parse("asset-1"),
@@ -112,6 +114,8 @@ describe("renderer project selection state", () => {
     });
 
     expect(withAssets.projectRoot).toBeUndefined();
+    expect(withAssets.assets).toEqual([]);
+    expect(withAssets.migrationSourceAssets.map((asset) => asset.id)).toEqual(["asset-1"]);
     expect(previewRequestForState(withAssets)).toEqual({
       sourceAssetIds: ["asset-1"],
       targetToolKey: "cursor",
@@ -164,7 +168,7 @@ describe("renderer project selection state", () => {
       sourceProjectRoot: "/home/user/source-workspace",
     });
     const withAssets = reducer(withSourceProject, {
-      type: "assets",
+      type: "migrationSourceAssets",
       assets: [
         {
           id: AssetIdSchema.parse("asset-1"),
@@ -207,7 +211,7 @@ describe("renderer project selection state", () => {
       targetScopeId: "/home/user/target-workspace",
     });
     const withAssets = reducer(withTargetProject, {
-      type: "assets",
+      type: "migrationSourceAssets",
       assets: [
         {
           id: AssetIdSchema.parse("asset-1"),
@@ -269,7 +273,7 @@ describe("renderer project selection state", () => {
       targetScopeId: "/home/user/target-workspace",
     });
     const withAssets = reducer(withTargetProject, {
-      type: "assets",
+      type: "migrationSourceAssets",
       assets: [
         {
           id: AssetIdSchema.parse("asset-disabled"),
@@ -299,7 +303,8 @@ describe("renderer project selection state", () => {
       selected: true,
     });
 
-    expect(withAssets.assets.map(({ id, status }) => ({ id, status }))).toEqual([
+    expect(withAssets.assets).toEqual([]);
+    expect(withAssets.migrationSourceAssets.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "asset-disabled", status: "disabled" },
       { id: "asset-enabled", status: "enabled" },
     ]);
@@ -308,6 +313,129 @@ describe("renderer project selection state", () => {
     expect(previewRequestForState(manuallySelectedDisabled)?.sourceAssetIds).toEqual([
       "asset-enabled",
     ]);
+  });
+
+  it("keeps asset review refreshes from replacing migration source assets or previews", () => {
+    const sourceAsset: AppState["assets"][number] = {
+      id: AssetIdSchema.parse("asset-source"),
+      toolKey: "codex",
+      resourceType: "rule",
+      scopeKind: "project",
+      logicalKey: "source/AGENTS.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      status: "enabled" as const,
+      diagnosticCounts: { info: 0, warning: 0, error: 0 },
+    };
+    const reviewAsset: AppState["assets"][number] = {
+      id: AssetIdSchema.parse("asset-review"),
+      toolKey: "cursor",
+      resourceType: "skill",
+      scopeKind: "project",
+      logicalKey: "review/SKILL.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+      status: "enabled" as const,
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+    };
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
+    });
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: "/home/user/target-workspace",
+    });
+    const withSourceAssets = reducer(withTargetProject, {
+      type: "migrationSourceAssets",
+      assets: [sourceAsset],
+    });
+    const withPreview = reducer(withSourceAssets, {
+      type: "preview",
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan:state-isolation"),
+        planHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+        sourceHashes: {
+          [sourceAsset.id]: sourceAsset.contentHash,
+        },
+        targetHashes: {},
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [],
+        requiredConfirmations: [],
+        warnings: [],
+        expiresAt: "2026-06-28T08:10:00.000Z",
+      },
+    });
+    const withReviewAssets = reducer(withPreview, {
+      type: "assets",
+      assets: [reviewAsset],
+    });
+
+    expect(withReviewAssets.assets.map((asset) => asset.id)).toEqual(["asset-review"]);
+    expect(withReviewAssets.migrationSourceAssets.map((asset) => asset.id)).toEqual([
+      "asset-source",
+    ]);
+    expect(withReviewAssets.preview).toBe(withPreview.preview);
+    expect(previewRequestForState(withReviewAssets)).toEqual({
+      sourceAssetIds: ["asset-source"],
+      targetToolKey: "cursor",
+      targetScopeId: "/home/user/target-workspace",
+      conflictPolicy: "replace",
+    });
+  });
+
+  it("stores scanned migration target assets separately and swaps them with the source", () => {
+    const reviewAsset: AppState["assets"][number] = {
+      id: AssetIdSchema.parse("asset-review"),
+      toolKey: "codex",
+      resourceType: "rule",
+      scopeKind: "project",
+      logicalKey: "review/AGENTS.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+      status: "enabled" as const,
+      diagnosticCounts: { info: 0, warning: 0, error: 0 },
+    };
+    const sourceAsset: AppState["assets"][number] = {
+      ...reviewAsset,
+      id: AssetIdSchema.parse("asset-source"),
+      logicalKey: "source/AGENTS.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+    };
+    const targetAsset: AppState["assets"][number] = {
+      ...reviewAsset,
+      id: AssetIdSchema.parse("asset-target"),
+      logicalKey: "target/AGENTS.md",
+      contentHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+    };
+    const withReview = reducer(initialState, {
+      type: "assets",
+      assets: [reviewAsset],
+    });
+    const withProjects = reducer(
+      reducer(withReview, {
+        type: "migrationSourceProject",
+        sourceProjectRoot: "/home/user/source-workspace",
+      }),
+      {
+        type: "migrationTargetProject",
+        targetScopeId: "/home/user/target-workspace",
+      },
+    );
+    const withSourceAssets = reducer(withProjects, {
+      type: "migrationSourceAssets",
+      assets: [sourceAsset],
+    });
+    const withTargetAssets = reducer(withSourceAssets, {
+      type: "migrationTargetAssets",
+      assets: [targetAsset],
+    });
+    const swapped = reducer(withTargetAssets, { type: "migrationSwapProjects" });
+
+    expect(swapped.assets.map((asset) => asset.id)).toEqual(["asset-review"]);
+    expect(swapped.migration.sourceProjectRoot).toBe("/home/user/target-workspace");
+    expect(swapped.migration.targetScopeId).toBe("/home/user/source-workspace");
+    expect(swapped.migrationSourceAssets.map((asset) => asset.id)).toEqual(["asset-target"]);
+    expect(swapped.migrationTargetAssets.map((asset) => asset.id)).toEqual(["asset-source"]);
+    expect(swapped.migration.sourceAssetIds).toEqual(["asset-target"]);
   });
 
   it("updates an inspected asset status without requiring a full asset refresh", () => {
@@ -319,7 +447,22 @@ describe("renderer project selection state", () => {
       type: "migrationSourceProject",
       sourceProjectRoot: "/home/user/workspace",
     });
-    const withAssets = reducer(withMigrationSource, {
+    const withMigrationAssets = reducer(withMigrationSource, {
+      type: "migrationSourceAssets",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "AGENTS.md",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+    });
+    const withAssets = reducer(withMigrationAssets, {
       type: "assets",
       assets: [
         {
@@ -384,8 +527,8 @@ describe("renderer project selection state", () => {
 
     expect(disabled.assets[0]?.status).toBe("disabled");
     expect(disabled.assetDetail?.asset.status).toBe("disabled");
-    expect(disabled.migration.sourceAssetIds).toEqual([]);
-    expect(disabled.preview).toBeUndefined();
+    expect(disabled.migration.sourceAssetIds).toEqual(["asset-1"]);
+    expect(disabled.preview).toBe(withPreview.preview);
     expect(enabled.assets[0]?.status).toBe("enabled");
     expect(enabled.assetDetail?.asset.status).toBe("enabled");
     expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
@@ -1023,7 +1166,7 @@ describe("renderer project selection state", () => {
       expiresAt: "2026-06-28T08:10:00.000Z",
     };
     const withAssets = reducer(initialState, {
-      type: "assets",
+      type: "migrationSourceAssets",
       assets: [
         {
           id: AssetIdSchema.parse("asset-1"),
@@ -1279,7 +1422,7 @@ describe("renderer project selection state", () => {
     };
     const state = reducer(
       reducer(initialState, {
-        type: "assets",
+        type: "migrationSourceAssets",
         assets: [
           {
             id: AssetIdSchema.parse("asset-current"),

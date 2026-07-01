@@ -5,7 +5,7 @@ import type { AppState } from "../model.js";
 
 export function AssetsView(props: {
   readonly state: AppState;
-  readonly onRefresh: () => void;
+  readonly onRefresh?: () => void;
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onLoadEffective: () => void;
   readonly onOpenSource: () => void;
@@ -13,7 +13,7 @@ export function AssetsView(props: {
     assetId: AppState["assets"][number]["id"],
     nextStatus: AssetStatus,
   ) => void;
-  readonly onRescanAfterEdit: () => void;
+  readonly onRescanAfterEdit?: () => void;
   readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onSelectProject?: () => void;
@@ -58,9 +58,6 @@ export function AssetsView(props: {
             )}
           </p>
         </div>
-        <button type="button" onClick={props.onRefresh}>
-          {t(locale, "Refresh assets")}
-        </button>
       </section>
       <section className="review-project-card">
         <div className="review-project-summary">
@@ -68,42 +65,13 @@ export function AssetsView(props: {
           <strong title={props.state.projectRoot}>
             {props.state.projectRoot ?? t(locale, "No folder selected yet")}
           </strong>
+          <small>{t(locale, "Scans automatically after project selection.")}</small>
         </div>
         <div className="review-project-actions">
           <button type="button" onClick={props.onSelectProject}>
             {t(locale, "Choose project")}
           </button>
-          <button
-            type="button"
-            disabled={props.state.projectRoot === undefined}
-            onClick={props.onScan}
-          >
-            {t(locale, "Scan current project")}
-          </button>
         </div>
-        <form
-          className="project-path-editor compact"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            const formData = new FormData(form);
-            const projectPath = formData.get("projectPath");
-            props.onUseProjectPath?.(typeof projectPath === "string" ? projectPath : "");
-            form.reset();
-          }}
-        >
-          <label className="project-path-field">
-            <span>{t(locale, "Manual path fallback")}</span>
-            <input
-              aria-label={t(locale, "Project path")}
-              name="projectPath"
-              placeholder="/Users/you/project"
-            />
-          </label>
-          <button className="project-path-submit" type="submit">
-            {t(locale, "Use typed path")}
-          </button>
-        </form>
       </section>
       <section className="review-workspace">
         <aside className="review-filters">
@@ -178,7 +146,6 @@ export function AssetsView(props: {
           locale={locale}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
-          onRescanAfterEdit={props.onRescanAfterEdit}
           onLoadEffective={props.onLoadEffective}
           onCloseInspect={props.onCloseInspect}
           onLocateDiagnostic={props.onLocateDiagnostic}
@@ -616,7 +583,6 @@ function AssetDetailDialog(props: {
     assetId: AppState["assets"][number]["id"],
     nextStatus: AssetStatus,
   ) => void;
-  readonly onRescanAfterEdit: () => void;
   readonly onLoadEffective: () => void;
   readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
@@ -652,9 +618,6 @@ function AssetDetailDialog(props: {
               onClick={() => props.onToggleAssetStatus(detail.asset.id, targetStatus)}
             >
               {assetStatusActionLabel(props.locale, status)}
-            </button>
-            <button type="button" onClick={props.onRescanAfterEdit}>
-              {t(props.locale, "Rescan after edit")}
             </button>
             <button type="button" onClick={props.onLoadEffective}>
               {t(props.locale, "Load effective configuration")}

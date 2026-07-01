@@ -13,7 +13,6 @@ export function DeploymentView(props: {
   readonly onConfirmRequirement: (confirmation: DeploymentConfirmation, granted: boolean) => void;
   readonly onDeploy: () => void;
   readonly onRollback: () => void;
-  readonly onReviewHistory: () => void;
 }) {
   const locale = localeForState(props.state);
   const blockers = deploymentBlockersForState(props.state);
@@ -46,9 +45,6 @@ export function DeploymentView(props: {
           {activeTask.recoveryLock ? (
             <div className="recovery-lock">
               <p>{t(locale, "Recovery lock active. Review history before retrying.")}</p>
-              <button type="button" onClick={props.onReviewHistory}>
-                {t(locale, "Review history")}
-              </button>
             </div>
           ) : null}
         </section>

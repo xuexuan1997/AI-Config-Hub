@@ -9,7 +9,7 @@ import {
 
 import type { DesktopApi } from "../preload/api.js";
 
-export type Route = "overview" | "assets" | "migration" | "deployment" | "history" | "settings";
+export type Route = "assets" | "migration" | "deployment" | "settings";
 
 export type MigrationTargetToolKey = CommandRequest<"migration.preview">["targetToolKey"];
 export type MigrationConflictPolicy = CommandRequest<"migration.preview">["conflictPolicy"];
@@ -108,6 +108,8 @@ export interface AppState {
   readonly projectRoot?: string;
   readonly scanStatus: "idle" | "queued" | "complete" | "error";
   readonly assets: CommandResponse<"assets.list">["items"];
+  readonly migrationSourceAssets: CommandResponse<"assets.list">["items"];
+  readonly migrationTargetAssets: CommandResponse<"assets.list">["items"];
   readonly assetDetail?: CommandResponse<"assets.get">;
   readonly effective?: CommandResponse<"effective.resolve">;
   readonly diagnostics: CommandResponse<"diagnostics.list">["items"];
@@ -129,6 +131,8 @@ export type AppAction =
   | { readonly type: "message"; readonly message: string | undefined }
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
+  | { readonly type: "migrationSourceAssets"; readonly assets: AppState["assets"] }
+  | { readonly type: "migrationTargetAssets"; readonly assets: AppState["assets"] }
   | {
       readonly type: "assetStatus";
       readonly assetId: AppState["assets"][number]["id"];
@@ -177,9 +181,11 @@ const DEFAULT_SETTINGS_VALUES: AppSettingsValues = {
 };
 
 export const initialState: AppState = {
-  route: "overview",
+  route: "assets",
   scanStatus: "idle",
   assets: [],
+  migrationSourceAssets: [],
+  migrationTargetAssets: [],
   diagnostics: [],
   diagnosticCounts: { info: 0, warning: 0, error: 0 },
   migration: { sourceAssetIds: [], targetToolKey: "cursor", conflictPolicy: "replace" },
@@ -241,17 +247,17 @@ function isEnabledMigrationAsset(asset: MigrationAssetSummary): boolean {
 }
 
 export function enabledMigrationAssets(state: AppState): readonly MigrationAssetSummary[] {
-  return state.assets.filter(isEnabledMigrationAsset);
+  return state.migrationSourceAssets.filter(isEnabledMigrationAsset);
 }
 
 function migrationSourceAssetIds(
-  state: AppState,
+  migration: MigrationFormState,
   assets: AppState["assets"],
 ): MigrationFormState["sourceAssetIds"] {
-  if (state.migration.sourceProjectRoot === undefined) return [];
+  if (migration.sourceProjectRoot === undefined) return [];
   const enabledAssets = assets.filter(isEnabledMigrationAsset);
   const available = new Set(enabledAssets.map((asset) => asset.id));
-  const retained = state.migration.sourceAssetIds.filter((assetId) => available.has(assetId));
+  const retained = migration.sourceAssetIds.filter((assetId) => available.has(assetId));
   if (retained.length > 0) return retained;
   const first = enabledAssets[0];
   return first === undefined ? [] : [first.id];
@@ -302,28 +308,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "project":
       if (action.root === undefined) {
-        return clearProjectDetails(
-          clearPreview({
-            route: state.route,
-            scanStatus: state.scanStatus,
-            assets: state.assets,
-            diagnostics: state.diagnostics,
-            diagnosticCounts: state.diagnosticCounts,
-            migration: state.migration,
-            deploymentConfirmed: state.deploymentConfirmed,
-            deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-            history: state.history,
-            settings: state.settings,
-            ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-            ...(state.message === undefined ? {} : { message: state.message }),
-          }),
-        );
-      }
-      return clearProjectDetails(
-        clearPreview({
+        return clearProjectDetails({
           route: state.route,
           scanStatus: state.scanStatus,
           assets: state.assets,
+          migrationSourceAssets: state.migrationSourceAssets,
+          migrationTargetAssets: state.migrationTargetAssets,
           diagnostics: state.diagnostics,
           diagnosticCounts: state.diagnosticCounts,
           migration: state.migration,
@@ -331,16 +321,36 @@ export function reducer(state: AppState, action: AppAction): AppState {
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
           history: state.history,
           settings: state.settings,
-          projectRoot: action.root,
           ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-        }),
-      );
+          ...(state.message === undefined ? {} : { message: state.message }),
+          ...(state.preview === undefined ? {} : { preview: state.preview }),
+        });
+      }
+      return clearProjectDetails({
+        route: state.route,
+        scanStatus: state.scanStatus,
+        assets: state.assets,
+        migrationSourceAssets: state.migrationSourceAssets,
+        migrationTargetAssets: state.migrationTargetAssets,
+        diagnostics: state.diagnostics,
+        diagnosticCounts: state.diagnosticCounts,
+        migration: state.migration,
+        deploymentConfirmed: state.deploymentConfirmed,
+        deploymentConfirmationGrants: state.deploymentConfirmationGrants,
+        history: state.history,
+        settings: state.settings,
+        projectRoot: action.root,
+        ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
+        ...(state.preview === undefined ? {} : { preview: state.preview }),
+      });
     case "message":
       return action.message === undefined
         ? {
             route: state.route,
             scanStatus: state.scanStatus,
             assets: state.assets,
+            migrationSourceAssets: state.migrationSourceAssets,
+            migrationTargetAssets: state.migrationTargetAssets,
             diagnostics: state.diagnostics,
             diagnosticCounts: state.diagnosticCounts,
             migration: state.migration,
@@ -366,17 +376,25 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const refreshed = {
         ...state,
         assets: action.assets,
+      };
+      return action.assets.some((asset) => asset.id === state.assetDetail?.asset.id)
+        ? refreshed
+        : clearAssetDetail(refreshed);
+    }
+    case "migrationSourceAssets":
+      return clearPreview({
+        ...state,
+        migrationSourceAssets: action.assets,
         migration: {
           ...state.migration,
-          sourceAssetIds: migrationSourceAssetIds(state, action.assets),
+          sourceAssetIds: migrationSourceAssetIds(state.migration, action.assets),
         },
-      };
-      return clearPreview(
-        action.assets.some((asset) => asset.id === state.assetDetail?.asset.id)
-          ? refreshed
-          : clearAssetDetail(refreshed),
-      );
-    }
+      });
+    case "migrationTargetAssets":
+      return clearPreview({
+        ...state,
+        migrationTargetAssets: action.assets,
+      });
     case "assetStatus": {
       const assets = state.assets.map((asset) =>
         asset.id === action.assetId ? { ...asset, status: action.status } : asset,
@@ -392,15 +410,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         assets,
         ...(assetDetail === undefined ? {} : { assetDetail }),
-        migration: {
-          ...state.migration,
-          sourceAssetIds: migrationSourceAssetIds(state, assets),
-        },
       };
-      return state.migration.sourceAssetIds.includes(action.assetId) ||
-        state.preview?.sourceHashes[action.assetId] !== undefined
-        ? clearPreview(refreshed)
-        : refreshed;
+      return refreshed;
     }
     case "assetDetail": {
       const { effective: discardedEffective, ...withoutEffective } = state;
@@ -428,6 +439,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "migrationSourceProject":
       return clearPreview({
         ...state,
+        migrationSourceAssets: [],
         migration: migrationWithSourceProjectRoot(
           state.migration,
           normalizedProjectRoot(action.sourceProjectRoot),
@@ -441,6 +453,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "migrationTargetProject":
       return clearPreview({
         ...state,
+        migrationTargetAssets: [],
         migration: migrationWithTargetScopeId(
           state.migration,
           normalizedTargetScopeId(action.targetScopeId),
@@ -453,9 +466,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
         state.migration,
         targetScopeId,
       );
+      const swappedMigration = migrationWithTargetScopeId(
+        migrationWithSwappedSource,
+        sourceProjectRoot,
+      );
       return clearPreview({
         ...state,
-        migration: migrationWithTargetScopeId(migrationWithSwappedSource, sourceProjectRoot),
+        migrationSourceAssets: state.migrationTargetAssets,
+        migrationTargetAssets: state.migrationSourceAssets,
+        migration: {
+          ...swappedMigration,
+          sourceAssetIds: migrationSourceAssetIds(swappedMigration, state.migrationTargetAssets),
+        },
       });
     }
     case "migrationConflictPolicy":
@@ -701,7 +723,7 @@ export function migrationSourceDriftRowsForState(
 ): readonly MigrationSourceDriftRow[] {
   if (state.preview === undefined) return [];
   const currentHashes = new Map<string, CommandResponse<"migration.preview">["planHash"]>(
-    state.assets.map((asset) => [asset.id, asset.contentHash]),
+    state.migrationSourceAssets.map((asset) => [asset.id, asset.contentHash]),
   );
   return Object.entries(state.preview.sourceHashes)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -951,7 +973,7 @@ export function formatUiError(error: unknown, action: string): string {
   const detail = error instanceof Error ? error.message : String(error);
   const lowerDetail = detail.toLowerCase();
   if (lowerDetail.includes("filechooser") || lowerDetail.includes("file chooser")) {
-    return `${action} failed: the system file chooser is unavailable. Please paste the project folder path in Manual path fallback and click Use typed path. (${detail})`;
+    return `${action} failed: the system file chooser is unavailable; check desktop file picker permissions and try again. (${detail})`;
   }
   return `${action} failed: ${detail}`;
 }

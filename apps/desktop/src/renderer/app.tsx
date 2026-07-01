@@ -10,7 +10,6 @@ import {
   deploymentConfirmationsForState,
   effectiveRequestForState,
   formatUiError,
-  historyDetailRequestForEntry,
   initialState,
   migrationPreviewBlockersForState,
   openSourceRequestForState,
@@ -27,9 +26,7 @@ import {
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { DeploymentView } from "./views/deployment.js";
-import { HistoryView } from "./views/history.js";
 import { MigrationView } from "./views/migration.js";
-import { OverviewView } from "./views/overview.js";
 import { SettingsView } from "./views/settings.js";
 
 export function App(props: { readonly api: DesktopApi }) {
@@ -46,7 +43,10 @@ export function App(props: { readonly api: DesktopApi }) {
 
   async function selectProject() {
     await runAction("Select project", async () => {
-      dispatch({ type: "project", root: await props.api.selectProjectRoot() });
+      const root = await props.api.selectProjectRoot();
+      if (root === undefined) return;
+      dispatch({ type: "project", root });
+      await scanReviewProject(root);
     });
   }
 
@@ -58,6 +58,7 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationSourceProject",
         sourceProjectRoot,
       });
+      await scanMigrationProject("source", sourceProjectRoot);
     });
   }
 
@@ -69,25 +70,8 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationTargetProject",
         targetScopeId,
       });
+      await scanMigrationProject("target", targetScopeId);
     });
-  }
-
-  function useProjectPath(path: string) {
-    const root = path.trim();
-    if (root.length === 0) {
-      dispatch({ type: "message", message: t(locale, "Enter a project path first.") });
-    } else {
-      dispatch({ type: "project", root });
-    }
-  }
-
-  function useMigrationSourceProjectPath(path: string) {
-    const root = path.trim();
-    if (root.length === 0) {
-      dispatch({ type: "message", message: t(locale, "Enter a project path first.") });
-    } else {
-      dispatch({ type: "migrationSourceProject", sourceProjectRoot: root });
-    }
   }
 
   async function loadSettings() {
@@ -127,11 +111,11 @@ export function App(props: { readonly api: DesktopApi }) {
     void loadSettings();
   }, [props.api]);
 
-  async function scan() {
+  async function scanReviewProject(root: string) {
     await runAction("Start scan", async () => {
       const response = await props.api.invoke("scan.start", {
         mode: "full",
-        ...(state.projectRoot === undefined ? {} : { roots: [state.projectRoot] }),
+        roots: [root],
       });
       dispatch({
         type: "scan",
@@ -166,16 +150,8 @@ export function App(props: { readonly api: DesktopApi }) {
     });
   }
 
-  async function scanMigrationSource() {
-    await runAction("Start source scan", async () => {
-      const root = state.migration.sourceProjectRoot?.trim();
-      if (root === undefined || root.length === 0) {
-        dispatch({
-          type: "message",
-          message: t(locale, "Choose a source project before scanning migration assets."),
-        });
-        return;
-      }
+  async function scanMigrationProject(kind: "source" | "target", root: string) {
+    await runAction(kind === "source" ? "Start source scan" : "Start target scan", async () => {
       const response = await props.api.invoke("scan.start", {
         mode: "full",
         roots: [root],
@@ -192,66 +168,16 @@ export function App(props: { readonly api: DesktopApi }) {
           const taskAction = taskActionForTaskEvent(event);
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
-            void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
-            void refreshDiagnostics(props.api).then(({ diagnostics, diagnosticCounts }) =>
-              dispatch({ type: "diagnostics", diagnostics, counts: diagnosticCounts }),
+            void refreshAssets(props.api).then((assets) =>
+              dispatch({
+                type: kind === "source" ? "migrationSourceAssets" : "migrationTargetAssets",
+                assets,
+              }),
             );
           }
         });
       }
-      dispatch({ type: "assets", assets: await refreshAssets(props.api) });
-      const diagnostics = await refreshDiagnostics(props.api);
-      dispatch({
-        type: "diagnostics",
-        diagnostics: diagnostics.diagnostics,
-        counts: diagnostics.diagnosticCounts,
-      });
     });
-  }
-
-  async function refreshWorkspaceAfterScan(options: {
-    readonly assetId?: CommandResponse<"assets.list">["items"][number]["id"];
-    readonly previewRequest?: CommandRequest<"migration.preview">;
-  }): Promise<void> {
-    const assets = await refreshAssets(props.api);
-    dispatch({ type: "assets", assets });
-
-    let inspectedAssetId: CommandResponse<"assets.list">["items"][number]["id"] | undefined;
-    if (options.assetId !== undefined && assets.some((asset) => asset.id === options.assetId)) {
-      const detail = await refreshAssetDetail(props.api, options.assetId);
-      if (detail !== undefined) {
-        inspectedAssetId = options.assetId;
-        dispatch({ type: "assetDetail", detail });
-      }
-    }
-
-    const diagnostics = await refreshDiagnostics(props.api, inspectedAssetId);
-    dispatch({
-      type: "diagnostics",
-      diagnostics: diagnostics.diagnostics,
-      counts: diagnostics.diagnosticCounts,
-    });
-    dispatch({ type: "history", history: await refreshHistory(props.api) });
-
-    const previousPreviewRequest = options.previewRequest;
-    if (previousPreviewRequest === undefined) return;
-    const availableAssetIds = new Set<string>(assets.map((asset) => asset.id));
-    if (!previousPreviewRequest.sourceAssetIds.every((assetId) => availableAssetIds.has(assetId))) {
-      dispatch({
-        type: "message",
-        message: t(
-          locale,
-          "Selected migration sources changed after the rescan; create a new preview.",
-        ),
-      });
-      return;
-    }
-    const previewResponse = await props.api.invoke("migration.preview", previousPreviewRequest);
-    dispatch(
-      previewResponse.ok
-        ? { type: "preview", preview: previewResponse.data }
-        : { type: "message", message: previewResponse.error.message },
-    );
   }
 
   async function openSource() {
@@ -300,49 +226,6 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "diagnostics",
         diagnostics: diagnostics.diagnostics,
         counts: diagnostics.diagnosticCounts,
-      });
-    });
-  }
-
-  async function rescanAfterEdit() {
-    await runAction("Rescan after edit", async () => {
-      const assetId = state.assetDetail?.asset.id;
-      const projectRoot = state.projectRoot;
-      if (assetId === undefined || projectRoot === undefined) {
-        dispatch({
-          type: "message",
-          message: t(
-            locale,
-            "Inspect an asset with a selected project before rescanning after edit.",
-          ),
-        });
-        return;
-      }
-
-      const previousPreviewRequest = previewRequestForState(state);
-      const response = await props.api.invoke("scan.start", {
-        mode: "full",
-        roots: [projectRoot],
-      });
-      dispatch({
-        type: "scan",
-        status: response.ok ? "queued" : "error",
-        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
-      });
-      if (!response.ok) return;
-      subscribeTask(response.data.taskId, (event) => {
-        const action = scanActionForTaskEvent(event);
-        if (action !== undefined) dispatch(action);
-        const taskAction = taskActionForTaskEvent(event);
-        if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
-        if (event.type === "completed") {
-          void refreshWorkspaceAfterScan({
-            assetId,
-            ...(previousPreviewRequest === undefined
-              ? {}
-              : { previewRequest: previousPreviewRequest }),
-          });
-        }
       });
     });
   }
@@ -422,32 +305,11 @@ export function App(props: { readonly api: DesktopApi }) {
   }
 
   return (
-    <AppShell
-      state={state}
-      onRoute={(route) => dispatch({ type: "route", route })}
-      onSelectProject={() => void selectProject()}
-      onUseProjectPath={useProjectPath}
-    >
-      {state.route === "overview" ? (
-        <OverviewView state={state} onScan={() => void scan()} />
-      ) : null}
+    <AppShell state={state} onRoute={(route) => dispatch({ type: "route", route })}>
       {state.route === "assets" ? (
         <AssetsView
           state={state}
-          onScan={() => void scan()}
           onSelectProject={() => void selectProject()}
-          onUseProjectPath={useProjectPath}
-          onRefresh={() => {
-            void runAction("Refresh assets", async () => {
-              dispatch({ type: "assets", assets: await refreshAssets(props.api) });
-              const diagnostics = await refreshDiagnostics(props.api);
-              dispatch({
-                type: "diagnostics",
-                diagnostics: diagnostics.diagnostics,
-                counts: diagnostics.diagnosticCounts,
-              });
-            });
-          }}
           onInspect={(assetId) => {
             void runAction("Inspect asset", async () => {
               const detail = await refreshAssetDetail(props.api, assetId);
@@ -486,7 +348,6 @@ export function App(props: { readonly api: DesktopApi }) {
           onToggleAssetStatus={(assetId, nextStatus) => {
             void toggleAssetStatus(assetId, nextStatus);
           }}
-          onRescanAfterEdit={() => void rescanAfterEdit()}
           onCloseInspect={() => {
             dispatch({ type: "assetDetailClosed" });
             void runAction("Refresh diagnostics", async () => {
@@ -526,15 +387,10 @@ export function App(props: { readonly api: DesktopApi }) {
           onToggleSource={(assetId, selected) =>
             dispatch({ type: "migrationSource", assetId, selected })
           }
-          onSourceProject={useMigrationSourceProjectPath}
           onSelectSourceProject={() => void selectMigrationSourceProject()}
           onSelectTargetProject={() => void selectMigrationTargetProject()}
           onSwapProjects={() => dispatch({ type: "migrationSwapProjects" })}
-          onScanSource={() => void scanMigrationSource()}
           onTargetTool={(targetToolKey) => dispatch({ type: "migrationTarget", targetToolKey })}
-          onTargetProject={(targetScopeId) =>
-            dispatch({ type: "migrationTargetProject", targetScopeId })
-          }
           onConflictPolicy={(conflictPolicy) =>
             dispatch({ type: "migrationConflictPolicy", conflictPolicy })
           }
@@ -549,27 +405,6 @@ export function App(props: { readonly api: DesktopApi }) {
           }
           onDeploy={() => void deploy()}
           onRollback={() => void rollback()}
-          onReviewHistory={() => dispatch({ type: "route", route: "history" })}
-        />
-      ) : null}
-      {state.route === "history" ? (
-        <HistoryView
-          state={state}
-          onRefresh={() => {
-            void runAction("Refresh history", async () => {
-              dispatch({ type: "history", history: await refreshHistory(props.api) });
-            });
-          }}
-          onLoadDetail={(id) => {
-            void runAction("Load history detail", async () => {
-              const response = await props.api.invoke(
-                "history.get",
-                historyDetailRequestForEntry(id),
-              );
-              if (response.ok) dispatch({ type: "historyDetail", detail: response.data });
-              else dispatch({ type: "message", message: response.error.message });
-            });
-          }}
         />
       ) : null}
       {state.route === "settings" ? (

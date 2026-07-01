@@ -19,13 +19,10 @@ export function MigrationView(props: {
   readonly onPreview: () => void;
   readonly onToggleSource: (assetId: AppState["assets"][number]["id"], selected: boolean) => void;
   readonly onTargetTool: (targetToolKey: MigrationTargetToolKey) => void;
-  readonly onTargetProject: (targetScopeId: string) => void;
   readonly onConflictPolicy: (conflictPolicy: MigrationConflictPolicy) => void;
-  readonly onSourceProject?: (sourceProjectRoot: string) => void;
   readonly onSelectSourceProject?: () => void;
   readonly onSelectTargetProject?: () => void;
   readonly onSwapProjects?: () => void;
-  readonly onScanSource?: () => void;
 }) {
   const locale = localeForState(props.state);
   const preview = props.state.preview;
@@ -33,10 +30,12 @@ export function MigrationView(props: {
   const driftRows = migrationSourceDriftRowsForState(props.state).filter(
     (row) => row.status !== "current",
   );
-  const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
+  const assetLabels = new Map(
+    props.state.migrationSourceAssets.map((asset) => [asset.id, asset.logicalKey]),
+  );
   const assetGroups = useMemo(
-    () => assetGroupsByResourceType(props.state.assets),
-    [props.state.assets],
+    () => assetGroupsByResourceType(props.state.migrationSourceAssets),
+    [props.state.migrationSourceAssets],
   );
   const firstResourceType = assetGroups[0]?.resourceType;
   const [selectedResourceType, setSelectedResourceType] = useState(firstResourceType);
@@ -77,18 +76,16 @@ export function MigrationView(props: {
           value={props.state.migration.sourceProjectRoot}
           placeholder={t(locale, "Source project path")}
           chooseLabel={t(locale, "Choose")}
-          scanLabel={t(locale, "Scan source")}
           onChoose={props.onSelectSourceProject}
-          onChange={props.onSourceProject}
-          onScan={props.onScanSource}
         />
         <button
           className="migration-swap-projects"
+          aria-label={t(locale, "Swap source and target")}
           title={t(locale, "Swap source and target")}
           type="button"
           onClick={props.onSwapProjects}
         >
-          {t(locale, "Swap source and target")}
+          ⇄
         </button>
         <ProjectCard
           className="target"
@@ -97,7 +94,6 @@ export function MigrationView(props: {
           placeholder={t(locale, "Target project path")}
           chooseLabel={t(locale, "Choose")}
           onChoose={props.onSelectTargetProject}
-          onChange={props.onTargetProject}
         />
       </section>
 
@@ -135,6 +131,8 @@ export function MigrationView(props: {
           <div className="migration-asset-list">
             {activeGroup === undefined ? (
               <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
+            ) : activeGroup.assets.length === 0 ? (
+              <p>{t(locale, "No differences for this asset type.")}</p>
             ) : (
               activeGroup.assets.map((asset) => (
                 <label key={asset.id} className="asset-option">
@@ -248,6 +246,9 @@ export function MigrationView(props: {
           <div className="migration-asset-list">
             {preview === undefined ? (
               <p>{t(locale, "Preview writes to see target impact.")}</p>
+            ) : activeGroup === undefined ||
+              differenceCountForGroup(props.state, activeGroup) === 0 ? (
+              <p>{t(locale, "No differences for this asset type.")}</p>
             ) : (
               preview.changes.map((change) => (
                 <div key={change.pathDisplay} className="target-change-row">
@@ -323,33 +324,21 @@ function ProjectCard(props: {
   readonly value: string | undefined;
   readonly placeholder: string;
   readonly chooseLabel: string;
-  readonly scanLabel?: string | undefined;
   readonly onChoose?: (() => void) | undefined;
-  readonly onChange?: ((value: string) => void) | undefined;
-  readonly onScan?: (() => void) | undefined;
 }) {
   const inputId = `migration-${props.className}-project`;
   return (
     <div className={`migration-project-card ${props.className}`}>
       <div className="migration-project-copy">
-        <label htmlFor={inputId}>{props.label}</label>
-        <input
-          id={inputId}
-          placeholder={props.placeholder}
-          type="text"
-          value={props.value ?? ""}
-          onChange={(event) => props.onChange?.(event.currentTarget.value)}
-        />
+        <span id={inputId}>{props.label}</span>
+        <strong aria-labelledby={inputId} title={props.value}>
+          {props.value ?? props.placeholder}
+        </strong>
       </div>
       <div className="migration-project-actions">
         <button type="button" onClick={props.onChoose}>
           {props.chooseLabel}
         </button>
-        {props.scanLabel === undefined ? null : (
-          <button type="button" onClick={props.onScan}>
-            {props.scanLabel}
-          </button>
-        )}
       </div>
     </div>
   );
@@ -461,6 +450,9 @@ function assetGroupsByResourceType(
   assets: readonly MigrationAssetSummary[],
 ): MigrationAssetGroup[] {
   const groups = new Map<string, MigrationAssetSummary[]>();
+  for (const resourceType of KNOWN_MIGRATION_RESOURCE_TYPES) {
+    groups.set(resourceType, []);
+  }
   for (const asset of assets) {
     const group = groups.get(asset.resourceType);
     if (group === undefined) groups.set(asset.resourceType, [asset]);
@@ -471,6 +463,8 @@ function assetGroupsByResourceType(
     assets: groupAssets,
   })).sort(compareAssetGroups);
 }
+
+const KNOWN_MIGRATION_RESOURCE_TYPES = ["rule", "agent", "skill", "mcp"] as const;
 
 function compareAssetGroups(left: MigrationAssetGroup, right: MigrationAssetGroup): number {
   const leftPriority = resourceTypePriority(left.resourceType);
@@ -532,6 +526,7 @@ function toolLabel(toolKey: string): string {
 }
 
 function resourceTypeLabel(resourceType: string): string {
+  if (resourceType.toLowerCase() === "mcp") return "MCP";
   return titleizeIdentifier(resourceType);
 }
 

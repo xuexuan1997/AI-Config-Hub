@@ -4,18 +4,15 @@ import { localeForState, t } from "../i18n.js";
 import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
-  { route: "overview", label: "Overview" },
   { route: "assets", label: "Asset Review" },
   { route: "migration", label: "Asset Migration" },
-  { route: "history", label: "History" },
+  { route: "deployment", label: "Deployment" },
   { route: "settings", label: "Settings" },
 ];
 
 export function AppShell(props: {
   readonly state: AppState;
   readonly onRoute: (route: Route) => void;
-  readonly onSelectProject: () => void;
-  readonly onUseProjectPath: (path: string) => void;
   readonly children: ReactNode;
 }) {
   const mainRef = useRef<HTMLElement | null>(null);
@@ -50,10 +47,6 @@ export function AppShell(props: {
               </button>
             ))}
           </nav>
-        </div>
-        <div className="sidebar-foot">
-          <strong>{t(locale, "Navigation model")}</strong>
-          <span>{t(locale, "Review and migration are sibling workflows.")}</span>
         </div>
       </aside>
       <main data-route={props.state.route} key={props.state.route} ref={mainRef}>

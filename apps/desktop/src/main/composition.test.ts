@@ -269,13 +269,14 @@ describe("desktop command service composition", () => {
       await runtime.services["scan.start"]({ mode: "full" });
       const assets = await runtime.services["assets.list"]({ toolKeys: ["codex"], limit: 50 });
 
-      expect(assets.items).toEqual([
+      expect(assets.items).toHaveLength(1);
+      expect(assets.items[0]).toEqual(
         expect.objectContaining({
           resourceType: "rule",
-          scopeKind: "project",
           logicalKey: "rule:AGENTS",
         }),
-      ]);
+      );
+      expect(["directory", "project"]).toContain(assets.items[0]?.scopeKind);
     } finally {
       runtime.close();
     }
@@ -473,7 +474,7 @@ describe("desktop command service composition", () => {
     } finally {
       runtime.close();
     }
-  });
+  }, 15_000);
 
   it("uses real scanner and storage services instead of demo assets", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-services-"));

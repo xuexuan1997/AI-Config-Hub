@@ -65,6 +65,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Migration preview": "迁移预览",
   "Migration settings": "迁移设置",
   "No assets indexed yet.": "尚未索引资产。",
+  "No differences for this asset type.": "此资产类型没有差异。",
   "No diagnostics": "无诊断",
   "No diagnostics for this asset.": "此资产没有诊断。",
   "No contributing assets.": "无贡献资产。",
@@ -105,6 +106,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Scan a project before creating a migration preview.": "请先扫描项目再创建迁移预览。",
   "Scan a source project before creating a migration preview.": "请先扫描源项目再创建迁移预览。",
   "Scan current project": "扫描当前项目",
+  "Scans automatically after project selection.": "选择项目后自动扫描。",
   Settings: "设置",
   "Selected project folder": "已选择的项目文件夹",
   "Select an asset to inspect its source, problems, and effective config.":
