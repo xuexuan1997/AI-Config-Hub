@@ -70,7 +70,6 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationTargetProject",
         targetScopeId,
       });
-      await scanMigrationProject("target", targetScopeId);
     });
   }
 
@@ -168,7 +167,7 @@ export function App(props: { readonly api: DesktopApi }) {
           const taskAction = taskActionForTaskEvent(event);
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
-            void refreshAssets(props.api).then((assets) =>
+            void refreshAssets(props.api, { projectRoot: root }).then((assets) =>
               dispatch({
                 type: kind === "source" ? "migrationSourceAssets" : "migrationTargetAssets",
                 assets,

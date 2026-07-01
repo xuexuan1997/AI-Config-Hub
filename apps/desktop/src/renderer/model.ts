@@ -5,6 +5,7 @@ import {
   ResourceKindSchema,
   ScopeIdSchema,
   ToolIdSchema,
+  type ProjectId,
 } from "@ai-config-hub/shared";
 
 import type { DesktopApi } from "../preload/api.js";
@@ -574,9 +575,30 @@ function shouldRetireDeploymentPreview(activeTask: ActiveTaskState): boolean {
   );
 }
 
-export async function refreshAssets(api: DesktopApi): Promise<AppState["assets"]> {
-  const response = await api.invoke("assets.list", { limit: 50 });
+export async function refreshAssets(
+  api: DesktopApi,
+  options: { readonly projectRoot?: string } = {},
+): Promise<AppState["assets"]> {
+  const projectId =
+    options.projectRoot === undefined ? undefined : await projectIdForRoot(options.projectRoot);
+  const response = await api.invoke("assets.list", {
+    limit: 50,
+    ...(projectId === undefined ? {} : { projectId }),
+  });
   return response.ok ? response.data.items : [];
+}
+
+export async function projectIdForRoot(projectRoot: string): Promise<ProjectId> {
+  const encoder = new TextEncoder();
+  const rootBytes = encoder.encode(projectRoot);
+  const payload = encoder.encode(
+    `ai-config-hub:identity:v1\0project\0${rootBytes.byteLength}:${projectRoot}`,
+  );
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", payload);
+  const bytes = Array.from(new Uint8Array(digest));
+  return ProjectIdSchema.parse(
+    `project:${bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+  );
 }
 
 export async function refreshAssetDetail(

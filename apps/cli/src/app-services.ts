@@ -245,6 +245,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
     },
     "assets.list": async (payload) => {
       const request = payload as {
+        readonly projectId?: string;
         readonly toolKeys?: Parameters<typeof runtime.repositories.index.listAssets>[0]["toolIds"];
         readonly resourceTypes?: Parameters<
           typeof runtime.repositories.index.listAssets
@@ -264,10 +265,17 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
         request.diagnosticSeverity === undefined
           ? undefined
           : DiagnosticSeveritySchema.parse(request.diagnosticSeverity);
+      const scopeIds =
+        request.projectId === undefined
+          ? undefined
+          : (await runtime.repositories.index.listScopes())
+              .filter((scope) => scope.projectId === ProjectIdSchema.parse(request.projectId))
+              .map((scope) => scope.scopeId);
       const requiresPostFilter =
         requestedScopeKinds !== undefined || diagnosticSeverity !== undefined;
       const page = await runtime.repositories.index.listAssets({
         ...(request.toolKeys === undefined ? {} : { toolIds: request.toolKeys }),
+        ...(scopeIds === undefined ? {} : { scopeIds }),
         ...(request.resourceTypes === undefined ? {} : { resourceKinds: request.resourceTypes }),
         ...(request.query === undefined ? {} : { search: request.query }),
         ...(request.cursor === undefined

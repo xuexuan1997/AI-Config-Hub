@@ -7,7 +7,7 @@ import {
   ScopeIdSchema,
   TaskIdSchema,
 } from "@ai-config-hub/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   deploymentBlockersForState,
@@ -21,16 +21,37 @@ import {
   migrationHashRowsForPreview,
   migrationSourceDriftRowsForState,
   openSourceRequestForState,
+  projectIdForRoot,
   previewRequestForState,
   reducer,
+  refreshAssets,
   rollbackRequestForState,
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
   scanActionForTaskEvent,
   type AppState,
 } from "./model.js";
+import type { DesktopApi } from "../preload/api.js";
 
 describe("renderer project selection state", () => {
+  it("refreshes migration assets using the selected project root as an indexed project filter", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { items: [], nextCursor: null, snapshotRevision: "revision-1", stale: false },
+    });
+    const api = { invoke } as unknown as DesktopApi;
+
+    await refreshAssets(api, { projectRoot: "/workspace/source" });
+
+    expect(await projectIdForRoot("/workspace/source")).toBe(
+      "project:93fabdbc021c4fc11c24322a46ec5b7995a259a5fba13c71ed02faf3627ec9eb",
+    );
+    expect(invoke).toHaveBeenCalledWith("assets.list", {
+      limit: 50,
+      projectId: await projectIdForRoot("/workspace/source"),
+    });
+  });
+
   it("turns missing file chooser errors into a retryable picker message", () => {
     const message = formatUiError(
       new Error("No such interface “org.freedesktop.portal.FileChooser” on object"),

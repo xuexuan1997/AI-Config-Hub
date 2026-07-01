@@ -14,4 +14,19 @@ describe("renderer styles", () => {
       /\.asset-type-tab\[aria-selected="true"\]:hover span\s*{[^}]*color:\s*var\(--strong-text\);[^}]*}/s,
     );
   });
+
+  it("keeps the migration difference summary complete when source and target columns have content", () => {
+    expect(styles).toMatch(
+      /\.migration-comparison-body\s*{[^}]*grid-template-columns:\s*minmax\(220px,\s*1fr\)\s+minmax\(260px,\s*0\.85fr\)\s+minmax\(220px,\s*1fr\);[^}]*}/s,
+    );
+    expect(styles).toMatch(
+      /\.migration-difference-summary\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[^}]*}/s,
+    );
+    expect(styles).toMatch(
+      /\.migration-difference-summary\s+h2\s*{[^}]*grid-column:\s*1\s*\/\s*-1;[^}]*}/s,
+    );
+    expect(styles).not.toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+275px\s+minmax\(0,\s*1fr\)/,
+    );
+  });
 });

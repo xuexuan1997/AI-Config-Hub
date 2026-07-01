@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +124,48 @@ describe("desktop command service composition", () => {
         opened: true,
       });
       expect(openedPaths).toEqual([await realpath(sourcePath)]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("filters asset lists by indexed project id for independent migration projects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-project-filter-"));
+    temporaryDirectories.push(root);
+    const sourceProject = join(root, "source");
+    const targetProject = join(root, "target");
+    const userData = join(root, "user-data");
+    await mkdir(sourceProject);
+    await mkdir(targetProject);
+    await writeFile(join(sourceProject, "AGENTS.md"), "Use source conventions.\n", "utf8");
+    await writeFile(join(targetProject, "AGENTS.md"), "Use target conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: sourceProject,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject, targetProject] });
+      const canonicalSourceProject = await realpath(sourceProject);
+      const canonicalTargetProject = await realpath(targetProject);
+
+      const sourceAssets = await runtime.services["assets.list"]({
+        projectId: stableProjectId(canonicalSourceProject),
+        limit: 50,
+      });
+      const targetAssets = await runtime.services["assets.list"]({
+        projectId: stableProjectId(canonicalTargetProject),
+        limit: 50,
+      });
+
+      const sourceAssetIds = new Set(sourceAssets.items.map((asset) => asset.id));
+      const targetAssetIds = new Set(targetAssets.items.map((asset) => asset.id));
+
+      expect(sourceAssets.items.map((asset) => asset.logicalKey)).toContain("rule:AGENTS");
+      expect(targetAssets.items.map((asset) => asset.logicalKey)).toContain("rule:AGENTS");
+      expect([...sourceAssetIds].filter((assetId) => targetAssetIds.has(assetId))).toEqual([]);
     } finally {
       runtime.close();
     }
@@ -914,3 +957,13 @@ describe("desktop command service composition", () => {
     }
   });
 });
+
+function stableProjectId(root: string): string {
+  const hash = createHash("sha256");
+  hash.update("ai-config-hub:identity:v1\0").update("project").update("\0");
+  hash
+    .update(String(Buffer.byteLength(root)))
+    .update(":")
+    .update(root);
+  return `project:${hash.digest("hex")}`;
+}
