@@ -112,7 +112,7 @@ describe("SQLite bootstrap", () => {
 
     const upgraded = await openDatabase({
       path,
-      appVersion: "0.2.3",
+      appVersion: "0.2.4",
       migrations: databaseMigrations,
     });
     expect(upgraded.mode).toBe("read_write");
