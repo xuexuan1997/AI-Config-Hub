@@ -4,7 +4,6 @@ import {
   AssetIdSchema,
   ContentHashSchema,
   DeploymentPlanIdSchema,
-  DeploymentRecordIdSchema,
   DiagnosticIdSchema,
   ScopeIdSchema,
 } from "@ai-config-hub/shared";
@@ -13,8 +12,6 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "../components/app-shell.js";
 import { initialState, type AppState } from "../model.js";
 import { AssetsView } from "./assets.js";
-import { DeploymentView } from "./deployment.js";
-import { HistoryView } from "./history.js";
 import { MigrationView } from "./migration.js";
 import { SettingsView } from "./settings.js";
 
@@ -30,9 +27,9 @@ describe("desktop renderer view structure", () => {
 
     expect(html).toContain(">Asset Review</button>");
     expect(html).toContain(">Asset Migration</button>");
-    expect(html).toContain(">Deployment</button>");
     expect(html).toContain(">Settings</button>");
     expect(html).not.toContain(">Overview</button>");
+    expect(html).not.toContain(">Deployment</button>");
     expect(html).not.toContain(">History</button>");
     expect(html).not.toContain('class="sidebar-foot"');
     expect(html).not.toContain("Navigation model");
@@ -215,22 +212,9 @@ describe("desktop renderer view structure", () => {
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
         onConflictPolicy: vi.fn(),
-      }),
-    );
-    const deploymentHtml = renderToStaticMarkup(
-      createElement(DeploymentView, {
-        state: zhState,
-        onConfirm: vi.fn(),
+        onConfirmMigration: vi.fn(),
         onConfirmRequirement: vi.fn(),
-        onDeploy: vi.fn(),
-        onRollback: vi.fn(),
-      }),
-    );
-    const historyHtml = renderToStaticMarkup(
-      createElement(HistoryView, {
-        state: zhState,
-        onRefresh: vi.fn(),
-        onLoadDetail: vi.fn(),
+        onExecuteMigration: vi.fn(),
       }),
     );
 
@@ -241,48 +225,40 @@ describe("desktop renderer view structure", () => {
     expect(migrationHtml).toContain("目标工具");
     expect(migrationHtml).toContain("预览写入");
     expect(migrationHtml).toContain("请先选择源项目再创建迁移预览。");
-    expect(deploymentHtml).toContain("<h1>部署</h1>");
-    expect(deploymentHtml).toContain("部署确认");
-    expect(deploymentHtml).toContain("执行部署");
-    expect(deploymentHtml).toContain("请先创建迁移预览再部署。");
-    expect(historyHtml).toContain("<h1>历史</h1>");
-    expect(historyHtml).toContain("刷新历史");
-    expect(historyHtml).toContain("暂无部署历史。");
   });
 
-  it("groups deployment confirmations and actions into scannable sections", () => {
+  it("keeps migration execution inside the migration preview workflow", () => {
     const state: AppState = {
       ...initialState,
       preview: previewFixture(["overwrite", "partial_conversion"]),
-      history: [
-        {
-          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-        },
-      ],
     };
 
     const html = renderToStaticMarkup(
-      createElement(DeploymentView, {
+      createElement(MigrationView, {
         state,
-        onConfirm: vi.fn(),
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
         onConfirmRequirement: vi.fn(),
-        onDeploy: vi.fn(),
-        onRollback: vi.fn(),
+        onExecuteMigration: vi.fn(),
       }),
     );
 
-    expect(html).toContain('class="deployment-confirmation-panel"');
+    expect(html).toContain('class="migration-confirmation-panel"');
     expect(html).toContain('class="confirmation-item"');
-    expect(html).toContain('class="deployment-action-row"');
+    expect(html).toContain('class="migration-action-row"');
     expect(html).toContain('class="blocker-panel"');
+    expect(html).toContain("Execute migration");
+    expect(html).not.toContain("Execute deployment");
+    expect(html).not.toContain("Execute rollback");
+    expect(html).not.toContain("Rollback");
   });
 
-  it("renders active deployment status as labeled product copy", () => {
+  it("renders active migration execution status as labeled product copy", () => {
     const html = renderToStaticMarkup(
-      createElement(DeploymentView, {
+      createElement(MigrationView, {
         state: {
           ...initialState,
           activeTask: {
@@ -295,10 +271,13 @@ describe("desktop renderer view structure", () => {
             recoveryLock: false,
           },
         },
-        onConfirm: vi.fn(),
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
         onConfirmRequirement: vi.fn(),
-        onDeploy: vi.fn(),
-        onRollback: vi.fn(),
+        onExecuteMigration: vi.fn(),
       }),
     );
 
@@ -307,100 +286,6 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("1/1 operations");
     expect(html).toContain("Deployment complete: 1 succeeded.");
     expect(html).not.toContain("<p>completed ");
-  });
-
-  it("renders history entries and change rows as structured records instead of inline text", () => {
-    const state: AppState = {
-      ...initialState,
-      history: [
-        {
-          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-          phase: "completed",
-          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
-          cancellable: false,
-          snapshot: {
-            status: "recorded",
-            commitId: "1234567890abcdef",
-            authoredAt: "2026-06-28T08:00:00.000Z",
-            message: "AI Config Hub deployment snapshot",
-          },
-        },
-      ],
-      historyDetail: {
-        entry: {
-          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-        },
-        plan: {
-          planId: DeploymentPlanIdSchema.parse("deployment-plan:audit-preview"),
-          planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          requiredConfirmations: ["overwrite", "partial_conversion"],
-        },
-        changes: [
-          {
-            operation: "replace",
-            pathDisplay: ".cursor/rules/agents.mdc",
-            beforeHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-            afterHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
-            diff: "- Existing Cursor rule.\n+ Use local TypeScript conventions.",
-          },
-        ],
-      },
-    };
-
-    const html = renderToStaticMarkup(
-      createElement(HistoryView, {
-        state,
-        onRefresh: vi.fn(),
-        onLoadDetail: vi.fn(),
-      }),
-    );
-
-    expect(html).toContain('class="history-entry"');
-    expect(html).toContain('class="history-entry-meta"');
-    expect(html).toContain('class="history-change"');
-    expect(html).toContain('class="history-change-hashes"');
-    expect(html).toContain("<strong>Deployment</strong>");
-    expect(html).toContain("<span>Succeeded</span>");
-    expect(html).toContain("Created: 2026-06-28 08:00 UTC");
-    expect(html).toContain("Phase: Completed");
-    expect(html).toContain("Finalized");
-    expect(html).toContain("<h2>Deployment detail</h2>");
-    expect(html).toContain("<dd>audit-success</dd>");
-    expect(html).toContain("<dd>audit-preview</dd>");
-    expect(html).toContain("<strong>Replace file</strong>");
-    expect(html).toContain(
-      "Overwrite existing target files. Deploy a partial conversion with documented warnings.",
-    );
-    expect(html).not.toContain("<dd>overwrite, partial_conversion</dd>");
-    expect(html).not.toContain("<strong>deployment</strong>");
-    expect(html).not.toContain("<span>succeeded</span>");
-    expect(html).not.toContain("2026-06-28T08:00:00.000Z");
-    expect(html).not.toContain("phase completed");
-    expect(html).not.toContain("not cancellable");
-    expect(html).not.toContain("deployment-record:audit-success");
-    expect(html).not.toContain("deployment-plan:audit-preview");
-    expect(html).not.toContain("<strong>replace</strong>");
-  });
-
-  it("renders an empty state when history has no records", () => {
-    const html = renderToStaticMarkup(
-      createElement(HistoryView, {
-        state: initialState,
-        onRefresh: vi.fn(),
-        onLoadDetail: vi.fn(),
-      }),
-    );
-
-    expect(html).toContain('class="empty-state"');
-    expect(html).toContain("No deployment history yet.");
-    expect(html).toContain("Completed deployments and rollback records will appear here.");
-    expect(html).not.toContain('<ul class="history-list"></ul>');
   });
 
   it("states whether asset diagnostics are scoped to the workspace or inspected asset", () => {
@@ -704,6 +589,9 @@ describe("desktop renderer view structure", () => {
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
         onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
       }),
     );
 
@@ -749,49 +637,6 @@ describe("desktop renderer view structure", () => {
       status: "ready",
     };
     const assetDetail = assetDetailFixture("asset-1", "rule:AGENTS");
-    const historyDetailState: AppState = {
-      ...initialState,
-      settings: zhSettings,
-      history: [
-        {
-          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-          phase: "completed",
-          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
-          cancellable: false,
-          snapshot: {
-            status: "recorded",
-            commitId: "1234567890abcdef",
-            authoredAt: "2026-06-28T08:00:00.000Z",
-            message: "AI Config Hub deployment snapshot",
-          },
-        },
-      ],
-      historyDetail: {
-        entry: {
-          id: DeploymentRecordIdSchema.parse("deployment-record:audit-success"),
-          kind: "deployment",
-          status: "succeeded",
-          createdAt: "2026-06-28T08:00:00.000Z",
-        },
-        plan: {
-          planId: DeploymentPlanIdSchema.parse("deployment-plan:audit-preview"),
-          planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          requiredConfirmations: ["overwrite", "partial_conversion"],
-        },
-        changes: [
-          {
-            operation: "replace",
-            pathDisplay: ".cursor/rules/agents.mdc",
-            beforeHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-            afterHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
-            diff: "- Existing Cursor rule.\n+ Use local TypeScript conventions.",
-          },
-        ],
-      },
-    };
 
     const assetsHtml = renderToStaticMarkup(
       createElement(AssetsView, {
@@ -839,34 +684,9 @@ describe("desktop renderer view structure", () => {
         onToggleSource: vi.fn(),
         onTargetTool: vi.fn(),
         onConflictPolicy: vi.fn(),
-      }),
-    );
-    const deploymentHtml = renderToStaticMarkup(
-      createElement(DeploymentView, {
-        state: {
-          ...initialState,
-          settings: zhSettings,
-          activeTask: {
-            taskId: "task:deployment:1",
-            taskKind: "deployment",
-            phase: "completed",
-            status: "succeeded",
-            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
-            message: "Deployment complete: 1 succeeded.",
-            recoveryLock: false,
-          },
-        },
-        onConfirm: vi.fn(),
+        onConfirmMigration: vi.fn(),
         onConfirmRequirement: vi.fn(),
-        onDeploy: vi.fn(),
-        onRollback: vi.fn(),
-      }),
-    );
-    const historyHtml = renderToStaticMarkup(
-      createElement(HistoryView, {
-        state: historyDetailState,
-        onRefresh: vi.fn(),
-        onLoadDetail: vi.fn(),
+        onExecuteMigration: vi.fn(),
       }),
     );
 
@@ -883,13 +703,6 @@ describe("desktop renderer view structure", () => {
     expect(migrationHtml).toContain("兼容性：部分");
     expect(migrationHtml).toContain("确认项：覆盖现有目标文件。 部署包含警告的部分转换。");
     expect(migrationHtml).toContain("替换文件 .cursor/rules/agents.mdc");
-    expect(deploymentHtml).toContain("<h2>部署状态</h2>");
-    expect(deploymentHtml).toContain("状态：已完成");
-    expect(historyHtml).toContain("<strong>部署</strong>");
-    expect(historyHtml).toContain("<span>成功</span>");
-    expect(historyHtml).toContain("阶段：已完成");
-    expect(historyHtml).toContain("<h2>部署详情</h2>");
-    expect(historyHtml).toContain("<strong>替换文件</strong>");
   });
 });
 

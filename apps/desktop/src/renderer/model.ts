@@ -1,6 +1,5 @@
 import type { CommandRequest, CommandResponse, TaskEvent, TaskPhase } from "@ai-config-hub/api";
 import {
-  DeploymentRecordIdSchema,
   ProjectIdSchema,
   ResourceKindSchema,
   ScopeIdSchema,
@@ -9,7 +8,7 @@ import {
 
 import type { DesktopApi } from "../preload/api.js";
 
-export type Route = "assets" | "migration" | "deployment" | "settings";
+export type Route = "assets" | "migration" | "settings";
 
 export type MigrationTargetToolKey = CommandRequest<"migration.preview">["targetToolKey"];
 export type MigrationConflictPolicy = CommandRequest<"migration.preview">["conflictPolicy"];
@@ -118,8 +117,6 @@ export interface AppState {
   readonly preview?: CommandResponse<"migration.preview">;
   readonly deploymentConfirmed: boolean;
   readonly deploymentConfirmationGrants: readonly DeploymentConfirmation[];
-  readonly history: CommandResponse<"history.list">["items"];
-  readonly historyDetail?: CommandResponse<"history.get">;
   readonly activeTask?: ActiveTaskState;
   readonly settings: AppSettingsState;
   readonly message?: string;
@@ -166,8 +163,6 @@ export type AppAction =
       readonly confirmation: DeploymentConfirmation;
       readonly granted: boolean;
     }
-  | { readonly type: "history"; readonly history: AppState["history"] }
-  | { readonly type: "historyDetail"; readonly detail: CommandResponse<"history.get"> }
   | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate }
   | { readonly type: "settingsLoading" }
   | { readonly type: "settingsSaving" }
@@ -191,7 +186,6 @@ export const initialState: AppState = {
   migration: { sourceAssetIds: [], targetToolKey: "cursor", conflictPolicy: "replace" },
   deploymentConfirmed: false,
   deploymentConfirmationGrants: [],
-  history: [],
   settings: {
     values: DEFAULT_SETTINGS_VALUES,
     revision: 0,
@@ -211,12 +205,10 @@ function clearProjectDetails(state: AppState): AppState {
   const {
     assetDetail: discardedAssetDetail,
     effective: discardedEffective,
-    historyDetail: discardedHistoryDetail,
     ...withoutDetails
   } = state;
   void discardedAssetDetail;
   void discardedEffective;
-  void discardedHistoryDetail;
   return withoutDetails;
 }
 
@@ -229,12 +221,6 @@ function clearAssetDetail(state: AppState): AppState {
   void discardedAssetDetail;
   void discardedEffective;
   return withoutAsset;
-}
-
-function clearHistoryDetail(state: AppState): AppState {
-  const { historyDetail: discardedHistoryDetail, ...withoutHistoryDetail } = state;
-  void discardedHistoryDetail;
-  return withoutHistoryDetail;
 }
 
 type MigrationAssetSummary = AppState["assets"][number];
@@ -319,7 +305,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
           migration: state.migration,
           deploymentConfirmed: state.deploymentConfirmed,
           deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-          history: state.history,
           settings: state.settings,
           ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           ...(state.message === undefined ? {} : { message: state.message }),
@@ -337,7 +322,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
         migration: state.migration,
         deploymentConfirmed: state.deploymentConfirmed,
         deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-        history: state.history,
         settings: state.settings,
         projectRoot: action.root,
         ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
@@ -356,13 +340,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
             migration: state.migration,
             deploymentConfirmed: state.deploymentConfirmed,
             deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-            history: state.history,
             settings: state.settings,
             ...(state.projectRoot === undefined ? {} : { projectRoot: state.projectRoot }),
             ...(state.assetDetail === undefined ? {} : { assetDetail: state.assetDetail }),
             ...(state.effective === undefined ? {} : { effective: state.effective }),
             ...(state.preview === undefined ? {} : { preview: state.preview }),
-            ...(state.historyDetail === undefined ? {} : { historyDetail: state.historyDetail }),
             ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           }
         : { ...state, message: action.message };
@@ -503,12 +485,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
         : current.filter((confirmation) => confirmation !== action.confirmation);
       return { ...state, deploymentConfirmationGrants };
     }
-    case "history":
-      return action.history.some((entry) => entry.id === state.historyDetail?.entry.id)
-        ? { ...state, history: action.history }
-        : { ...clearHistoryDetail(state), history: action.history };
-    case "historyDetail":
-      return { ...state, historyDetail: action.detail };
     case "taskEvent": {
       const activeTask = mergeActiveTask(state.activeTask, action.action);
       const updated = { ...state, activeTask };
@@ -603,11 +579,6 @@ export async function refreshDiagnostics(
     : { diagnostics: [], diagnosticCounts: { info: 0, warning: 0, error: 0 } };
 }
 
-export async function refreshHistory(api: DesktopApi): Promise<AppState["history"]> {
-  const response = await api.invoke("history.list", { limit: 50 });
-  return response.ok ? response.data.items : [];
-}
-
 export function effectiveRequestForState(
   state: AppState,
 ): CommandRequest<"effective.resolve"> | undefined {
@@ -626,10 +597,6 @@ export function openSourceRequestForState(
 ): CommandRequest<"assets.openSource"> | undefined {
   const detail = state.assetDetail;
   return detail === undefined ? undefined : { assetId: detail.asset.id };
-}
-
-export function historyDetailRequestForEntry(id: string): CommandRequest<"history.get"> {
-  return { id: DeploymentRecordIdSchema.parse(id) };
 }
 
 export function previewRequestForState(
@@ -745,15 +712,15 @@ export function deploymentBlockersForState(
 ): readonly string[] {
   const blockers: string[] = [];
   if (state.preview === undefined) {
-    blockers.push("Create a migration preview before deploying.");
+    blockers.push("Create a migration preview before migrating.");
   } else if (Date.parse(now) > Date.parse(state.preview.expiresAt)) {
     blockers.push("Create a fresh migration preview; the current plan has expired.");
   }
   if (migrationSourceDriftRowsForState(state).some((row) => row.status !== "current")) {
-    blockers.push("Refresh the scan and create a fresh migration preview before deploying.");
+    blockers.push("Refresh the scan and create a fresh migration preview before migrating.");
   }
   if (state.activeTask?.recoveryLock === true) {
-    blockers.push("Review recovery history and resolve the active recovery lock before deploying.");
+    blockers.push("Resolve the active recovery lock before migrating.");
   }
   const missingConfirmations = missingDeploymentConfirmationsForState(state);
   if (missingConfirmations.length > 0) {
@@ -794,15 +761,6 @@ export function deploymentConfirmationLabel(confirmation: DeploymentConfirmation
     case "delete":
       return "Delete target files listed in the preview.";
   }
-}
-
-export function rollbackRequestForState(
-  state: AppState,
-): CommandRequest<"deployment.rollback"> | undefined {
-  const deployment = state.history.find(
-    (entry) => entry.kind === "deployment" && entry.status === "succeeded",
-  );
-  return deployment === undefined ? undefined : { deploymentId: deployment.id };
 }
 
 export function scanActionForTaskEvent(event: TaskEvent): AppAction | undefined {
