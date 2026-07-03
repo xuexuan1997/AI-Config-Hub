@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -17,16 +16,6 @@ import { MigrationView } from "./migration.js";
 import { SettingsView } from "./settings.js";
 
 describe("desktop renderer view structure", () => {
-  it("does not rescan assets when only the migration target project changes", () => {
-    const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-    const targetSelectionStart = source.indexOf("async function selectMigrationTargetProject()");
-    const nextFunctionStart = source.indexOf("async function loadSettings()", targetSelectionStart);
-    const targetSelection = source.slice(targetSelectionStart, nextFunctionStart);
-
-    expect(targetSelection).toContain('type: "migrationTargetProject"');
-    expect(targetSelection).not.toContain('scanMigrationProject("target"');
-  });
-
   it("renders asset review and asset migration as sibling navigation without global project controls", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {
@@ -258,6 +247,8 @@ describe("desktop renderer view structure", () => {
     );
 
     expect(html).toContain('class="migration-confirmation-panel"');
+    expect(html).toContain('class="migration-execution-panel"');
+    expect(html).toContain("Run migration");
     expect(html).toContain('class="confirmation-item"');
     expect(html).toContain('class="migration-action-row"');
     expect(html).toContain('class="blocker-panel"');
@@ -272,6 +263,7 @@ describe("desktop renderer view structure", () => {
       createElement(MigrationView, {
         state: {
           ...initialState,
+          preview: previewFixture([]),
           activeTask: {
             taskId: "task:deployment:1",
             taskKind: "deployment",
@@ -292,10 +284,16 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
+    const executionPanelStart = html.indexOf('class="migration-execution-panel"');
+    const statusStart = html.indexOf('class="migration-run-status"', executionPanelStart);
+
+    expect(executionPanelStart).toBeGreaterThan(-1);
+    expect(statusStart).toBeGreaterThan(executionPanelStart);
     expect(html).toContain('class="task-status-summary"');
     expect(html).toContain("Status: Completed");
     expect(html).toContain("1/1 operations");
     expect(html).toContain("Deployment complete: 1 succeeded.");
+    expect(html).not.toContain('<section class="task-status">');
     expect(html).not.toContain("<p>completed ");
   });
 

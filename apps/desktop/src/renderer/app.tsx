@@ -4,12 +4,11 @@ import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/
 
 import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
-import { localeForState, t } from "./i18n.js";
+import { formatLocalizedUiError, localeForState, localizeUiMessage, t } from "./i18n.js";
 import {
   deploymentBlockersForState,
   deploymentConfirmationsForState,
   effectiveRequestForState,
-  formatUiError,
   initialState,
   migrationPreviewBlockersForState,
   openSourceRequestForState,
@@ -34,7 +33,7 @@ export function App(props: { readonly api: DesktopApi }) {
     try {
       await work();
     } catch (error) {
-      dispatch({ type: "message", message: formatUiError(error, action) });
+      dispatch({ type: "message", message: formatLocalizedUiError(locale, error, action) });
     }
   }
 
@@ -77,11 +76,14 @@ export function App(props: { readonly api: DesktopApi }) {
       if (response.ok) dispatch({ type: "settingsLoaded", settings: response.data });
       else {
         dispatch({ type: "settingsFailed" });
-        dispatch({ type: "message", message: response.error.message });
+        dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
       }
     } catch (error) {
       dispatch({ type: "settingsFailed" });
-      dispatch({ type: "message", message: formatUiError(error, "Load settings") });
+      dispatch({
+        type: "message",
+        message: formatLocalizedUiError(locale, error, "Load settings"),
+      });
     }
   }
 
@@ -95,11 +97,14 @@ export function App(props: { readonly api: DesktopApi }) {
       if (response.ok) dispatch({ type: "settingsUpdated", settings: response.data });
       else {
         dispatch({ type: "settingsFailed" });
-        dispatch({ type: "message", message: response.error.message });
+        dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
       }
     } catch (error) {
       dispatch({ type: "settingsFailed" });
-      dispatch({ type: "message", message: formatUiError(error, "Update settings") });
+      dispatch({
+        type: "message",
+        message: formatLocalizedUiError(locale, error, "Update settings"),
+      });
     }
   }
 
@@ -116,7 +121,9 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
-        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+        message: response.ok
+          ? t(locale, "Queued {taskId}", { taskId: response.data.taskId })
+          : localizeUiMessage(locale, response.error.message),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {
@@ -151,7 +158,9 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
-        message: response.ok ? `Queued ${response.data.taskId}` : response.error.message,
+        message: response.ok
+          ? t(locale, "Queued {taskId}", { taskId: response.data.taskId })
+          : localizeUiMessage(locale, response.error.message),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {
@@ -185,7 +194,9 @@ export function App(props: { readonly api: DesktopApi }) {
       const response = await props.api.invoke("assets.openSource", request);
       dispatch({
         type: "message",
-        message: response.ok ? t(locale, "Source file opened.") : response.error.message,
+        message: response.ok
+          ? t(locale, "Source file opened.")
+          : localizeUiMessage(locale, response.error.message),
       });
     });
   }
@@ -200,7 +211,7 @@ export function App(props: { readonly api: DesktopApi }) {
           ? await props.api.invoke("assets.disable", { assetId })
           : await props.api.invoke("assets.enable", { assetId });
       if (!response.ok) {
-        dispatch({ type: "message", message: response.error.message });
+        dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
         return;
       }
 
@@ -239,7 +250,8 @@ export function App(props: { readonly api: DesktopApi }) {
       }
       const response = await props.api.invoke("migration.preview", request);
       if (response.ok) dispatch({ type: "preview", preview: response.data });
-      else dispatch({ type: "message", message: response.error.message });
+      else
+        dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
     });
   }
 
@@ -259,7 +271,10 @@ export function App(props: { readonly api: DesktopApi }) {
       });
       const taskId = response.ok ? response.data.taskId : response.error.taskId;
       if (taskId !== undefined) subscribeOperationTask(taskId);
-      dispatch({ type: "message", message: response.ok ? undefined : response.error.message });
+      dispatch({
+        type: "message",
+        message: response.ok ? undefined : localizeUiMessage(locale, response.error.message),
+      });
     });
   }
 
@@ -311,7 +326,12 @@ export function App(props: { readonly api: DesktopApi }) {
               }
               const response = await props.api.invoke("effective.resolve", request);
               if (response.ok) dispatch({ type: "effective", effective: response.data });
-              else dispatch({ type: "message", message: response.error.message });
+              else {
+                dispatch({
+                  type: "message",
+                  message: localizeUiMessage(locale, response.error.message),
+                });
+              }
             });
           }}
           onOpenSource={() => void openSource()}

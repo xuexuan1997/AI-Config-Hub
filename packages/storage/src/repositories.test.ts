@@ -6,6 +6,7 @@ import {
   AssetSchema,
   DeploymentPlanSchema,
   DeploymentRecordSchema,
+  DiagnosticSchema,
   ScopeSchema,
 } from "@ai-config-hub/core";
 import {
@@ -73,14 +74,39 @@ function asset(id: string, instruction: string, extensions: Record<string, unkno
   });
 }
 
-function replacement(scanRunId: string, assets: readonly ReturnType<typeof asset>[]) {
+function diagnosticForAssetPath(input: {
+  readonly diagnosticId: string;
+  readonly scanRunId: string;
+  readonly sourcePath: string;
+}) {
+  return DiagnosticSchema.parse({
+    diagnosticId: input.diagnosticId,
+    code: "RESOURCE_INSTRUCTIONS_EMPTY",
+    severity: "error",
+    category: "discovery",
+    message: "Resource instructions are empty",
+    subject: { kind: "scan", id: input.scanRunId },
+    location: { path: input.sourcePath },
+    impact: "The resource cannot be used safely",
+    evidence: { sourcePath: input.sourcePath },
+    suggestedActions: ["Review the source configuration and scan again"],
+    blocking: true,
+    createdAt: "2026-06-21T08:00:00.000Z",
+  });
+}
+
+function replacement(
+  scanRunId: string,
+  assets: readonly ReturnType<typeof asset>[],
+  diagnostics: readonly ReturnType<typeof diagnosticForAssetPath>[] = [],
+) {
   return {
     scanRunId: ScanRunIdSchema.parse(scanRunId),
     tools: [tool],
     scopes: [scope],
     assets,
     effectiveConfigs: [],
-    diagnostics: [],
+    diagnostics,
   };
 }
 
@@ -181,6 +207,34 @@ describe("storage repositories", () => {
     const enabled = await repositories.index.setAssetStatus(assetAId, "enabled");
     expect(enabled).toMatchObject({ assetId: "asset-a", status: "enabled" });
     expect((await repositories.index.getAsset(assetAId))?.status).toBe("enabled");
+    opened.database.close();
+  });
+
+  it("lists diagnostics associated to an asset by source path ownership", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const inspectedAsset = asset("asset-a", "A");
+    await repositories.index.replaceDerivedIndex(
+      replacement(
+        "scan-full",
+        [inspectedAsset],
+        [
+          diagnosticForAssetPath({
+            diagnosticId: "diagnostic-a",
+            scanRunId: "scan-full",
+            sourcePath: inspectedAsset.canonicalSourcePath,
+          }),
+        ],
+      ),
+    );
+
+    const page = await repositories.index.listDiagnostics({
+      assetId: AssetIdSchema.parse(inspectedAsset.assetId),
+      limit: 20,
+    });
+
+    expect(page.items.map(({ diagnosticId }) => diagnosticId)).toEqual(["diagnostic-a"]);
     opened.database.close();
   });
 

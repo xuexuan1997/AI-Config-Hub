@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { localeForState, t, type DesktopLocale } from "../i18n.js";
+import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import {
   deploymentBlockersForState,
   deploymentConfirmationLabel,
@@ -79,24 +79,6 @@ export function MigrationView(props: {
         </button>
       </section>
 
-      {activeTask === undefined ? null : (
-        <section className="task-status">
-          <h2>{t(locale, "Migration status")}</h2>
-          <p className="task-status-summary">
-            <span>
-              {t(locale, "Status: {status}", { status: phaseLabel(locale, activeTask.phase) })}
-            </span>
-            {activeTask.progress === undefined ? null : <span>{progressLabel(activeTask)}</span>}
-          </p>
-          {activeTask.message === undefined ? null : <p>{activeTask.message}</p>}
-          {activeTask.recoveryLock ? (
-            <div className="recovery-lock">
-              <p>{t(locale, "Recovery lock active. Resolve it before retrying.")}</p>
-            </div>
-          ) : null}
-        </section>
-      )}
-
       <section className="migration-project-picker">
         <ProjectCard
           className="source"
@@ -141,7 +123,7 @@ export function MigrationView(props: {
               type="button"
               onClick={() => setSelectedResourceType(group.resourceType)}
             >
-              <strong>{resourceTypeLabel(group.resourceType)}</strong>
+              <strong>{resourceTypeLabel(locale, group.resourceType)}</strong>
               <span>
                 {formatDifferenceCount(locale, differenceCountForGroup(props.state, group))}
               </span>
@@ -173,7 +155,7 @@ export function MigrationView(props: {
                   />
                   <span>{asset.logicalKey}</span>
                   <small>
-                    {toolLabel(asset.toolKey)} / {resourceTypeLabel(asset.resourceType)}
+                    {toolLabel(asset.toolKey)} / {resourceTypeLabel(locale, asset.resourceType)}
                   </small>
                 </label>
               ))
@@ -294,97 +276,61 @@ export function MigrationView(props: {
         </section>
       </section>
 
-      {preview === undefined ? null : (
+      {preview === undefined && activeTask === undefined ? null : (
         <section className="migration-preview-details">
-          {preview.warnings.length === 0 ? null : (
-            <ul className="warning-list">
-              {preview.warnings.map((warning) => (
-                <li key={warning.id}>{warning.message}</li>
-              ))}
-            </ul>
-          )}
-          {preview.fieldLosses.length === 0 ? null : (
-            <section className="field-loss-panel" aria-label={t(locale, "Field loss details")}>
-              <h2>{t(locale, "Field loss")}</h2>
-              {preview.fieldLosses.map((loss) => (
-                <FieldLossDetail
-                  key={loss.assetId}
-                  assetLabels={assetLabels}
-                  locale={locale}
-                  loss={loss}
-                />
-              ))}
-            </section>
-          )}
-          {driftRows.length === 0 ? null : (
-            <DriftPanel assetLabels={assetLabels} driftRows={driftRows} locale={locale} />
-          )}
-          <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
-          {preview.changes.map((change) => (
-            <section key={change.pathDisplay} className="planned-change">
-              <h2>
-                {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
-              </h2>
-              <dl>
-                <dt>{t(locale, "Before")}</dt>
-                <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
-                <dt>{t(locale, "After")}</dt>
-                <dd>{change.afterHash ?? t(locale, "absent")}</dd>
-              </dl>
-              <pre>{change.diff}</pre>
-            </section>
-          ))}
-          <section
-            className="migration-confirmation-panel"
-            aria-label={t(locale, "Migration confirmations")}
-          >
-            <label className="confirmation-item">
-              <input
-                checked={props.state.deploymentConfirmed}
-                type="checkbox"
-                onChange={(event) => props.onConfirmMigration(event.currentTarget.checked)}
-              />
-              <span>{t(locale, "I understand this writes verified config files.")}</span>
-            </label>
-            {requiredConfirmations.length === 0 ? null : (
-              <fieldset className="confirmation-list">
-                <legend>{t(locale, "Required confirmations")}</legend>
-                {requiredConfirmations.map((confirmation) => (
-                  <label key={confirmation} className="confirmation-item">
-                    <input
-                      checked={grantedConfirmations.has(confirmation)}
-                      type="checkbox"
-                      onChange={(event) =>
-                        props.onConfirmRequirement(confirmation, event.currentTarget.checked)
-                      }
+          <MigrationExecutionPanel
+            activeTask={activeTask}
+            deploymentBlockers={deploymentBlockers}
+            deploymentConfirmed={props.state.deploymentConfirmed}
+            grantedConfirmations={grantedConfirmations}
+            locale={locale}
+            preview={preview}
+            requiredConfirmations={requiredConfirmations}
+            onConfirmMigration={props.onConfirmMigration}
+            onConfirmRequirement={props.onConfirmRequirement}
+            onExecuteMigration={props.onExecuteMigration}
+          />
+          {preview === undefined ? null : (
+            <>
+              {preview.warnings.length === 0 ? null : (
+                <ul className="warning-list">
+                  {preview.warnings.map((warning) => (
+                    <li key={warning.id}>{warning.message}</li>
+                  ))}
+                </ul>
+              )}
+              {preview.fieldLosses.length === 0 ? null : (
+                <section className="field-loss-panel" aria-label={t(locale, "Field loss details")}>
+                  <h2>{t(locale, "Field loss")}</h2>
+                  {preview.fieldLosses.map((loss) => (
+                    <FieldLossDetail
+                      key={loss.assetId}
+                      assetLabels={assetLabels}
+                      locale={locale}
+                      loss={loss}
                     />
-                    <span>{t(locale, deploymentConfirmationLabel(confirmation))}</span>
-                  </label>
-                ))}
-              </fieldset>
-            )}
-          </section>
-          <div className="migration-action-row">
-            <button
-              type="button"
-              disabled={deploymentBlockers.length > 0}
-              onClick={props.onExecuteMigration}
-            >
-              {t(locale, "Execute migration")}
-            </button>
-          </div>
-          {deploymentBlockers.length === 0 ? null : (
-            <ul className="blocker-panel">
-              {deploymentBlockers.map((blocker) => (
-                <li key={blocker}>
-                  {localizeDeploymentBlocker(
-                    locale,
-                    blocker,
-                    missingConfirmationLabels(requiredConfirmations, grantedConfirmations),
-                  )}
-                </li>
+                  ))}
+                </section>
+              )}
+              {driftRows.length === 0 ? null : (
+                <DriftPanel assetLabels={assetLabels} driftRows={driftRows} locale={locale} />
+              )}
+              <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
+              {preview.changes.map((change) => (
+                <section key={change.pathDisplay} className="planned-change">
+                  <h2>
+                    {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
+                  </h2>
+                  <dl>
+                    <dt>{t(locale, "Before")}</dt>
+                    <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
+                    <dt>{t(locale, "After")}</dt>
+                    <dd>{change.afterHash ?? t(locale, "absent")}</dd>
+                  </dl>
+                  <pre>{change.diff}</pre>
+                </section>
               ))}
-            </ul>
+            </>
           )}
         </section>
       )}
@@ -397,6 +343,118 @@ type MigrationAssetGroup = {
   readonly resourceType: string;
   readonly assets: readonly MigrationAssetSummary[];
 };
+
+function MigrationExecutionPanel(props: {
+  readonly activeTask: NonNullable<AppState["activeTask"]> | undefined;
+  readonly deploymentBlockers: readonly string[];
+  readonly deploymentConfirmed: boolean;
+  readonly grantedConfirmations: ReadonlySet<DeploymentConfirmation>;
+  readonly locale: DesktopLocale;
+  readonly preview: AppState["preview"];
+  readonly requiredConfirmations: readonly DeploymentConfirmation[];
+  readonly onConfirmMigration: (confirmed: boolean) => void;
+  readonly onConfirmRequirement: (confirmation: DeploymentConfirmation, granted: boolean) => void;
+  readonly onExecuteMigration: () => void;
+}) {
+  return (
+    <section className="migration-execution-panel" aria-label={t(props.locale, "Migration run")}>
+      <header className="migration-execution-heading">
+        <div>
+          <span className="eyebrow">{t(props.locale, "Migration run")}</span>
+          <h2>{t(props.locale, "Run migration")}</h2>
+          <p>
+            {t(props.locale, "Confirm the fresh preview, then execute the write from this page.")}
+          </p>
+        </div>
+        {props.preview === undefined ? null : (
+          <dl className="migration-run-plan">
+            <dt>{t(props.locale, "Plan")}</dt>
+            <dd>{displayIdentifier(props.preview.planId)}</dd>
+            <dt>{t(props.locale, "Compatibility")}</dt>
+            <dd>{compatibilityLabel(props.locale, props.preview.compatibility)}</dd>
+            <dt>{t(props.locale, "Expires")}</dt>
+            <dd>{formatTimestamp(props.preview.expiresAt)}</dd>
+          </dl>
+        )}
+      </header>
+      {props.activeTask === undefined ? null : (
+        <section className="migration-run-status" aria-label={t(props.locale, "Migration status")}>
+          <h3>{t(props.locale, "Migration status")}</h3>
+          <p className="task-status-summary">
+            <span>
+              {t(props.locale, "Status: {status}", {
+                status: phaseLabel(props.locale, props.activeTask.phase),
+              })}
+            </span>
+            {props.activeTask.progress === undefined ? null : (
+              <span>{progressLabel(props.activeTask)}</span>
+            )}
+          </p>
+          {props.activeTask.message === undefined ? null : (
+            <p>{localizeUiMessage(props.locale, props.activeTask.message)}</p>
+          )}
+          {props.activeTask.recoveryLock ? (
+            <div className="recovery-lock">
+              <p>{t(props.locale, "Recovery lock active. Resolve it before retrying.")}</p>
+            </div>
+          ) : null}
+        </section>
+      )}
+      <section
+        className="migration-confirmation-panel"
+        aria-label={t(props.locale, "Migration confirmations")}
+      >
+        <label className="confirmation-item">
+          <input
+            checked={props.deploymentConfirmed}
+            type="checkbox"
+            onChange={(event) => props.onConfirmMigration(event.currentTarget.checked)}
+          />
+          <span>{t(props.locale, "I understand this writes verified config files.")}</span>
+        </label>
+        {props.requiredConfirmations.length === 0 ? null : (
+          <fieldset className="confirmation-list">
+            <legend>{t(props.locale, "Required confirmations")}</legend>
+            {props.requiredConfirmations.map((confirmation) => (
+              <label key={confirmation} className="confirmation-item">
+                <input
+                  checked={props.grantedConfirmations.has(confirmation)}
+                  type="checkbox"
+                  onChange={(event) =>
+                    props.onConfirmRequirement(confirmation, event.currentTarget.checked)
+                  }
+                />
+                <span>{t(props.locale, deploymentConfirmationLabel(confirmation))}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+      </section>
+      <div className="migration-action-row">
+        <button
+          type="button"
+          disabled={props.deploymentBlockers.length > 0}
+          onClick={props.onExecuteMigration}
+        >
+          {t(props.locale, "Execute migration")}
+        </button>
+      </div>
+      {props.deploymentBlockers.length === 0 ? null : (
+        <ul className="blocker-panel">
+          {props.deploymentBlockers.map((blocker) => (
+            <li key={blocker}>
+              {localizeDeploymentBlocker(
+                props.locale,
+                blocker,
+                missingConfirmationLabels(props.requiredConfirmations, props.grantedConfirmations),
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function ProjectCard(props: {
   readonly className: "source" | "target";
@@ -669,9 +727,9 @@ function toolLabel(toolKey: string): string {
   }
 }
 
-function resourceTypeLabel(resourceType: string): string {
+function resourceTypeLabel(locale: DesktopLocale, resourceType: string): string {
   if (resourceType.toLowerCase() === "mcp") return "MCP";
-  return titleizeIdentifier(resourceType);
+  return t(locale, titleizeIdentifier(resourceType));
 }
 
 function conflictPolicyLabel(locale: DesktopLocale, policy: MigrationConflictPolicy): string {

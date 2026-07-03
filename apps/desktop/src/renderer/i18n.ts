@@ -15,6 +15,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Confirm that this writes verified config files.": "确认这会写入已验证的配置文件。",
   "Confirmations: {confirmations}": "确认项：{confirmations}",
   "Confirm required migration actions:": "确认必需的迁移动作：",
+  "Confirm the fresh preview, then execute the write from this page.":
+    "确认最新预览后，直接在此页面执行写入。",
   "Create a migration preview before migrating.": "请先创建迁移预览再迁移。",
   "Deploy only from a fresh preview plan hash with explicit confirmation.":
     "仅从新的预览计划哈希部署，并需要明确确认。",
@@ -58,6 +60,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   Language: "语言",
   Light: "浅色",
   "Load effective configuration": "加载有效配置",
+  "Load settings": "加载设置",
   Loading: "正在加载",
   "Logical key": "逻辑键",
   "Manual path fallback": "手动路径备用",
@@ -65,6 +68,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Migration preview": "迁移预览",
   "Migration settings": "迁移设置",
   "No assets indexed yet.": "尚未索引资产。",
+  "No assets match the selected tool.": "没有匹配所选工具的资产。",
   "No differences for this asset type.": "此资产类型没有差异。",
   "No diagnostics": "无诊断",
   "No diagnostics for this asset.": "此资产没有诊断。",
@@ -83,11 +87,13 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Project path": "项目路径",
   "Project setup": "项目设置",
   Project: "项目",
+  "Queued {taskId}": "已加入队列 {taskId}",
   Ready: "就绪",
   "Recovery mode": "恢复模式",
   "Recovery lock active. Review history before retrying.": "恢复锁已激活。重试前请查看历史。",
   Reload: "重新加载",
   "Refresh assets": "刷新资产",
+  "Refresh diagnostics": "刷新诊断",
   "Refresh history": "刷新历史",
   "Rescan after edit": "编辑后重新扫描",
   Resource: "资源",
@@ -115,12 +121,16 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Select at least one source asset.": "请选择至少一个源资产。",
   "Select a project and scan at least one asset first.": "请先选择项目并至少扫描一个资产。",
   "Select source assets from one resource type.": "请选择同一种资源类型的源资产。",
+  "Select project": "选择项目",
+  "Select migration source project": "选择迁移源项目",
+  "Select migration target project": "选择迁移目标项目",
   "Selected migration sources changed after the rescan; create a new preview.":
     "重新扫描后，已选择的迁移来源发生变化；请创建新的预览。",
   "Selected asset diagnostics": "已选资产诊断",
   "Selected asset info": "已选资产信息",
   "Selected asset warnings": "已选资产警告",
   "Source assets": "源资产",
+  "Source directory": "来源目录",
   "Source project": "源项目",
   "Source project path": "源项目路径",
   "Open source": "打开来源",
@@ -154,6 +164,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Effective diagnostics": "有效诊断",
   Info: "信息",
   Locate: "定位",
+  "Locate diagnostic": "定位诊断",
   Warning: "警告",
   "Inherited from {reason}.": "继承自{reason}。",
   "Merged because {reason}.": "由于{reason}而合并。",
@@ -166,6 +177,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Enter a target project folder.": "请输入目标项目文件夹。",
   "Simplified Chinese": "简体中文",
   "Start scan": "开始扫描",
+  "Start source scan": "开始扫描源项目",
+  "Start target scan": "开始扫描目标项目",
   System: "跟随系统",
   "Target project folder": "目标项目文件夹",
   "Target project": "目标项目",
@@ -194,7 +207,9 @@ const ZH_CN: Partial<Record<string, string>> = {
   "{kind} detail": "{kind}详情",
   "Plan hash: {hash}": "计划哈希：{hash}",
   "Compatibility: {compatibility}": "兼容性：{compatibility}",
+  Compatibility: "兼容性",
   "Expires: {expires}": "过期时间：{expires}",
+  Expires: "过期时间",
   "Overwrite existing target files.": "覆盖现有目标文件。",
   "Deploy a partial conversion with documented warnings.": "部署包含警告的部分转换。",
   "Delete target files listed in the preview.": "删除预览中列出的目标文件。",
@@ -257,10 +272,13 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Replace existing files": "替换现有文件",
   "Deployment confirmations": "部署确认",
   "Migration confirmations": "迁移确认",
+  "Migration run": "迁移执行",
   "Migration status": "迁移状态",
   "Recovery lock active. Resolve it before retrying.": "恢复锁已激活。请先解决后再重试。",
   "Resolve the active recovery lock before migrating.": "请先解决当前恢复锁再迁移。",
+  "Resolve effective configuration": "解析有效配置",
   "Required confirmations": "必需确认",
+  "Run migration": "执行迁移",
   "Stop on conflicts": "遇到冲突时停止",
   "Merge (not supported yet)": "合并（暂不支持）",
   "Use typed path": "使用输入路径",
@@ -273,6 +291,16 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Workspace diagnostics": "工作区诊断",
   "Workspace info": "工作区信息",
   "Workspace warnings": "工作区警告",
+  "Will load": "是否加载",
+  "Tool filters": "工具筛选",
+  "Unknown source": "未知来源",
+  Yes: "是",
+  "No, disabled": "否，已禁用",
+  "No, covered": "否，已被覆盖",
+  "No, covered by {asset}": "否，已被 {asset} 覆盖",
+  "{action} failed: {detail}": "{action}失败：{detail}",
+  "{action} failed: the system file chooser is unavailable; check desktop file picker permissions and try again. ({detail})":
+    "{action}失败：系统文件选择器不可用；请检查桌面文件选择权限后重试。（{detail}）",
 };
 
 export function localeForState(state: AppState): DesktopLocale {
@@ -300,6 +328,184 @@ export function t(
     (current, [key, value]) => current.replaceAll(`{${key}}`, String(value)),
     template,
   );
+}
+
+export function formatLocalizedUiError(
+  locale: DesktopLocale,
+  error: unknown,
+  action: string,
+): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const localizedAction = t(locale, action);
+  const lowerDetail = detail.toLowerCase();
+  if (lowerDetail.includes("filechooser") || lowerDetail.includes("file chooser")) {
+    return t(
+      locale,
+      "{action} failed: the system file chooser is unavailable; check desktop file picker permissions and try again. ({detail})",
+      { action: localizedAction, detail },
+    );
+  }
+  return t(locale, "{action} failed: {detail}", {
+    action: localizedAction,
+    detail: localizeUiMessage(locale, detail),
+  });
+}
+
+export function localizeUiMessage(locale: DesktopLocale, message: string): string {
+  if (locale !== "zh-CN") return message;
+
+  const queued = /^Queued (.+)$/.exec(message);
+  if (queued !== null) return `已加入队列 ${queued[1]}`;
+
+  const completion =
+    /^(Scan|Deployment|Rollback) (complete|partially complete|failed|cancelled|rolled back)(?:: (.*))?\.$/.exec(
+      message,
+    );
+  if (completion !== null) {
+    const taskKind = taskKindMessageLabel(locale, completion[1] ?? "");
+    const status = completionStatusMessageLabel(completion[2] ?? "");
+    const counts =
+      completion[3] === undefined ? "" : `：${localizeCompletionCounts(completion[3])}`;
+    return `${taskKind}${status}${counts}。`;
+  }
+
+  const snapshot = /^(scan|deployment|rollback) ([a-z_]+): restored from event snapshot\.$/.exec(
+    message,
+  );
+  if (snapshot !== null) {
+    const taskKind = taskKindMessageLabel(locale, snapshot[1] ?? "");
+    const status = taskStatusMessageLabel(locale, snapshot[2] ?? "");
+    return `${taskKind}${status}：已从事件快照恢复。`;
+  }
+
+  const progress =
+    /^(scan|deployment|rollback) ([a-z_]+): (\d+\/(?:\d+|\?)) (files|operations|items)$/.exec(
+      message,
+    );
+  if (progress !== null) {
+    const taskKind = taskKindMessageLabel(locale, progress[1] ?? "");
+    const phase = taskStatusMessageLabel(locale, progress[2] ?? "");
+    const amount = progress[3] ?? "";
+    const unit = progressUnitLabel(progress[4] ?? "");
+    return `${taskKind}${phase}：${amount} ${unit}`;
+  }
+
+  const failed = /^(scan|deployment|rollback) failed: (.+)$/.exec(message);
+  if (failed !== null) {
+    const taskKind = taskKindMessageLabel(locale, failed[1] ?? "");
+    return `${taskKind}失败：${failed[2]}`;
+  }
+
+  return message;
+}
+
+function localizeCompletionCounts(counts: string): string {
+  return counts
+    .split(", ")
+    .map((count) => {
+      const match = /^(\d+) (succeeded|failed|skipped)$/.exec(count);
+      if (match === null) return count;
+      const amount = match[1] ?? "0";
+      switch (match[2]) {
+        case "succeeded":
+          return `${amount} 项成功`;
+        case "failed":
+          return `${amount} 项失败`;
+        case "skipped":
+          return `${amount} 项跳过`;
+        default:
+          return count;
+      }
+    })
+    .join("，");
+}
+
+function taskKindMessageLabel(locale: DesktopLocale, taskKind: string): string {
+  switch (taskKind.toLowerCase()) {
+    case "scan":
+      return t(locale, "Scan");
+    case "deployment":
+      return t(locale, "Deployment");
+    case "rollback":
+      return t(locale, "Rollback");
+    default:
+      return taskKind;
+  }
+}
+
+function completionStatusMessageLabel(status: string): string {
+  switch (status) {
+    case "complete":
+      return "已完成";
+    case "partially complete":
+      return "部分完成";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "rolled back":
+      return "已回滚";
+    default:
+      return status;
+  }
+}
+
+function taskStatusMessageLabel(locale: DesktopLocale, status: string): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "succeeded":
+      return t(locale, "Succeeded");
+    case "partially_succeeded":
+      return t(locale, "Partially succeeded");
+    case "cancelled":
+      return t(locale, "Cancelled");
+    case "failed":
+      return t(locale, "Failed");
+    case "rolled_back":
+      return t(locale, "Rolled back");
+    case "queued":
+      return t(locale, "Queued");
+    case "discovering":
+      return t(locale, "Discovering");
+    case "reading":
+      return t(locale, "Reading");
+    case "parsing":
+      return t(locale, "Parsing");
+    case "validating":
+      return t(locale, "Validating");
+    case "committing":
+      return t(locale, "Committing");
+    case "preflight":
+      return t(locale, "Preflight");
+    case "backing_up":
+      return t(locale, "Backing up");
+    case "writing":
+      return t(locale, "Writing");
+    case "verifying":
+      return t(locale, "Verifying");
+    case "restoring":
+      return t(locale, "Restoring");
+    case "rolling_back":
+      return t(locale, "Rolling back");
+    case "completed":
+      return t(locale, "Completed");
+    default:
+      return status;
+  }
+}
+
+function progressUnitLabel(unit: string): string {
+  switch (unit) {
+    case "files":
+      return "个文件";
+    case "operations":
+      return "项操作";
+    case "items":
+      return "项";
+    default:
+      return unit;
+  }
 }
 
 function systemPreferredLanguages(): readonly string[] {

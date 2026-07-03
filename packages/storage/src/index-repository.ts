@@ -12,6 +12,7 @@ import {
   type AssetStatus,
   type DerivedIndexIncrementalReplacement,
   type DerivedIndexReplacement,
+  type Diagnostic,
   type IndexRepository,
 } from "@ai-config-hub/core";
 import {
@@ -306,6 +307,8 @@ export class SqliteIndexRepository implements IndexRepository {
   listDiagnostics(
     query: Parameters<IndexRepository["listDiagnostics"]>[0],
   ): ReturnType<IndexRepository["listDiagnostics"]> {
+    const assetPath =
+      query.assetId === undefined ? undefined : sourcePathForAssetId(this.database, query.assetId);
     let diagnostics = (
       this.database.prepare("SELECT evidence_json FROM diagnostics").all() as {
         evidence_json: string;
@@ -314,8 +317,7 @@ export class SqliteIndexRepository implements IndexRepository {
       .map(({ evidence_json }) => parseJson(DiagnosticSchema, evidence_json))
       .filter(
         (item) =>
-          query.assetId === undefined ||
-          (item.subject.kind === "asset" && item.subject.id === query.assetId),
+          query.assetId === undefined || diagnosticBelongsToAsset(item, query.assetId, assetPath),
       )
       .filter((item) => query.severity === undefined || query.severity.includes(item.severity))
       .sort((left, right) => left.diagnosticId.localeCompare(right.diagnosticId));
@@ -352,6 +354,24 @@ export class SqliteIndexRepository implements IndexRepository {
       (this.database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
     );
   }
+}
+
+function sourcePathForAssetId(database: DatabaseSync, assetId: string): string | undefined {
+  const row = database
+    .prepare("SELECT source_path_normalized FROM assets WHERE domain_id = ?")
+    .get(assetId) as { readonly source_path_normalized: string } | undefined;
+  return row?.source_path_normalized;
+}
+
+function diagnosticBelongsToAsset(
+  diagnostic: Diagnostic,
+  assetId: string,
+  assetPath: string | undefined,
+): boolean {
+  if (diagnostic.subject.kind === "asset" && diagnostic.subject.id === assetId) return true;
+  if (assetPath === undefined) return false;
+  if (diagnostic.location?.path === assetPath) return true;
+  return diagnostic.evidence.sourcePath === assetPath;
 }
 
 function prepareReplacement(replacement: DerivedIndexReplacement) {

@@ -500,8 +500,19 @@ function toolLabel(toolKey: string): string {
 }
 
 function resourceTypeLabel(locale: DesktopLocale, resourceType: string): string {
+  if (locale === "zh-CN" && isResourceKeyword(resourceType)) {
+    return resourceKeywordLabel(resourceType);
+  }
   if (resourceType.toLowerCase() === "mcp") return "MCP";
   return t(locale, titleizeIdentifier(resourceType));
+}
+
+function isResourceKeyword(resourceType: string): boolean {
+  return ["agent", "mcp", "rule", "skill"].includes(resourceType.toLowerCase());
+}
+
+function resourceKeywordLabel(resourceType: string): string {
+  return resourceType.toLowerCase() === "mcp" ? "MCP" : resourceType;
 }
 
 function scopeKindLabel(locale: DesktopLocale, scopeKind: string): string {

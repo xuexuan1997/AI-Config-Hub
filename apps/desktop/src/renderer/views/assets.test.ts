@@ -193,6 +193,24 @@ describe("AssetsView", () => {
       '<section class="detail-panel" aria-label="Diagnostics for rule:AGENTS">',
     );
   });
+
+  it("keeps resource type keywords untranslated in Simplified Chinese", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      assets: [
+        assetSummaryFixture("asset-rule", "rule:AGENTS", { resourceType: "rule" }),
+        assetSummaryFixture("asset-agent", "agent:reviewer", { resourceType: "agent" }),
+        assetSummaryFixture("asset-mcp", "mcp:docs", { resourceType: "mcp" }),
+      ],
+    });
+
+    expect(html).toContain("<strong>rule</strong>");
+    expect(html).toContain("<strong>agent</strong>");
+    expect(html).toContain("<strong>MCP</strong>");
+  });
 });
 
 function renderAssets(statePatch: Partial<AppState>): string {
