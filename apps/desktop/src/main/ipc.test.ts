@@ -181,6 +181,20 @@ function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceM
         scopeId: "scope-1",
         logicalKey: "AGENTS.md",
         status: "enabled",
+        disablementOptions: [
+          {
+            method: "move_file",
+            label: "Move file out of the tool load path",
+            description: "Move the source file into the AI Config Hub disabled-assets area.",
+            recommended: true,
+          },
+          {
+            method: "hub_ignore",
+            label: "Ignore inside AI Config Hub only",
+            description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+            recommended: false,
+          },
+        ],
       },
       source: {
         pathDisplay: "AGENTS.md",

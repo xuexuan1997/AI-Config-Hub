@@ -146,6 +146,10 @@ describe("AssetsView", () => {
     expect(html).toContain('aria-label="Asset detail"');
     expect(html).toContain('class="asset-detail-dialog"');
     expect(html).toContain('class="asset-detail-scroll"');
+    expect(html).toContain("Disable methods");
+    expect(html).toContain("Move file out of the tool load path");
+    expect(html).toContain("Ignore inside AI Config Hub only");
+    expect(html).toContain("Recommended");
     expect(html).toContain(">Close</button>");
     expect(html).not.toContain('<section class="detail-panel" aria-label="Asset detail">');
   });
@@ -300,6 +304,20 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       resourceType: "rule",
       scopeId: ScopeIdSchema.parse("/workspace"),
       status: "enabled",
+      disablementOptions: [
+        {
+          method: "move_file",
+          label: "Move file out of the tool load path",
+          description: "Move the source file into the AI Config Hub disabled-assets area.",
+          recommended: true,
+        },
+        {
+          method: "hub_ignore",
+          label: "Ignore inside AI Config Hub only",
+          description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+          recommended: false,
+        },
+      ],
       logicalKey,
     },
     source: {

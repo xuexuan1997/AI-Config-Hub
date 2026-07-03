@@ -423,6 +423,7 @@ function createServices(
           scopeId: asset.scopeId,
           logicalKey: asset.locator,
           status: asset.status,
+          disablementOptions: disablementOptionsForAsset(asset),
           ...(include.includes("normalized") ? { normalized: toJson(asset.resource) } : {}),
           ...(include.includes("references") ? { references: asset.references } : {}),
           ...(include.includes("diagnostics") ? { diagnosticIds: [] } : {}),
@@ -1490,6 +1491,60 @@ function scopeKindsForAssets(
       .filter(({ domain_id }) => scopeIds.has(domain_id))
       .map(({ domain_id, scope_kind }) => [domain_id, ScopeKindSchema.parse(scope_kind)]),
   );
+}
+
+type AssetDisablementOption = {
+  readonly method: "native" | "move_file" | "remove_config_entry" | "hub_ignore";
+  readonly label: string;
+  readonly description: string;
+  readonly recommended: boolean;
+};
+
+function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOption[] {
+  const options: Omit<AssetDisablementOption, "recommended">[] = [];
+  const native = nativeDisablementOption(asset);
+  if (native !== undefined) options.push(native);
+  if (asset.resource.kind === "mcp") {
+    options.push({
+      method: "remove_config_entry",
+      label: "Remove the configuration entry",
+      description:
+        "Remove this server entry from the tool configuration and keep a Hub manifest record for recovery.",
+    });
+  } else if (["rule", "agent", "skill"].includes(asset.resource.kind)) {
+    options.push({
+      method: "move_file",
+      label: "Move file out of the tool load path",
+      description: "Move the source file into the AI Config Hub disabled-assets area.",
+    });
+  }
+  options.push({
+    method: "hub_ignore",
+    label: "Ignore inside AI Config Hub only",
+    description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+  });
+
+  return options.map((option, index) => ({ ...option, recommended: index === 0 }));
+}
+
+function nativeDisablementOption(
+  asset: Asset,
+): Omit<AssetDisablementOption, "recommended"> | undefined {
+  if (asset.toolId === "opencode" && asset.resource.kind === "agent") {
+    return {
+      method: "native",
+      label: "Set OpenCode agent disable to true",
+      description: "Write disable=true for this agent in the OpenCode configuration.",
+    };
+  }
+  if (asset.toolId === "opencode" && asset.resource.kind === "mcp") {
+    return {
+      method: "native",
+      label: "Set OpenCode MCP enabled to false",
+      description: "Write enabled=false for this MCP server in the OpenCode configuration.",
+    };
+  }
+  return undefined;
 }
 
 type AssetListLoadState = {

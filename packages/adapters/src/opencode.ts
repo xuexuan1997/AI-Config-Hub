@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, sep } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -13,7 +13,6 @@ import type {
 } from "@ai-config-hub/core";
 import { NormalizedResourceSchema } from "@ai-config-hub/core";
 import {
-  AbsolutePathSchema,
   AdapterIdSchema,
   SemVerRangeSchema,
   SemVerSchema,
@@ -57,6 +56,7 @@ function asset(
   context: ParseContext,
   locator: string,
   resource: ParsedAsset["resource"],
+  status?: ParsedAsset["status"],
 ): ParsedAsset {
   return {
     toolId: context.candidate.toolId,
@@ -68,7 +68,12 @@ function asset(
     resource,
     references: [],
     extensions: {},
+    ...(status === undefined ? {} : { status }),
   };
+}
+
+function assetStatusFromConfig(config: Readonly<Record<string, unknown>>): ParsedAsset["status"] {
+  return config["disable"] === true || config["enabled"] === false ? "disabled" : undefined;
 }
 
 function parseConfigAgents(context: ParseContext): ParseResult {
@@ -93,7 +98,7 @@ function parseConfigAgents(context: ParseContext): ParseResult {
             extensions: redactStructuredValue(withoutKeys(config, ["prompt", "model", "tools"])),
           },
         });
-        return asset(context, `agent:${name}`, resource);
+        return asset(context, `agent:${name}`, resource, assetStatusFromConfig(config));
       });
     return { status: "parsed", assets, diagnostics: [] };
   } catch (error) {
@@ -113,7 +118,7 @@ function parseConfigMcp(context: ParseContext): ParseResult {
         const command = stringList(config["command"]);
         const resource =
           command.length > 0 ? localMcp(name, config, command) : remoteMcp(name, config);
-        return [asset(context, `mcp:${name}`, resource)];
+        return [asset(context, `mcp:${name}`, resource, assetStatusFromConfig(config))];
       });
     return { status: "parsed", assets, diagnostics: [] };
   } catch (error) {
@@ -235,6 +240,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
       });
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);
+        const normalizedSourcePath = normalizePathSeparators(sourcePath);
         if (leaf === "AGENTS.md" || leaf === "CLAUDE.md") {
           candidates.push(
             candidate({
@@ -247,10 +253,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
               scopeKind,
             }),
           );
-        } else if (
-          sourcePath.includes(`${sep}.opencode${sep}agents${sep}`) &&
-          leaf.endsWith(".md")
-        ) {
+        } else if (normalizedSourcePath.includes("/.opencode/agents/") && leaf.endsWith(".md")) {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -262,9 +265,9 @@ class OpenCodeAdapter extends BaseToolAdapter {
             }),
           );
         } else if (
-          (sourcePath.includes(`${sep}.opencode${sep}skills${sep}`) ||
-            sourcePath.includes(`${sep}.agents${sep}skills${sep}`) ||
-            sourcePath.includes(`${sep}.claude${sep}skills${sep}`)) &&
+          (normalizedSourcePath.includes("/.opencode/skills/") ||
+            normalizedSourcePath.includes("/.agents/skills/") ||
+            normalizedSourcePath.includes("/.claude/skills/")) &&
           leaf === "SKILL.md"
         ) {
           candidates.push(
@@ -367,7 +370,7 @@ async function configuredInstructionPaths(input: {
       continue;
     }
     if (!hasGlobSyntax(instruction)) {
-      const path = AbsolutePathSchema.parse(resolve(input.baseRoot, instruction));
+      const path = markerPath(input.baseRoot, ...pathSegments(instruction));
       if ((await input.read.stat(path)).kind === "file") {
         files.push(await input.read.realpath(path));
       }
@@ -376,9 +379,7 @@ async function configuredInstructionPaths(input: {
 
     const staticRoot = staticGlobRoot(normalized);
     const searchRoot =
-      staticRoot.length === 0
-        ? input.baseRoot
-        : AbsolutePathSchema.parse(resolve(input.baseRoot, ...staticRoot));
+      staticRoot.length === 0 ? input.baseRoot : markerPath(input.baseRoot, ...staticRoot);
     const candidates =
       (await input.read.stat(searchRoot)).kind === "directory"
         ? await walkRelativeDirectories(input.read, searchRoot, ["."], input.signal)
@@ -389,6 +390,14 @@ async function configuredInstructionPaths(input: {
     }
   }
   return uniquePaths(files);
+}
+
+function normalizePathSeparators(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+function pathSegments(path: string): readonly string[] {
+  return path.split(/[\\/]/).filter((segment) => segment.length > 0 && segment !== ".");
 }
 
 function hasGlobSyntax(path: string): boolean {

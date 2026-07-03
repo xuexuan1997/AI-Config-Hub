@@ -148,7 +148,8 @@ export function candidate(input: {
 }
 
 export function markerPath(root: AbsolutePath, ...segments: string[]): AbsolutePath {
-  return AbsolutePathSchema.parse(join(root, ...segments));
+  const joined = join(root, ...segments);
+  return AbsolutePathSchema.parse(root.startsWith("/") ? joined.replaceAll("\\", "/") : joined);
 }
 
 export function scopeKindFromEvidence(

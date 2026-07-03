@@ -467,7 +467,10 @@ function diagnosticLabel(
   locale: DesktopLocale,
   diagnostic: AppState["diagnostics"][number],
 ): string {
-  return `${severityLabel(locale, diagnostic.severity)}: ${sentenceCaseIdentifier(diagnostic.code)}`;
+  return `${severityLabel(locale, diagnostic.severity)}: ${diagnosticCodeLabel(
+    locale,
+    diagnostic.code,
+  )}`;
 }
 
 function severityLabel(
@@ -586,6 +589,136 @@ function lowerFirst(value: string): string {
   return value.length === 0 ? value : value[0]?.toLowerCase() + value.slice(1);
 }
 
+const ZH_DIAGNOSTIC_CODE_LABELS: Readonly<Record<string, string>> = {
+  ADAPTER_DIAGNOSTIC: "适配器诊断",
+  ADAPTER_PARSE_INVALID: "配置解析失败",
+  ADAPTER_WRITE_CAPABILITY_UNAVAILABLE: "适配器写入能力不可用",
+  CURSOR_LEGACY_RULE_FORMAT: "Cursor 旧版规则格式",
+  DEPLOYMENT_DELETE_NOT_APPLIED: "部署删除未生效",
+  DEPLOYMENT_TARGET_HASH_MISMATCH: "部署目标哈希不匹配",
+  DEPLOYMENT_TARGET_SEMANTIC_INVALID: "部署目标语义无效",
+  DEPLOYMENT_TARGET_SEMANTIC_KIND_MISMATCH: "部署目标资源类型不匹配",
+  DEPLOYMENT_TARGETS_ALREADY_IDENTICAL: "部署目标已完全一致",
+  DUPLICATE_RESOURCE_LOCATOR: "资源定位符重复",
+  MCP_LITERAL_SECRET_RISK: "MCP 明文密钥风险",
+  MCP_NON_DEPLOYABLE_SECRET: "MCP 含不可部署密钥",
+  PARTIAL_CONVERSION: "部分转换",
+  RESOURCE_IGNORED_BY_EFFECTIVE_CONFIG: "资源被有效配置忽略",
+  RESOURCE_INSTRUCTIONS_EMPTY: "资源指令为空",
+  RESOURCE_OUTSIDE_CONFIG_ROOT: "资源位于配置根目录外",
+  SCAN_READ_FAILED: "扫描读取失败",
+  STALE_INDEX: "索引已过期",
+  UNRESOLVED_SKILL_REFERENCE: "技能引用未解析",
+  VALIDATION_FAILED: "校验失败",
+};
+
+const ZH_DIAGNOSTIC_MESSAGES: Readonly<Record<string, string>> = {
+  "All generated outputs are already byte-identical to their targets":
+    "所有生成输出已经与目标文件字节一致。",
+  "Configuration file does not exist": "配置文件不存在。",
+  "Configuration file is not valid UTF-8": "配置文件不是有效的 UTF-8。",
+  "File changed while it was being read": "文件在读取过程中发生变化。",
+  "MCP configuration appears to contain a literal secret; prefer an environment reference":
+    "MCP 配置似乎包含明文密钥；建议改用环境变量引用。",
+  "MCP configuration contains non-deployable secret values": "MCP 配置包含不可部署的密钥值。",
+  "Review the diagnostic": "查看此诊断。",
+  "Skill reference could not be resolved": "技能引用无法解析。",
+  "The .cursorrules format is deprecated": ".cursorrules 格式已弃用。",
+  "The configuration file could not be parsed": "配置文件无法解析。",
+  "The configuration file could not be read safely": "无法安全读取配置文件。",
+  "The operation was cancelled": "操作已取消。",
+};
+
+const ZH_DIAGNOSTIC_ACTIONS: Readonly<Record<string, string>> = {
+  "Check file permissions and retry the scan": "检查文件权限后重新扫描。",
+  "Choose a path inside a registered configuration root": "选择已注册配置根目录内的路径。",
+  "Create the referenced file or remove the reference": "创建被引用的文件，或移除此引用。",
+  "Enable the asset before creating a migration preview": "创建迁移预览前先启用该资产。",
+  "Fix the file": "修复此文件。",
+  "Refresh the configuration index and try again": "刷新配置索引后重试。",
+  "Refresh the deployment preview and try again": "刷新部署预览后重试。",
+  "Refresh the local index and retry": "刷新本地索引后重试。",
+  "Review deployment history before retrying": "重试前查看部署历史。",
+  "Review rollback diagnostics before retrying": "重试前查看回滚诊断。",
+  "Review the configuration and scan again": "查看配置后重新扫描。",
+  "Review the diagnostic": "查看此诊断。",
+  "Review the generated output before deployment": "部署前查看生成的输出。",
+  "Review the generated plan before deployment": "部署前查看生成的计划。",
+  "Review the preview": "查看预览。",
+  "Review the source configuration and scan again": "查看源配置后重新扫描。",
+  "Retry the scan after the file becomes stable": "等待文件稳定后重新扫描。",
+  "Save the configuration file as UTF-8 and scan again": "将配置文件保存为 UTF-8 后重新扫描。",
+  "Start the operation again when ready": "准备好后重新开始此操作。",
+};
+
+function diagnosticCodeLabel(locale: DesktopLocale, code: string): string {
+  if (locale !== "zh-CN") return sentenceCaseIdentifier(code);
+  return ZH_DIAGNOSTIC_CODE_LABELS[code] ?? `诊断 ${code}`;
+}
+
+function diagnosticText(locale: DesktopLocale, text: string): string {
+  if (locale !== "zh-CN") return text;
+  return (
+    ZH_DIAGNOSTIC_MESSAGES[text] ??
+    ZH_DIAGNOSTIC_ACTIONS[text] ??
+    localizeDiagnosticPattern(text) ??
+    text
+  );
+}
+
+function localizeDiagnosticPattern(text: string): string | undefined {
+  const outsideRoot = /^Resource (.+) is outside detected (.+) configuration roots$/.exec(text);
+  if (outsideRoot !== null) {
+    return `资源 ${outsideRoot[1] ?? ""} 位于已检测到的 ${outsideRoot[2] ?? ""} 配置根目录之外。`;
+  }
+
+  const duplicateLocator = /^Multiple (.+) resources use locator (.+)$/.exec(text);
+  if (duplicateLocator !== null) {
+    return `多个 ${duplicateLocator[1] ?? ""} 资源使用同一个定位符 ${duplicateLocator[2] ?? ""}。`;
+  }
+
+  const unresolvedSkill = /^Skill reference could not be resolved from (.+)$/.exec(text);
+  if (unresolvedSkill !== null) {
+    return `无法从 ${unresolvedSkill[1] ?? ""} 解析技能引用。`;
+  }
+
+  const emptyInstructions = /^(.+) resource has empty instructions after trimming whitespace$/.exec(
+    text,
+  );
+  if (emptyInstructions !== null) {
+    return `${emptyInstructions[1] ?? ""} 资源去除空白后指令为空。`;
+  }
+
+  const ignored = /^Resource (.+) is ignored by the effective configuration resolution$/.exec(text);
+  if (ignored !== null) {
+    return `资源 ${ignored[1] ?? ""} 被有效配置解析忽略。`;
+  }
+
+  const deleteNotApplied = /^Deployment expected (.+) to be deleted$/.exec(text);
+  if (deleteNotApplied !== null) {
+    return `部署预期删除 ${deleteNotApplied[1] ?? ""}，但删除未生效。`;
+  }
+
+  const disabledAsset = /^Asset is disabled and cannot be used as a migration source: (.+)$/.exec(
+    text,
+  );
+  if (disabledAsset !== null) {
+    return `资产已禁用，不能作为迁移来源：${disabledAsset[1] ?? ""}`;
+  }
+
+  const deploymentFailed = /^Deployment did not succeed: (.+)$/.exec(text);
+  if (deploymentFailed !== null) {
+    return `部署未成功：${deploymentFailed[1] ?? ""}`;
+  }
+
+  const rollbackFailed = /^Rollback did not succeed: (.+)$/.exec(text);
+  if (rollbackFailed !== null) {
+    return `回滚未成功：${rollbackFailed[1] ?? ""}`;
+  }
+
+  return undefined;
+}
+
 function diagnosticScopeFor(locale: DesktopLocale, detail: AppState["assetDetail"]) {
   if (detail === undefined) {
     return {
@@ -636,7 +769,7 @@ function DiagnosticList(props: {
       {props.diagnostics.map((diagnostic) => (
         <li key={diagnostic.id}>
           <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
-          <span>{diagnostic.message}</span>
+          <span>{diagnosticText(props.locale, diagnostic.message)}</span>
           {diagnostic.location === undefined ? null : (
             <small>
               {diagnostic.location.pathDisplay}
@@ -644,7 +777,7 @@ function DiagnosticList(props: {
               {diagnostic.location.column === undefined ? "" : `:${diagnostic.location.column}`}
             </small>
           )}
-          <small>{diagnostic.suggestedAction}</small>
+          <small>{diagnosticText(props.locale, diagnostic.suggestedAction)}</small>
           {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
             <LocateDiagnosticButton
               assetId={diagnostic.assetId}
@@ -685,6 +818,7 @@ function AssetDetailDialog(props: {
   const effective = props.effective;
   const status = assetStatusFor(detail.asset);
   const targetStatus = nextAssetStatus(status);
+  const disablementOptions = detail.asset.disablementOptions ?? [];
   return (
     <div className="asset-detail-modal">
       <section
@@ -731,6 +865,22 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
+          {disablementOptions.length === 0 ? null : (
+            <section className="disable-methods">
+              <h3>{t(props.locale, "Disable methods")}</h3>
+              <ul>
+                {disablementOptions.map((option) => (
+                  <li key={option.method}>
+                    <strong>{option.label}</strong>
+                    {option.recommended ? (
+                      <span className="method-recommended">{t(props.locale, "Recommended")}</span>
+                    ) : null}
+                    <span>{option.description}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="asset-detail-diagnostics">
             <h3>{t(props.locale, "Diagnostics")}</h3>
             {props.diagnostics.length === 0 ? (
@@ -814,7 +964,7 @@ function AssetDetailDialog(props: {
                   {effective.diagnostics.map((diagnostic) => (
                     <li key={diagnostic.id}>
                       <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
-                      <span>{diagnostic.message}</span>
+                      <span>{diagnosticText(props.locale, diagnostic.message)}</span>
                     </li>
                   ))}
                 </ul>

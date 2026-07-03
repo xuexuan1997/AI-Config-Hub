@@ -131,6 +131,65 @@ function adapter(): AdapterRegistration {
   };
 }
 
+function adapterWithNativeDisabledAsset(): AdapterRegistration {
+  const registration = adapter();
+  const instance = registration.create({ logger: { debug() {}, warn() {} } });
+  return {
+    ...registration,
+    create: () =>
+      ({
+        ...instance,
+        discover: () => Promise.resolve({ candidates: [candidates[0]], diagnostics: [] }),
+        parse: ({ candidate, snapshot }: Parameters<ToolAdapter["parse"]>[0]) =>
+          Promise.resolve({
+            status: "parsed" as const,
+            assets: [
+              {
+                toolId: "codex" as const,
+                canonicalSourcePath: candidate.sourcePath,
+                locator: "rule:enabled",
+                scope: candidate.scope,
+                sourceFormat: candidate.sourceFormat,
+                sourceContentHash: snapshot.contentHash,
+                resource: {
+                  kind: "rule" as const,
+                  data: {
+                    name: "enabled",
+                    instructions: "Enabled rule",
+                    globs: [],
+                    extensions: {},
+                  },
+                },
+                references: [],
+                extensions: {},
+              },
+              {
+                toolId: "codex" as const,
+                canonicalSourcePath: candidate.sourcePath,
+                locator: "rule:disabled",
+                scope: candidate.scope,
+                sourceFormat: candidate.sourceFormat,
+                sourceContentHash: snapshot.contentHash,
+                resource: {
+                  kind: "rule" as const,
+                  data: {
+                    name: "disabled",
+                    instructions: "Disabled rule",
+                    globs: [],
+                    extensions: {},
+                  },
+                },
+                references: [],
+                extensions: {},
+                status: "disabled",
+              },
+            ],
+            diagnostics: [],
+          }),
+      }) as ToolAdapter,
+  };
+}
+
 const scopeFixture = ScopeSchema.parse({
   scopeId: "scope-project",
   toolId: "codex",
@@ -230,6 +289,41 @@ const read = {
 };
 
 describe("ScanService", () => {
+  it("preserves adapter-reported disabled status and excludes disabled assets from effective config", async () => {
+    const target = repository();
+    const service = new ScanService({
+      registrations: [adapterWithNativeDisabledAsset()],
+      read,
+      snapshots,
+      indexRepository: target.index,
+    });
+
+    await service.scan({
+      scanRunId: "scan-native-disabled",
+      candidateRoots: [root],
+      homeDirectory: root,
+      platform: "linux",
+      signal: createCancellationController().signal,
+    });
+
+    const committedAssets = target.calls[0]?.assets ?? [];
+    expect(
+      committedAssets
+        .map(({ locator, status }) => ({ locator, status }))
+        .sort((left, right) => left.locator.localeCompare(right.locator)),
+    ).toEqual([
+      { locator: "rule:disabled", status: "disabled" },
+      { locator: "rule:enabled", status: "enabled" },
+    ]);
+    const resources = target.calls[0]?.effectiveConfigs[0]?.resolvedResources ?? [];
+    expect(
+      resources.map((resource) => {
+        if (resource.kind !== "rule") throw new Error("Expected rule resource");
+        return resource.data.instructions;
+      }),
+    ).toEqual(["Enabled rule"]);
+  });
+
   it("commits one deterministic partial-success replacement after ordered phases", async () => {
     const firstRepository = repository();
     const phases: ScanPhase[] = [];

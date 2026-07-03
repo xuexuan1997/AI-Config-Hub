@@ -30,6 +30,21 @@ import {
 } from "./model.js";
 import type { DesktopApi } from "../preload/api.js";
 
+const disablementOptionsFixture = [
+  {
+    method: "move_file",
+    label: "Move file out of the tool load path",
+    description: "Move the source file into the AI Config Hub disabled-assets area.",
+    recommended: true,
+  },
+  {
+    method: "hub_ignore",
+    label: "Ignore inside AI Config Hub only",
+    description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+    recommended: false,
+  },
+] as const satisfies NonNullable<AppState["assetDetail"]>["asset"]["disablementOptions"];
+
 describe("renderer project selection state", () => {
   it("refreshes migration assets using the selected project root as an indexed project filter", async () => {
     const invoke = vi.fn().mockResolvedValue({
@@ -522,6 +537,7 @@ describe("renderer project selection state", () => {
           scopeId: ScopeIdSchema.parse("/home/user/workspace"),
           logicalKey: "AGENTS.md",
           status: "enabled",
+          disablementOptions: disablementOptionsFixture,
         },
         source: {
           pathDisplay: "/home/user/workspace/AGENTS.md",
@@ -753,6 +769,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
         normalized: { kind: "rule", data: { instructions: "Use tests." } },
         references: ["README.md"],
         diagnosticIds: [DiagnosticIdSchema.parse("diagnostic-1")],
@@ -797,6 +814,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -840,6 +858,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -863,6 +882,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -895,6 +915,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",
@@ -929,6 +950,7 @@ describe("renderer project selection state", () => {
         scopeId: ScopeIdSchema.parse("scope-1"),
         logicalKey: "AGENTS.md",
         status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
       },
       source: {
         pathDisplay: "/workspace/AGENTS.md",

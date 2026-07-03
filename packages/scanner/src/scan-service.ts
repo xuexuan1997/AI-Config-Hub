@@ -229,6 +229,7 @@ export class ScanService {
             adapterVersion: item.adapter.adapterVersion,
             discoveredAt: createdAt,
             references: parsed.references,
+            ...(parsed.status === undefined ? {} : { status: parsed.status }),
             diagnosticSummary: { info: 0, warning: 0, error: 0 },
           }),
         ),
@@ -455,7 +456,10 @@ async function applyStoredAssetStatuses(
     assets.map(({ assetId }) => AssetIdSchema.parse(assetId)),
   );
   return assets.map((asset) =>
-    AssetSchema.parse({ ...asset, status: statuses.get(asset.assetId) ?? "enabled" }),
+    AssetSchema.parse({
+      ...asset,
+      status: statuses.get(asset.assetId) === "disabled" ? "disabled" : asset.status,
+    }),
   );
 }
 

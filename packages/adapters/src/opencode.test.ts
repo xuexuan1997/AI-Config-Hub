@@ -17,12 +17,14 @@ const files = {
     // Local instruction paths only; URLs are ignored.
     "instructions": ["docs/local.md", "https://example.test/never-fetch.md"],
     "agent": {
-      "planner": { "description": "Plans work", "prompt": "Plan carefully.", "model": "openai/gpt-5", "mode": "subagent" }
+      "planner": { "description": "Plans work", "prompt": "Plan carefully.", "model": "openai/gpt-5", "mode": "subagent" },
+      "archived": { "description": "Old reviewer", "prompt": "Review carefully.", "disable": true }
     },
     "mcp": {
       "empty": {},
       "local": { "type": "local", "command": ["npx", "docs", "--api-key=top-secret-canary"], "environment": { "TOKEN": "top-secret-canary" } },
-      "remote": { "type": "remote", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer top-secret-canary" } }
+      "remote": { "type": "remote", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer top-secret-canary" } },
+      "disabledDocs": { "type": "remote", "url": "https://disabled.example.test/mcp", "enabled": false }
     }
   }`,
 } as const;
@@ -69,6 +71,12 @@ describe("OpenCode adapter read path", () => {
       kind: "agent",
       data: { name: "planner", instructions: "Plan carefully." },
     });
+    expect(
+      (assets.find(({ locator }) => locator === "agent:archived") as { status?: string })?.status,
+    ).toBe("disabled");
+    expect(
+      (assets.find(({ locator }) => locator === "mcp:disabledDocs") as { status?: string })?.status,
+    ).toBe("disabled");
     expect(assets.map(({ locator }) => locator)).not.toContain("mcp:empty");
     expect(JSON.stringify(results)).not.toContain("top-secret-canary");
   });

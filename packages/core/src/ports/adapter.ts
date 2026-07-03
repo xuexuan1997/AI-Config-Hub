@@ -14,6 +14,7 @@ import type {
 } from "@ai-config-hub/shared";
 
 import type { Asset } from "../domain/asset.js";
+import type { AssetStatus } from "../domain/asset.js";
 import type { ConversionResult, DeployableConversionResult } from "../domain/conversion.js";
 import type { DeploymentOperation, DeploymentRecord } from "../domain/deployment.js";
 import type { NormalizedResource } from "../domain/resource.js";
@@ -88,6 +89,7 @@ export interface ParsedAsset {
   readonly resource: NormalizedResource;
   readonly references: readonly string[];
   readonly extensions: Readonly<Record<string, unknown>>;
+  readonly status?: AssetStatus;
 }
 
 export interface EffectiveConfigStepDraft {

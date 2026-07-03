@@ -218,6 +218,20 @@ describe("command schemas", () => {
           scopeId: "scope-1",
           logicalKey: "repository-policy",
           status: "enabled",
+          disablementOptions: [
+            {
+              method: "move_file",
+              label: "Move file out of the tool load path",
+              description: "Move the source file into the AI Config Hub disabled-assets area.",
+              recommended: true,
+            },
+            {
+              method: "hub_ignore",
+              label: "Ignore inside AI Config Hub only",
+              description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+              recommended: false,
+            },
+          ],
           normalized: { kind: "rule", instructions: "redacted view" },
         },
         source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },

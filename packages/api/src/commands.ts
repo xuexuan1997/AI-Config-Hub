@@ -318,6 +318,21 @@ const RedactionMarkerSchema = z
   .object({ pointer: z.string().min(1).max(500), reason: z.enum(["secret", "path", "policy"]) })
   .strict()
   .readonly();
+const AssetDisablementMethodSchema = z.enum([
+  "native",
+  "move_file",
+  "remove_config_entry",
+  "hub_ignore",
+]);
+const AssetDisablementOptionSchema = z
+  .object({
+    method: AssetDisablementMethodSchema,
+    label: z.string().trim().min(1).max(200),
+    description: z.string().trim().min(1).max(1_000),
+    recommended: z.boolean(),
+  })
+  .strict()
+  .readonly();
 const AssetsGetResponseSchema = z
   .object({
     asset: z
@@ -328,6 +343,7 @@ const AssetsGetResponseSchema = z
         scopeId: ScopeIdSchema,
         logicalKey: z.string().trim().min(1).max(500),
         status: z.enum(["enabled", "disabled"]),
+        disablementOptions: z.array(AssetDisablementOptionSchema).max(4).readonly(),
         normalized: JsonValueSchema.optional(),
         references: z.array(z.string().trim().min(1).max(500)).max(1_000).optional().readonly(),
         diagnosticIds: z.array(DiagnosticIdSchema).max(1_000).optional().readonly(),

@@ -261,6 +261,14 @@ describe("desktop command service composition", () => {
       expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
         "disabled",
       );
+      expect(
+        (await runtime.services["assets.get"]({ assetId: source.id })).asset.disablementOptions.map(
+          ({ method, recommended }) => ({ method, recommended }),
+        ),
+      ).toEqual([
+        { method: "move_file", recommended: true },
+        { method: "hub_ignore", recommended: false },
+      ]);
       await expect(
         runtime.services["migration.preview"]({
           sourceAssetIds: [source.id],

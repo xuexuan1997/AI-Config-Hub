@@ -626,6 +626,12 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="migration-target-panel panel"');
     expect(html).toContain("Added to target");
     expect(html).toContain("Overwritten in target");
+    expect(html).toContain("Target assets");
+    expect(html).toContain("Target tool");
+    expect(html).toContain("Cursor");
+    expect(html).toContain("Source asset");
+    expect(html).toContain("Hash change");
+    expect(html).toContain('class="target-change-row is-replace"');
     expect(html).toContain("Rule");
     expect(html).toContain("<strong>Agent</strong><span>0 differences</span>");
     expect(html).toContain("<strong>Skill</strong><span>0 differences</span>");
@@ -753,6 +759,20 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       scopeId: ScopeIdSchema.parse("/workspace"),
       logicalKey,
       status: "enabled",
+      disablementOptions: [
+        {
+          method: "move_file",
+          label: "Move file out of the tool load path",
+          description: "Move the source file into the AI Config Hub disabled-assets area.",
+          recommended: true,
+        },
+        {
+          method: "hub_ignore",
+          label: "Ignore inside AI Config Hub only",
+          description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+          recommended: false,
+        },
+      ],
     },
     source: {
       pathDisplay: "/workspace/AGENTS.md",

@@ -250,9 +250,15 @@ export function MigrationView(props: {
 
         <section className="migration-target-panel panel">
           <header className="panel-title">
-            <strong>{t(locale, "Target impact")}</strong>
+            <strong>{t(locale, "Target assets")}</strong>
             <span>{formatAssetCount(locale, preview?.changes.length ?? 0)}</span>
           </header>
+          <dl className="target-context">
+            <dt>{t(locale, "Target project")}</dt>
+            <dd>{props.state.migration.targetScopeId || t(locale, "Target project path")}</dd>
+            <dt>{t(locale, "Target tool")}</dt>
+            <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
+          </dl>
           <div className="migration-asset-list">
             {preview === undefined ? (
               <p>{t(locale, "Preview writes to see target impact.")}</p>
@@ -261,14 +267,28 @@ export function MigrationView(props: {
               <p>{t(locale, "No differences for this asset type.")}</p>
             ) : (
               preview.changes.map((change) => (
-                <div key={change.pathDisplay} className="target-change-row">
-                  <strong>
-                    {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
-                  </strong>
-                  <span>
-                    {change.beforeHash === null ? t(locale, "absent") : change.beforeHash} {" -> "}
-                    {change.afterHash === null ? t(locale, "absent") : change.afterHash}
-                  </span>
+                <div
+                  key={change.pathDisplay}
+                  className={`target-change-row ${targetChangeTone(change.operation)}`}
+                >
+                  <div className="target-change-heading">
+                    <strong>{change.pathDisplay}</strong>
+                    <span>{changeOperationLabel(locale, change.operation)}</span>
+                  </div>
+                  <dl>
+                    <dt>{t(locale, "Target project")}</dt>
+                    <dd>{props.state.migration.targetScopeId}</dd>
+                    <dt>{t(locale, "Target tool")}</dt>
+                    <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
+                    <dt>{t(locale, "Source asset")}</dt>
+                    <dd>{sourceAssetSummaryForPreview(preview, assetLabels)}</dd>
+                    <dt>{t(locale, "Hash change")}</dt>
+                    <dd>
+                      {change.beforeHash === null ? t(locale, "absent") : change.beforeHash}{" "}
+                      {" -> "}
+                      {change.afterHash === null ? t(locale, "absent") : change.afterHash}
+                    </dd>
+                  </dl>
                 </div>
               ))
             )}
@@ -793,6 +813,29 @@ function changeOperationLabel(
     case "delete":
       return t(locale, "Delete file");
   }
+}
+
+function targetChangeTone(
+  operation: NonNullable<AppState["preview"]>["changes"][number]["operation"],
+): string {
+  switch (operation) {
+    case "create":
+      return "is-create";
+    case "replace":
+      return "is-replace";
+    case "delete":
+      return "is-delete";
+  }
+}
+
+function sourceAssetSummaryForPreview(
+  preview: NonNullable<AppState["preview"]>,
+  assetLabels: ReadonlyMap<string, string>,
+): string {
+  return Object.keys(preview.sourceHashes)
+    .sort((left, right) => left.localeCompare(right))
+    .map((assetId) => assetLabel(assetId, assetLabels))
+    .join(", ");
 }
 
 function assetLabel(assetId: string, assetLabels: ReadonlyMap<string, string>): string {
