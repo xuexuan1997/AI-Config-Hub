@@ -66,6 +66,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           scopeId: "scope-1",
           logicalKey: "AGENTS.md",
           status: "enabled",
+          disablementOptions: [],
           normalized: { kind: "rule", instructions: "Use local conventions." },
           references: [],
           diagnosticIds: [],
