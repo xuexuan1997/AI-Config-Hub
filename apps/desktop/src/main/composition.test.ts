@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { createTaskEventCursor, type TaskEvent } from "@ai-config-hub/api";
 import { WatchService } from "@ai-config-hub/scanner";
@@ -150,13 +150,19 @@ describe("desktop command service composition", () => {
       await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject, targetProject] });
       const canonicalSourceProject = await realpath(sourceProject);
       const canonicalTargetProject = await realpath(targetProject);
+      const database = new DatabaseSync(join(userData, "ai-config-hub.sqlite"));
+      const projectIdForRoot = (root: string) =>
+        projectIdForIndexedRoot(database, root) ?? expect.fail(`Expected indexed project: ${root}`);
+      const sourceProjectId = projectIdForRoot(canonicalSourceProject);
+      const targetProjectId = projectIdForRoot(canonicalTargetProject);
+      database.close();
 
       const sourceAssets = await runtime.services["assets.list"]({
-        projectId: stableProjectId(canonicalSourceProject),
+        projectId: sourceProjectId,
         limit: 50,
       });
       const targetAssets = await runtime.services["assets.list"]({
-        projectId: stableProjectId(canonicalTargetProject),
+        projectId: targetProjectId,
         limit: 50,
       });
 
@@ -1013,12 +1019,9 @@ describe("desktop command service composition", () => {
   });
 });
 
-function stableProjectId(root: string): string {
-  const hash = createHash("sha256");
-  hash.update("ai-config-hub:identity:v1\0").update("project").update("\0");
-  hash
-    .update(String(Buffer.byteLength(root)))
-    .update(":")
-    .update(root);
-  return `project:${hash.digest("hex")}`;
+function projectIdForIndexedRoot(database: DatabaseSync, root: string): string | undefined {
+  const row = database
+    .prepare("SELECT domain_id FROM projects WHERE root_path_normalized = ?")
+    .get(root) as { readonly domain_id: string } | undefined;
+  return row?.domain_id;
 }

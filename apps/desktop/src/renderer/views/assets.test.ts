@@ -211,6 +211,34 @@ describe("AssetsView", () => {
     expect(html).toContain("<strong>agent</strong>");
     expect(html).toContain("<strong>MCP</strong>");
   });
+
+  it("localizes workspace diagnostic text in Simplified Chinese", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-1"),
+          code: "SCAN_READ_FAILED",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-1"),
+          message: "The configuration file could not be read safely",
+          suggestedAction: "Check file permissions and retry the scan",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+    });
+
+    expect(html).toContain("扫描读取失败");
+    expect(html).toContain("无法安全读取配置文件。");
+    expect(html).toContain("检查文件权限后重新扫描。");
+    expect(html).not.toContain("Scan read failed");
+    expect(html).not.toContain("The configuration file could not be read safely");
+    expect(html).not.toContain("Check file permissions and retry the scan");
+  });
 });
 
 function renderAssets(statePatch: Partial<AppState>): string {
