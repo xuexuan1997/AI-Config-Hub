@@ -1353,6 +1353,109 @@ describe("renderer project selection state", () => {
     });
   });
 
+  it("summarizes refreshed source and target list differences before a preview exists", () => {
+    const state = reducer(
+      reducer(
+        reducer(
+          reducer(initialState, {
+            type: "migrationSourceProject",
+            sourceProjectRoot: "/workspace/source",
+          }),
+          {
+            type: "migrationTargetProject",
+            targetScopeId: "/workspace/target",
+          },
+        ),
+        {
+          type: "migrationSourceAssets",
+          sourceProjectRoot: "/workspace/source",
+          assets: [
+            migrationAssetFixture("asset-source-shared", "rule:shared", {
+              contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+              toolKey: "codex",
+            }),
+            migrationAssetFixture("asset-source-new", "rule:new", {
+              contentHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+              toolKey: "codex",
+            }),
+          ],
+        },
+      ),
+      {
+        type: "migrationTargetAssets",
+        targetScopeId: "/workspace/target",
+        assets: [
+          migrationAssetFixture("asset-target-shared", "rule:shared", {
+            contentHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+            toolKey: "cursor",
+          }),
+          migrationAssetFixture("asset-target-only", "rule:target-only", {
+            contentHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+            toolKey: "cursor",
+          }),
+          migrationAssetFixture("asset-target-other-tool", "rule:codex-only", {
+            contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+            toolKey: "codex",
+          }),
+        ],
+      },
+    );
+
+    expect(state.preview).toBeUndefined();
+    expect(migrationDifferenceSummaryForState(state)).toEqual({
+      addedToTarget: 1,
+      overwrittenInTarget: 1,
+      targetOnlyKept: 1,
+      conflictsOrWarnings: 0,
+    });
+  });
+
+  it("ignores stale scoped migration asset refreshes after the project changes", () => {
+    const withSourceA = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/workspace/source-a",
+    });
+    const withSourceB = reducer(withSourceA, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/workspace/source-b",
+    });
+    const staleSource = reducer(withSourceB, {
+      type: "migrationSourceAssets",
+      sourceProjectRoot: "/workspace/source-a",
+      assets: [migrationAssetFixture("asset-source-a", "rule:old-source")],
+    });
+    const freshSource = reducer(staleSource, {
+      type: "migrationSourceAssets",
+      sourceProjectRoot: "/workspace/source-b",
+      assets: [migrationAssetFixture("asset-source-b", "rule:new-source")],
+    });
+
+    expect(staleSource.migrationSourceAssets).toEqual([]);
+    expect(freshSource.migrationSourceAssets.map((asset) => asset.id)).toEqual(["asset-source-b"]);
+
+    const withTargetA = reducer(freshSource, {
+      type: "migrationTargetProject",
+      targetScopeId: "/workspace/target-a",
+    });
+    const withTargetB = reducer(withTargetA, {
+      type: "migrationTargetProject",
+      targetScopeId: "/workspace/target-b",
+    });
+    const staleTarget = reducer(withTargetB, {
+      type: "migrationTargetAssets",
+      targetScopeId: "/workspace/target-a",
+      assets: [migrationAssetFixture("asset-target-a", "rule:old-target")],
+    });
+    const freshTarget = reducer(staleTarget, {
+      type: "migrationTargetAssets",
+      targetScopeId: "/workspace/target-b",
+      assets: [migrationAssetFixture("asset-target-b", "rule:new-target")],
+    });
+
+    expect(staleTarget.migrationTargetAssets).toEqual([]);
+    expect(freshTarget.migrationTargetAssets.map((asset) => asset.id)).toEqual(["asset-target-b"]);
+  });
+
   it("detects source asset drift against the current indexed asset hashes", () => {
     const preview = {
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
@@ -1429,3 +1532,25 @@ describe("renderer project selection state", () => {
     ]);
   });
 });
+
+function migrationAssetFixture(
+  id: string,
+  logicalKey: string,
+  overrides: Partial<
+    Pick<
+      AppState["assets"][number],
+      "contentHash" | "resourceType" | "scopeKind" | "status" | "toolKey"
+    >
+  > = {},
+): AppState["assets"][number] {
+  return {
+    id: AssetIdSchema.parse(id),
+    toolKey: overrides.toolKey ?? "codex",
+    resourceType: overrides.resourceType ?? "rule",
+    scopeKind: overrides.scopeKind ?? "project",
+    logicalKey,
+    contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+    status: overrides.status ?? "enabled",
+    diagnosticCounts: { info: 0, warning: 0, error: 0 },
+  };
+}
