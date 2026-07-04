@@ -4,6 +4,7 @@ import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18
 import {
   deploymentBlockersForState,
   deploymentConfirmationLabel,
+  migrationAssetDifferencesForState,
   MIGRATION_CONFLICT_POLICY_OPTIONS,
   MIGRATION_TARGET_TOOL_OPTIONS,
   migrationDifferenceSummaryForState,
@@ -275,17 +276,26 @@ export function MigrationView(props: {
                     key={row.asset.id}
                     asset={row.asset}
                     change={row.change}
+                    liveDifference={row.liveDifference}
+                    locale={locale}
+                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
+                    targetProject={props.state.migration.targetScopeId}
+                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                  />
+                ) : row.kind === "preview" ? (
+                  <PreviewTargetRow
+                    key={row.change.pathDisplay}
+                    change={row.change}
                     locale={locale}
                     sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
                     targetProject={props.state.migration.targetScopeId}
                     targetTool={targetToolLabel(props.state.migration.targetToolKey)}
                   />
                 ) : (
-                  <PreviewTargetRow
-                    key={row.change.pathDisplay}
-                    change={row.change}
+                  <SourceOnlyTargetRow
+                    key={`source-only:${row.difference.sourceAsset?.id ?? row.difference.logicalKey}`}
+                    difference={row.difference}
                     locale={locale}
-                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
                     targetProject={props.state.migration.targetScopeId}
                     targetTool={targetToolLabel(props.state.migration.targetToolKey)}
                   />
@@ -360,17 +370,21 @@ export function MigrationView(props: {
 
 type MigrationAssetSummary = AppState["assets"][number];
 type MigrationPreviewChange = NonNullable<AppState["preview"]>["changes"][number];
+type MigrationAssetDifference = ReturnType<typeof migrationAssetDifferencesForState>[number];
 type MigrationTargetRow =
   | {
       readonly kind: "asset";
       readonly asset: MigrationAssetSummary;
       readonly change: MigrationPreviewChange | undefined;
+      readonly liveDifference: MigrationAssetDifference | undefined;
     }
-  | { readonly kind: "preview"; readonly change: MigrationPreviewChange };
+  | { readonly kind: "preview"; readonly change: MigrationPreviewChange }
+  | { readonly kind: "source-only"; readonly difference: MigrationAssetDifference };
 
 function TargetAssetRow(props: {
   readonly asset: MigrationAssetSummary;
   readonly change: MigrationPreviewChange | undefined;
+  readonly liveDifference: MigrationAssetDifference | undefined;
   readonly locale: DesktopLocale;
   readonly sourceAssetSummary: string;
   readonly targetProject: string | undefined;
@@ -379,14 +393,16 @@ function TargetAssetRow(props: {
   return (
     <div
       className={`target-change-row ${
-        props.change === undefined ? "is-existing" : targetChangeTone(props.change.operation)
+        props.change === undefined
+          ? liveDifferenceTone(props.liveDifference)
+          : targetChangeTone(props.change.operation)
       }`}
     >
       <div className="target-change-heading">
         <strong>{props.asset.logicalKey}</strong>
         <span>
           {props.change === undefined
-            ? t(props.locale, "Target asset")
+            ? liveDifferenceStatusLabel(props.locale, props.liveDifference)
             : targetChangeStatusLabel(props.locale, props.change.operation)}
         </span>
       </div>
@@ -401,7 +417,7 @@ function TargetAssetRow(props: {
         <dd>{props.asset.sourceDirectory ?? t(props.locale, "unknown")}</dd>
         <dt>{t(props.locale, "Content hash")}</dt>
         <dd>{props.asset.contentHash}</dd>
-        {props.change === undefined ? null : (
+        {props.change !== undefined ? (
           <>
             <dt>{t(props.locale, "Source asset")}</dt>
             <dd>{props.sourceAssetSummary}</dd>
@@ -409,6 +425,13 @@ function TargetAssetRow(props: {
             <dd>{props.change.pathDisplay}</dd>
             <dt>{t(props.locale, "Hash change")}</dt>
             <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+          </>
+        ) : props.liveDifference?.sourceAsset === undefined ? null : (
+          <>
+            <dt>{t(props.locale, "Source asset")}</dt>
+            <dd>{props.liveDifference.sourceAsset.logicalKey}</dd>
+            <dt>{t(props.locale, "Hash change")}</dt>
+            <dd>{liveHashChangeLabel(props.liveDifference)}</dd>
           </>
         )}
       </dl>
@@ -445,6 +468,36 @@ function PreviewTargetRow(props: {
   );
 }
 
+function SourceOnlyTargetRow(props: {
+  readonly difference: MigrationAssetDifference;
+  readonly locale: DesktopLocale;
+  readonly targetProject: string | undefined;
+  readonly targetTool: string;
+}) {
+  const sourceAsset = props.difference.sourceAsset;
+  if (sourceAsset === undefined) return null;
+  return (
+    <div className="target-change-row is-create">
+      <div className="target-change-heading">
+        <strong>{sourceAsset.logicalKey}</strong>
+        <span>{targetChangeStatusLabel(props.locale, "create")}</span>
+      </div>
+      <dl>
+        <dt>{t(props.locale, "Target project")}</dt>
+        <dd>{props.targetProject}</dd>
+        <dt>{t(props.locale, "Target tool")}</dt>
+        <dd>{props.targetTool}</dd>
+        <dt>{t(props.locale, "Asset type")}</dt>
+        <dd>{resourceTypeLabel(props.locale, sourceAsset.resourceType)}</dd>
+        <dt>{t(props.locale, "Source asset")}</dt>
+        <dd>{sourceAsset.logicalKey}</dd>
+        <dt>{t(props.locale, "Content hash")}</dt>
+        <dd>{sourceAsset.contentHash}</dd>
+      </dl>
+    </div>
+  );
+}
+
 function targetRowsForState(
   state: AppState,
   resourceType: string | undefined,
@@ -456,10 +509,13 @@ function targetRowsForState(
         (resourceType === undefined || asset.resourceType === resourceType),
     )
     .sort((left, right) => left.logicalKey.localeCompare(right.logicalKey));
+  if (state.preview === undefined) {
+    return liveTargetRowsForState(state, targetAssets, resourceType);
+  }
   const changes = state.preview?.changes ?? [];
   const assetRows = targetAssets.map((asset): MigrationTargetRow => {
     const change = changes.find((candidate) => candidate.beforeHash === asset.contentHash);
-    return { kind: "asset", asset, change };
+    return { kind: "asset", asset, change, liveDifference: undefined };
   });
   const matchedChangePaths = new Set(
     assetRows
@@ -472,9 +528,63 @@ function targetRowsForState(
   return [...assetRows, ...previewRows];
 }
 
+function liveTargetRowsForState(
+  state: AppState,
+  targetAssets: readonly MigrationAssetSummary[],
+  resourceType: string | undefined,
+): readonly MigrationTargetRow[] {
+  const liveDifferences = migrationAssetDifferencesForState(state).filter(
+    (difference) => resourceType === undefined || difference.resourceType === resourceType,
+  );
+  const liveDifferenceByTargetId = new Map(
+    liveDifferences
+      .filter(
+        (
+          difference,
+        ): difference is MigrationAssetDifference & {
+          readonly targetAsset: MigrationAssetSummary;
+        } => difference.targetAsset !== undefined,
+      )
+      .map((difference) => [difference.targetAsset.id, difference]),
+  );
+  const assetRows = targetAssets.map(
+    (asset): MigrationTargetRow => ({
+      kind: "asset",
+      asset,
+      change: undefined,
+      liveDifference: liveDifferenceByTargetId.get(asset.id),
+    }),
+  );
+  const sourceOnlyRows = liveDifferences
+    .filter((difference) => difference.operation === "create")
+    .map((difference): MigrationTargetRow => ({ kind: "source-only", difference }));
+  return [...assetRows, ...sourceOnlyRows].sort(compareLiveTargetRows);
+}
+
+function compareLiveTargetRows(left: MigrationTargetRow, right: MigrationTargetRow): number {
+  return targetRowLabel(left).localeCompare(targetRowLabel(right));
+}
+
+function targetRowLabel(row: MigrationTargetRow): string {
+  switch (row.kind) {
+    case "asset":
+      return row.asset.logicalKey;
+    case "preview":
+      return row.change.pathDisplay;
+    case "source-only":
+      return row.difference.sourceAsset?.logicalKey ?? row.difference.logicalKey;
+  }
+}
+
 function hashChangeLabel(locale: DesktopLocale, change: MigrationPreviewChange): string {
   return `${change.beforeHash === null ? t(locale, "absent") : change.beforeHash} -> ${
     change.afterHash === null ? t(locale, "absent") : change.afterHash
+  }`;
+}
+
+function liveHashChangeLabel(difference: MigrationAssetDifference): string {
+  return `${difference.sourceAsset?.contentHash ?? "absent"} -> ${
+    difference.targetAsset?.contentHash ?? "absent"
   }`;
 }
 
@@ -489,6 +599,37 @@ function targetChangeStatusLabel(
       return t(locale, "Will overwrite");
     case "delete":
       return t(locale, "Will delete");
+  }
+}
+
+function liveDifferenceStatusLabel(
+  locale: DesktopLocale,
+  difference: MigrationAssetDifference | undefined,
+): string {
+  switch (difference?.operation) {
+    case "replace":
+      return t(locale, "Changed");
+    case "target-only":
+      return t(locale, "Target-only kept");
+    case "unchanged":
+      return t(locale, "Current");
+    case "create":
+      return targetChangeStatusLabel(locale, "create");
+    case undefined:
+      return t(locale, "Target asset");
+  }
+}
+
+function liveDifferenceTone(difference: MigrationAssetDifference | undefined): string {
+  switch (difference?.operation) {
+    case "create":
+      return "is-create";
+    case "replace":
+      return "is-replace";
+    case "target-only":
+    case "unchanged":
+    case undefined:
+      return "is-existing";
   }
 }
 
@@ -846,7 +987,12 @@ function resourceTypePriority(resourceType: string): number {
 
 function differenceCountForGroup(state: AppState, group: MigrationAssetGroup): number {
   const preview = state.preview;
-  if (preview === undefined) return 0;
+  if (preview === undefined) {
+    return migrationAssetDifferencesForState(state).filter(
+      (difference) =>
+        difference.resourceType === group.resourceType && difference.operation !== "unchanged",
+    ).length;
+  }
   const groupAssetIds = new Set<string>(group.assets.map((asset) => asset.id));
   return Object.keys(preview.sourceHashes).filter((assetId) => groupAssetIds.has(assetId)).length;
 }

@@ -172,16 +172,21 @@ export function App(props: { readonly api: DesktopApi }) {
           const taskAction = taskActionForTaskEvent(event);
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
-            void refreshAssets(props.api, { projectRoot: root }).then((assets) =>
-              dispatch({
-                type: kind === "source" ? "migrationSourceAssets" : "migrationTargetAssets",
-                assets,
-              }),
-            );
+            void refreshMigrationProjectAssets(kind, root);
           }
         });
       }
+      await refreshMigrationProjectAssets(kind, root);
     });
+  }
+
+  async function refreshMigrationProjectAssets(kind: "source" | "target", root: string) {
+    const assets = await refreshAssets(props.api, { projectRoot: root });
+    dispatch(
+      kind === "source"
+        ? { type: "migrationSourceAssets", sourceProjectRoot: root, assets }
+        : { type: "migrationTargetAssets", targetScopeId: root, assets },
+    );
   }
 
   async function openSource() {

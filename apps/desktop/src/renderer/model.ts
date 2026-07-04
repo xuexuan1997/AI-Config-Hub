@@ -140,8 +140,16 @@ export type AppAction =
   | { readonly type: "message"; readonly message: string | undefined }
   | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
-  | { readonly type: "migrationSourceAssets"; readonly assets: AppState["assets"] }
-  | { readonly type: "migrationTargetAssets"; readonly assets: AppState["assets"] }
+  | {
+      readonly type: "migrationSourceAssets";
+      readonly assets: AppState["assets"];
+      readonly sourceProjectRoot?: string;
+    }
+  | {
+      readonly type: "migrationTargetAssets";
+      readonly assets: AppState["assets"];
+      readonly targetScopeId?: string;
+    }
   | {
       readonly type: "assetStatus";
       readonly assetId: AppState["assets"][number]["id"];
@@ -389,7 +397,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ? refreshed
         : clearAssetDetail(refreshed);
     }
-    case "migrationSourceAssets":
+    case "migrationSourceAssets": {
+      const actionSourceProjectRoot = normalizedProjectRoot(action.sourceProjectRoot);
+      if (
+        actionSourceProjectRoot !== undefined &&
+        actionSourceProjectRoot !== normalizedProjectRoot(state.migration.sourceProjectRoot)
+      ) {
+        return state;
+      }
       return clearPreview({
         ...state,
         migrationSourceAssets: action.assets,
@@ -398,11 +413,20 @@ export function reducer(state: AppState, action: AppAction): AppState {
           sourceAssetIds: migrationSourceAssetIds(state.migration, action.assets),
         },
       });
-    case "migrationTargetAssets":
+    }
+    case "migrationTargetAssets": {
+      const actionTargetScopeId = normalizedTargetScopeId(action.targetScopeId);
+      if (
+        actionTargetScopeId !== undefined &&
+        actionTargetScopeId !== normalizedTargetScopeId(state.migration.targetScopeId)
+      ) {
+        return state;
+      }
       return clearPreview({
         ...state,
         migrationTargetAssets: action.assets,
       });
+    }
     case "assetStatus": {
       const assets = state.assets.map((asset) =>
         asset.id === action.assetId ? { ...asset, status: action.status } : asset,
@@ -691,11 +715,19 @@ export interface MigrationDifferenceSummary {
   readonly conflictsOrWarnings: number;
 }
 
+export type MigrationAssetDifferenceOperation = "create" | "replace" | "target-only" | "unchanged";
+
+export interface MigrationAssetDifference {
+  readonly operation: MigrationAssetDifferenceOperation;
+  readonly resourceType: string;
+  readonly logicalKey: string;
+  readonly sourceAsset?: MigrationAssetSummary;
+  readonly targetAsset?: MigrationAssetSummary;
+}
+
 export function migrationDifferenceSummaryForState(state: AppState): MigrationDifferenceSummary {
   const preview = state.preview;
-  if (preview === undefined) {
-    return { addedToTarget: 0, overwrittenInTarget: 0, targetOnlyKept: 0, conflictsOrWarnings: 0 };
-  }
+  if (preview === undefined) return liveMigrationDifferenceSummaryForState(state);
   const changedTargetPaths = new Set(preview.changes.map((change) => change.pathDisplay));
   return {
     addedToTarget: preview.changes.filter((change) => change.operation === "create").length,
@@ -712,6 +744,115 @@ export function migrationDifferenceSummaryForState(state: AppState): MigrationDi
           loss.warnings.length > 0,
       ).length,
   };
+}
+
+export function migrationAssetDifferencesForState(
+  state: AppState,
+): readonly MigrationAssetDifference[] {
+  const sourceProjectRoot = normalizedProjectRoot(state.migration.sourceProjectRoot);
+  const targetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
+  if (sourceProjectRoot === undefined || targetScopeId === undefined) return [];
+
+  const sourceAssets = enabledMigrationAssets(state);
+  if (sourceAssets.length === 0) return [];
+
+  const targetAssets = state.migrationTargetAssets.filter(
+    (asset) => asset.toolKey === state.migration.targetToolKey,
+  );
+  if (targetAssets.length === 0) return [];
+
+  const targetQueues = new Map<string, MigrationAssetSummary[]>();
+  for (const targetAsset of [...targetAssets].sort(compareMigrationAssets)) {
+    const key = migrationAssetComparisonKey(targetAsset);
+    const queue = targetQueues.get(key);
+    if (queue === undefined) targetQueues.set(key, [targetAsset]);
+    else queue.push(targetAsset);
+  }
+
+  const differences: MigrationAssetDifference[] = [];
+  const matchedTargetIds = new Set<string>();
+  for (const sourceAsset of [...sourceAssets].sort(compareMigrationAssets)) {
+    const key = migrationAssetComparisonKey(sourceAsset);
+    const targetAsset = targetQueues.get(key)?.shift();
+    if (targetAsset === undefined) {
+      differences.push({
+        operation: "create",
+        resourceType: sourceAsset.resourceType,
+        logicalKey: sourceAsset.logicalKey,
+        sourceAsset,
+      });
+      continue;
+    }
+
+    matchedTargetIds.add(targetAsset.id);
+    differences.push({
+      operation: sourceAsset.contentHash === targetAsset.contentHash ? "unchanged" : "replace",
+      resourceType: sourceAsset.resourceType,
+      logicalKey: sourceAsset.logicalKey,
+      sourceAsset,
+      targetAsset,
+    });
+  }
+
+  for (const targetAsset of [...targetAssets].sort(compareMigrationAssets)) {
+    if (matchedTargetIds.has(targetAsset.id)) continue;
+    differences.push({
+      operation: "target-only",
+      resourceType: targetAsset.resourceType,
+      logicalKey: targetAsset.logicalKey,
+      targetAsset,
+    });
+  }
+
+  return differences.sort(compareMigrationAssetDifferences);
+}
+
+function liveMigrationDifferenceSummaryForState(state: AppState): MigrationDifferenceSummary {
+  const differences = migrationAssetDifferencesForState(state);
+  return {
+    addedToTarget: differences.filter((difference) => difference.operation === "create").length,
+    overwrittenInTarget: differences.filter((difference) => difference.operation === "replace")
+      .length,
+    targetOnlyKept: differences.filter((difference) => difference.operation === "target-only")
+      .length,
+    conflictsOrWarnings: 0,
+  };
+}
+
+function migrationAssetComparisonKey(asset: MigrationAssetSummary): string {
+  return `${asset.resourceType}\0${asset.logicalKey}`;
+}
+
+function compareMigrationAssets(left: MigrationAssetSummary, right: MigrationAssetSummary): number {
+  const resourceTypeComparison = left.resourceType.localeCompare(right.resourceType);
+  if (resourceTypeComparison !== 0) return resourceTypeComparison;
+  const logicalKeyComparison = left.logicalKey.localeCompare(right.logicalKey);
+  if (logicalKeyComparison !== 0) return logicalKeyComparison;
+  return left.id.localeCompare(right.id);
+}
+
+function compareMigrationAssetDifferences(
+  left: MigrationAssetDifference,
+  right: MigrationAssetDifference,
+): number {
+  const resourceTypeComparison = left.resourceType.localeCompare(right.resourceType);
+  if (resourceTypeComparison !== 0) return resourceTypeComparison;
+  const logicalKeyComparison = left.logicalKey.localeCompare(right.logicalKey);
+  if (logicalKeyComparison !== 0) return logicalKeyComparison;
+  return differenceOperationPriority(left.operation) - differenceOperationPriority(right.operation);
+}
+
+function differenceOperationPriority(operation: MigrationAssetDifferenceOperation): number {
+  switch (operation) {
+    case "replace":
+      return 0;
+    case "create":
+      return 1;
+    case "target-only":
+      return 2;
+    case "unchanged":
+      return 3;
+  }
 }
 
 export function migrationHashRowsForPreview(
