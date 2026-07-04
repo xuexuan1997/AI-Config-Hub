@@ -601,6 +601,15 @@ pre {
   margin-bottom: 1rem;
 }
 
+.asset-detail-message {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+  color: var(--warning-text);
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.85rem;
+}
+
 .detail-panel dl,
 .asset-detail-scroll dl {
   display: grid;
@@ -623,6 +632,37 @@ pre {
   max-height: 360px;
 }
 
+.asset-status-control {
+  align-items: start;
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 1rem;
+  padding: 0.85rem;
+}
+
+.asset-status-control h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.asset-status-control p {
+  color: var(--muted-text);
+  margin: 0.3rem 0 0;
+}
+
+.asset-status-control.disabled {
+  border-color: var(--danger-border);
+}
+
+.enable-asset-primary {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .disable-methods {
   border-top: 1px solid var(--panel-border);
   border-right: 0;
@@ -638,9 +678,18 @@ pre {
   padding: 0;
 }
 
+.disable-methods p {
+  color: var(--muted-text);
+  margin: 0.35rem 0 0.8rem;
+}
+
 .disable-method-list {
   display: grid;
   gap: 0.75rem;
+}
+
+.disable-asset-primary {
+  margin-top: 0.85rem;
 }
 
 .disable-method-option {

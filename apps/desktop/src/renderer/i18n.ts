@@ -148,8 +148,30 @@ const ZH_CN: Partial<Record<string, string>> = {
   Disabled: "已禁用",
   "Enable asset": "启用资产",
   "Disable asset": "禁用资产",
+  "Asset enabled.": "\u8d44\u4ea7\u5df2\u542f\u7528\u3002",
+  "Asset disabled.": "\u8d44\u4ea7\u5df2\u7981\u7528\u3002",
+  "Asset status action": "\u8d44\u4ea7\u72b6\u6001\u64cd\u4f5c",
+  "Asset is disabled": "\u8d44\u4ea7\u5df2\u7981\u7528",
+  "Enable it to include it again in review, effective configuration, and migration.":
+    "\u542f\u7528\u540e\uff0c\u5b83\u4f1a\u91cd\u65b0\u53c2\u4e0e\u5ba1\u67e5\u3001\u6709\u6548\u914d\u7f6e\u548c\u8fc1\u79fb\u3002",
+  "Cannot restore disabled asset because a file already exists at the original path":
+    "\u65e0\u6cd5\u6062\u590d\u8be5\u8d44\u4ea7\uff1a\u539f\u8def\u5f84\u5df2\u6709\u6587\u4ef6\u3002",
+  "Disable impact": "禁用影响",
   "Disable method": "禁用方式",
   "Disable methods": "禁用方式",
+  "Choose how far this disable action should go.": "选择这次禁用会影响到哪里。",
+  "Use the tool's native disable switch": "使用工具原生禁用开关",
+  "Keeps the asset in place and asks the AI tool to stop loading it.":
+    "保留资产位置，并让 AI 工具停止加载它。",
+  "Also disables it in the AI tool": "也在 AI 工具中禁用",
+  "Moves the source out of the active load path so the tool itself stops loading it.":
+    "会把来源移出当前加载路径，因此该 AI 工具也不会再加载它。",
+  "Remove it from the tool configuration": "从工具配置中移除",
+  "Updates the tool configuration so this asset is no longer referenced.":
+    "会更新工具配置，使它不再引用这个资产。",
+  "Only hide it in AI Config Hub": "仅在 AI Config Hub 中隐藏",
+  "Leaves the tool configuration untouched; AI Config Hub will ignore it for review and migration.":
+    "不会修改工具配置；AI Config Hub 会在审查和迁移时忽略它。",
   Recommended: "推荐",
   Status: "状态",
   Scope: "范围",
@@ -372,6 +394,9 @@ export function formatLocalizedUiError(
 
 export function localizeUiMessage(locale: DesktopLocale, message: string): string {
   if (locale !== "zh-CN") return message;
+
+  const exact = ZH_CN[message];
+  if (exact !== undefined) return exact;
 
   const queued = /^Queued (.+)$/.exec(message);
   if (queued !== null) return `已加入队列 ${queued[1]}`;

@@ -146,10 +146,12 @@ describe("AssetsView", () => {
     expect(html).toContain('aria-label="Asset detail"');
     expect(html).toContain('class="asset-detail-dialog"');
     expect(html).toContain('class="asset-detail-scroll"');
-    expect(html).toContain("Disable method");
-    expect(html).toContain("Move file out of the tool load path");
-    expect(html).toContain("Ignore inside AI Config Hub only");
+    expect(html).toContain("Disable impact");
+    expect(html).toContain("Only hide it in AI Config Hub");
+    expect(html).toContain("Also disables it in the AI tool");
+    expect(html).toContain("Choose how far this disable action should go.");
     expect(html).toContain("Recommended");
+    expect(html).toContain('<button class="disable-asset-primary" type="button">Disable asset</button>');
     expect(html).toContain(">Close</button>");
     expect(html).not.toContain('<section class="detail-panel" aria-label="Asset detail">');
   });
@@ -161,14 +163,33 @@ describe("AssetsView", () => {
     });
 
     expect(html).toContain('<fieldset class="disable-methods">');
-    expect(html).toContain("<legend>Disable method</legend>");
+    expect(html).toContain("<legend>Disable impact</legend>");
     expect(html).toContain(
-      'type="radio" name="disable-method-asset-1" checked="" value="move_file"',
+      'type="radio" name="disable-method-asset-1" checked="" value="hub_ignore"',
     );
-    expect(html).toContain('type="radio" name="disable-method-asset-1" value="hub_ignore"');
-    expect(html).toContain("Move file out of the tool load path");
-    expect(html).toContain("Ignore inside AI Config Hub only");
+    expect(html).toContain('type="radio" name="disable-method-asset-1" value="move_file"');
+    expect(html).toContain("Only hide it in AI Config Hub");
+    expect(html).toContain("Also disables it in the AI tool");
     expect(html).toContain("Recommended");
+    expect(html).toContain('<button class="disable-asset-primary" type="button">Disable asset</button>');
+  });
+
+  it("localizes disablement option guidance in Simplified Chinese", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+    });
+
+    expect(html).toContain("禁用影响");
+    expect(html).toContain("也在 AI 工具中禁用");
+    expect(html).toContain("仅在 AI Config Hub 中隐藏");
+    expect(html).toContain("选择这次禁用会影响到哪里。");
+    expect(html).not.toContain("Move file out of the tool load path");
+    expect(html).not.toContain("Ignore inside AI Config Hub only");
   });
 
   it("does not show disablement method selection when restoring a disabled asset", () => {
@@ -178,10 +199,30 @@ describe("AssetsView", () => {
       assetDetail: { ...detail, asset: { ...detail.asset, status: "disabled" } },
     });
 
-    expect(html).toContain(">Enable asset</button>");
+    expect(html).toContain('class="asset-status-control disabled"');
+    expect(html).toContain("Asset is disabled");
+    expect(html).toContain(
+      "Enable it to include it again in review, effective configuration, and migration.",
+    );
+    expect(html).toContain(
+      '<button class="enable-asset-primary" type="button">Enable asset</button>',
+    );
     expect(html).not.toContain('<fieldset class="disable-methods">');
     expect(html).not.toContain("<legend>Disable method</legend>");
     expect(html).not.toContain('type="radio"');
+  });
+
+  it("shows asset status operation messages inside the open detail dialog", () => {
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS", { status: "disabled" })],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      message: "Cannot restore disabled asset because a file already exists at the original path",
+    });
+
+    expect(html).toContain('class="asset-detail-message"');
+    expect(html).toContain(
+      "Cannot restore disabled asset because a file already exists at the original path",
+    );
   });
 
   it("clears inspected asset detail and effective configuration when inspect closes", () => {
@@ -314,6 +355,7 @@ function assetSummaryFixture(
     resourceType: overrides.resourceType ?? "rule",
     scopeKind: overrides.scopeKind ?? "project",
     status: "enabled",
+    ...(overrides.status === undefined ? {} : { status: overrides.status }),
     logicalKey,
     ...(overrides.sourceDirectory === undefined
       ? {}
@@ -340,13 +382,13 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
           method: "move_file",
           label: "Move file out of the tool load path",
           description: "Move the source file into the AI Config Hub disabled-assets area.",
-          recommended: true,
+          recommended: false,
         },
         {
           method: "hub_ignore",
           label: "Ignore inside AI Config Hub only",
           description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
-          recommended: false,
+          recommended: true,
         },
       ],
       logicalKey,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLocalizedUiError, localizeUiMessage, t } from "./i18n.js";
+import {
+  formatLocalizedUiError,
+  localeForLanguageSetting,
+  localizeUiMessage,
+  t,
+} from "./i18n.js";
 
 describe("renderer i18n", () => {
   it("localizes generated task and action error messages in Simplified Chinese", () => {
@@ -29,5 +34,24 @@ describe("renderer i18n", () => {
     );
     expect(t("zh-CN", "Agent")).toBe("代理");
     expect(t("zh-CN", "Rule")).toBe("规则");
+  });
+
+  it("localizes asset status failure messages from the desktop service", () => {
+    expect(
+      localizeUiMessage(
+        "zh-CN",
+        "Cannot restore disabled asset because a file already exists at the original path",
+      ),
+    ).toBe(
+      "\u65e0\u6cd5\u6062\u590d\u8be5\u8d44\u4ea7\uff1a\u539f\u8def\u5f84\u5df2\u6709\u6587\u4ef6\u3002",
+    );
+  });
+
+  it("follows Simplified Chinese system preferences when language is system", () => {
+    expect(localeForLanguageSetting("system", ["zh-CN", "en-US"])).toBe("zh-CN");
+  });
+
+  it("keeps explicit English even when the system preference is Simplified Chinese", () => {
+    expect(localeForLanguageSetting("en", ["zh-CN"])).toBe("en");
   });
 });

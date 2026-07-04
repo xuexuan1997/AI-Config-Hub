@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { localeForState, localizeUiMessage, t } from "../i18n.js";
-import type { AppState, LanguageSetting, Route, ThemeSetting } from "../model.js";
+import type { AppState, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
   { route: "assets", label: "Asset Review" },
@@ -26,7 +26,7 @@ export function AppShell(props: {
       className="app-shell"
       data-language={props.state.settings.values.language}
       data-theme={themeAttribute(props.state.settings.values.theme)}
-      lang={languageAttribute(props.state.settings.values.language)}
+      lang={locale}
     >
       <aside className="sidebar">
         <div>
@@ -62,15 +62,4 @@ export function AppShell(props: {
 
 function themeAttribute(theme: ThemeSetting): "light" | "dark" | "system" {
   return theme;
-}
-
-function languageAttribute(language: LanguageSetting): "en" | "zh-CN" | undefined {
-  switch (language) {
-    case "en":
-      return "en";
-    case "zh-CN":
-      return "zh-CN";
-    case "system":
-      return undefined;
-  }
 }
