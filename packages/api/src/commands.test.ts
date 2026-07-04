@@ -45,6 +45,27 @@ describe("command schemas", () => {
     expect(CommandRequestSchemas["assets.list"].safeParse({ limit: 200 }).success).toBe(true);
   });
 
+  it("requires asset disable requests to declare the selected disablement method", () => {
+    expect(CommandRequestSchemas["assets.disable"].safeParse({ assetId: "asset-1" }).success).toBe(
+      false,
+    );
+    expect(
+      CommandRequestSchemas["assets.disable"].safeParse({
+        assetId: "asset-1",
+        method: "move_file",
+      }).success,
+    ).toBe(true);
+    expect(
+      CommandRequestSchemas["assets.disable"].safeParse({
+        assetId: "asset-1",
+        method: "rename_randomly",
+      }).success,
+    ).toBe(false);
+    expect(CommandRequestSchemas["assets.enable"].safeParse({ assetId: "asset-1" }).success).toBe(
+      true,
+    );
+  });
+
   it("never transports confirmation grants or caller-controlled paths", () => {
     expect(
       CommandRequestSchemas["deployment.execute"].safeParse({
@@ -143,7 +164,7 @@ describe("command schemas", () => {
       "assets.list": {},
       "assets.get": { assetId: "asset-1" },
       "assets.openSource": { assetId: "asset-1" },
-      "assets.disable": { assetId: "asset-1" },
+      "assets.disable": { assetId: "asset-1", method: "move_file" },
       "assets.enable": { assetId: "asset-1" },
       "effective.resolve": {
         toolKey: "codex",

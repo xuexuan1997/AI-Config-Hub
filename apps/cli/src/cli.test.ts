@@ -336,7 +336,7 @@ describe("CLI program", () => {
     for (const argv of [
       ["assets", "--tool", "codex"],
       ["assets", "get", "asset-1"],
-      ["assets", "disable", "asset-1"],
+      ["assets", "disable", "asset-1", "--method", "hub_ignore"],
       ["assets", "enable", "asset-1"],
       ["effective", "--tool", "codex", "--project", "project-1", "--scope", "scope-1"],
       ["diagnose", "--severity", "warning", "--code", "UNRESOLVED_SKILL_REFERENCE"],
@@ -445,6 +445,8 @@ describe("CLI program", () => {
       "assets",
       "disable",
       "asset-1",
+      "--method",
+      "hub_ignore",
       "--json",
     ]);
     const enabled = await runCli(createCliProgram(programOptions), ["assets", "enable", "asset-1"]);
@@ -452,7 +454,7 @@ describe("CLI program", () => {
     expect(disabled).toEqual({ exitCode: 0 });
     expect(enabled).toEqual({ exitCode: 0 });
     expect(calls).toEqual([
-      { command: "disable", payload: { assetId: "asset-1" } },
+      { command: "disable", payload: { assetId: "asset-1", method: "hub_ignore" } },
       { command: "enable", payload: { assetId: "asset-1" } },
     ]);
     expect(JSON.parse(output[0] ?? "")).toMatchObject({

@@ -1,5 +1,11 @@
 /** Public entry for @ai-config-hub/deployer. */
 export {
+  AssetDisablementService,
+  type AssetDisablementServiceOptions,
+  type DisableAssetRequest,
+  type EnableAssetRequest,
+} from "./asset-disablement-service.js";
+export {
   CommittedButDurabilityUncertainError,
   MutationOutcomeUncertainError,
   NodeDeploymentFilePort,

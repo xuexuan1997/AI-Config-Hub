@@ -596,6 +596,29 @@ describe("desktop renderer view structure", () => {
             targetScopeId: "/workspace/target",
           },
           migrationSourceAssets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          migrationTargetAssets: [
+            assetSummaryFixture(
+              "asset-target-replace",
+              "rule:.cursor/rules/agents.mdc",
+              undefined,
+              {
+                contentHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
+                sourceDirectory: "/workspace/target/.cursor/rules",
+                toolKey: "cursor",
+              },
+            ),
+            assetSummaryFixture("asset-target-only", "rule:.cursor/rules/local.mdc", undefined, {
+              sourceDirectory: "/workspace/target/.cursor/rules",
+              toolKey: "cursor",
+            }),
+            assetSummaryFixture("asset-target-other-tool", "rule:codex-only", undefined, {
+              toolKey: "codex",
+            }),
+            assetSummaryFixture("asset-target-other-type", "skill:release", undefined, {
+              resourceType: "skill",
+              toolKey: "cursor",
+            }),
+          ],
           preview: previewFixture(["overwrite", "partial_conversion"], "asset:codex:rule:agents"),
         },
         onPreview: vi.fn(),
@@ -632,13 +655,18 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Source asset");
     expect(html).toContain("Hash change");
     expect(html).toContain('class="target-change-row is-replace"');
+    expect(html).toContain('class="target-change-row is-existing"');
+    expect(html).toContain("2 assets");
     expect(html).toContain("Rule");
     expect(html).toContain("<strong>Agent</strong><span>0 differences</span>");
     expect(html).toContain("<strong>Skill</strong><span>0 differences</span>");
     expect(html).toContain("<strong>MCP</strong><span>0 differences</span>");
     expect(html).toContain("1 difference");
     expect(html).toContain("rule:AGENTS");
+    expect(html).toContain("rule:.cursor/rules/local.mdc");
     expect(html).toContain(".cursor/rules/agents.mdc");
+    expect(html).not.toContain("rule:codex-only");
+    expect(html).not.toContain("skill:release");
     expect(html).toContain(
       "Confirmations: Overwrite existing target files. Deploy a partial conversion with documented warnings.",
     );
@@ -647,6 +675,50 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("Plan deployment-plan:audit-preview");
     expect(html).not.toContain("2026-06-28T08:10:00.000Z");
     expect(html).not.toContain("asset:codex:rule:agents");
+  });
+
+  it("shows target project assets before preview and filters them by target tool and asset type", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          migration: {
+            ...initialState.migration,
+            sourceProjectRoot: "/workspace/source",
+            targetScopeId: "/workspace/target",
+          },
+          migrationSourceAssets: [assetSummaryFixture("asset:codex:rule:agents", "rule:AGENTS")],
+          migrationTargetAssets: [
+            assetSummaryFixture("asset-target-rule", "rule:.cursor/rules/local.mdc", undefined, {
+              sourceDirectory: "/workspace/target/.cursor/rules",
+              toolKey: "cursor",
+            }),
+            assetSummaryFixture("asset-target-codex", "rule:codex-target-only", undefined, {
+              toolKey: "codex",
+            }),
+            assetSummaryFixture("asset-target-skill", "skill:release", undefined, {
+              resourceType: "skill",
+              toolKey: "cursor",
+            }),
+          ],
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("Target assets");
+    expect(html).toContain("rule:.cursor/rules/local.mdc");
+    expect(html).toContain('class="target-change-row is-existing"');
+    expect(html).toContain("1 asset");
+    expect(html).not.toContain("Preview writes to see target impact.");
+    expect(html).not.toContain("rule:codex-target-only");
+    expect(html).not.toContain("skill:release");
   });
 
   it("renders detailed workflow states in Simplified Chinese", () => {
@@ -732,7 +804,13 @@ function assetSummaryFixture(
   overrides: Partial<
     Pick<
       AppState["assets"][number],
-      "toolKey" | "resourceType" | "scopeKind" | "status" | "sourceDirectory" | "loadState"
+      | "toolKey"
+      | "resourceType"
+      | "scopeKind"
+      | "status"
+      | "sourceDirectory"
+      | "loadState"
+      | "contentHash"
     >
   > = {},
 ): AppState["assets"][number] {
@@ -744,7 +822,7 @@ function assetSummaryFixture(
     logicalKey,
     sourceDirectory: overrides.sourceDirectory ?? "/workspace",
     loadState: overrides.loadState ?? "loaded",
-    contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+    contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     status: overrides.status ?? "enabled",
     diagnosticCounts,
   };

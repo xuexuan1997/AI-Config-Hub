@@ -24,6 +24,14 @@ export const DiagnosticSummarySchema = z
 export const AssetStatusSchema = z.enum(["enabled", "disabled"]);
 export type AssetStatus = z.infer<typeof AssetStatusSchema>;
 
+export const AssetDisablementMethodSchema = z.enum([
+  "native",
+  "move_file",
+  "remove_config_entry",
+  "hub_ignore",
+]);
+export type AssetDisablementMethod = z.infer<typeof AssetDisablementMethodSchema>;
+
 export const AssetSchema = z
   .object({
     assetId: AssetIdSchema,

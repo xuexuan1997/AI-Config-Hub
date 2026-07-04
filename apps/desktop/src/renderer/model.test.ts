@@ -13,6 +13,7 @@ import {
   deploymentConfirmationsForState,
   effectiveRequestForState,
   enabledMigrationAssets,
+  assetStatusChangeRequestFor,
   formatUiError,
   initialState,
   migrationDifferenceSummaryForState,
@@ -46,6 +47,15 @@ const disablementOptionsFixture = [
 ] as const satisfies NonNullable<AppState["assetDetail"]>["asset"]["disablementOptions"];
 
 describe("renderer project selection state", () => {
+  it("builds asset disable requests with the selected disablement method", () => {
+    expect(
+      assetStatusChangeRequestFor(AssetIdSchema.parse("asset-1"), "disabled", "hub_ignore"),
+    ).toEqual({
+      command: "assets.disable",
+      request: { assetId: "asset-1", method: "hub_ignore" },
+    });
+  });
+
   it("refreshes migration assets using the selected project root as an indexed project filter", async () => {
     const invoke = vi.fn().mockResolvedValue({
       ok: true,

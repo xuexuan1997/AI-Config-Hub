@@ -625,24 +625,34 @@ pre {
 
 .disable-methods {
   border-top: 1px solid var(--panel-border);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
   margin-top: 1rem;
   padding-top: 1rem;
 }
 
-.disable-methods h3 {
+.disable-methods legend {
+  font-weight: 700;
   margin-top: 0;
-}
-
-.disable-methods ul {
-  display: grid;
-  gap: 0.75rem;
-  list-style: none;
   padding: 0;
 }
 
-.disable-methods li {
+.disable-method-list {
   display: grid;
+  gap: 0.75rem;
+}
+
+.disable-method-option {
+  align-items: flex-start;
+  display: flex;
   gap: 0.35rem;
+}
+
+.disable-method-copy {
+  display: grid;
+  flex: 1;
+  gap: 0.25rem;
 }
 
 .method-recommended {
@@ -1421,6 +1431,11 @@ main {
   border-color: #b7e4c7;
 }
 
+.target-change-row.is-existing {
+  background: #f8fafc;
+  border-color: #d7e0ec;
+}
+
 .target-change-row.is-replace {
   background: #fff8e6;
   border-color: #e8c66d;
@@ -1463,6 +1478,11 @@ main {
 .app-shell[data-theme="dark"] .target-change-row.is-create {
   background: #11251b;
   border-color: #286441;
+}
+
+.app-shell[data-theme="dark"] .target-change-row.is-existing {
+  background: var(--soft-panel-bg);
+  border-color: var(--panel-border);
 }
 
 .app-shell[data-theme="dark"] .target-change-row.is-replace {

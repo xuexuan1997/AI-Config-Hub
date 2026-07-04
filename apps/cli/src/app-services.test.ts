@@ -248,14 +248,32 @@ describe("CLI command service composition", () => {
       );
       if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
       expect(source.status).toBe("enabled");
+      expect(
+        (await runtime.services["assets.get"]({ assetId: source.id })).asset.disablementOptions,
+      ).toEqual([
+        {
+          method: "move_file",
+          label: "Move file out of the tool load path",
+          description: "Move the source file into the AI Config Hub disabled-assets area.",
+          recommended: true,
+        },
+        {
+          method: "hub_ignore",
+          label: "Ignore inside AI Config Hub only",
+          description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+          recommended: false,
+        },
+      ]);
 
       await expect(
-        runtime.services["assets.disable"]({ assetId: "missing-asset" }),
+        runtime.services["assets.disable"]({ assetId: "missing-asset", method: "hub_ignore" }),
       ).rejects.toMatchObject({
         code: "NOT_FOUND",
       });
 
-      expect(await runtime.services["assets.disable"]({ assetId: source.id })).toEqual({
+      expect(
+        await runtime.services["assets.disable"]({ assetId: source.id, method: "hub_ignore" }),
+      ).toEqual({
         assetId: source.id,
         status: "disabled",
       });

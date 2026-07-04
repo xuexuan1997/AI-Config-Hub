@@ -11,8 +11,7 @@ import type {
   ToolId,
 } from "@ai-config-hub/shared";
 
-import type { Asset } from "../domain/asset.js";
-import type { AssetStatus } from "../domain/asset.js";
+import type { Asset, AssetDisablementMethod, AssetStatus } from "../domain/asset.js";
 import type { DeploymentPlan, DeploymentRecord } from "../domain/deployment.js";
 import type { Diagnostic } from "../domain/diagnostic.js";
 import type { EffectiveConfig } from "../domain/effective-config.js";
@@ -39,6 +38,25 @@ export interface DerivedIndexIncrementalReplacement extends DerivedIndexReplacem
   readonly changedPaths: readonly AbsolutePath[];
 }
 
+export interface AssetDisablementRecord {
+  readonly assetId: AssetId;
+  readonly method: AssetDisablementMethod;
+  readonly disabledAt: string;
+  readonly asset: Asset;
+  readonly scope: Scope;
+  readonly tool: ToolInstallation;
+  readonly restore: {
+    readonly sourcePath: AbsolutePath;
+    readonly movedPath?: AbsolutePath;
+    readonly originalText?: string;
+    readonly originalEntry?: unknown;
+    readonly sectionKey?: string;
+    readonly nativeField?: string;
+    readonly nativeHadValue?: boolean;
+    readonly nativePreviousValue?: unknown;
+  };
+}
+
 export interface IndexRepository {
   replaceDerivedIndex(replacement: DerivedIndexReplacement): Promise<{ readonly revision: string }>;
   mergeIncrementalIndex(
@@ -62,6 +80,9 @@ export interface IndexRepository {
     readonly status: AssetStatus;
     readonly revision: string;
   }>;
+  getAssetDisablement(assetId: AssetId): Promise<AssetDisablementRecord | undefined>;
+  saveAssetDisablement(record: AssetDisablementRecord): Promise<void>;
+  clearAssetDisablement(assetId: AssetId): Promise<void>;
   getEffectiveConfig(
     id: EffectiveConfig["effectiveConfigId"],
   ): Promise<EffectiveConfig | undefined>;

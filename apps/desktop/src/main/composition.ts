@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir, platform } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
 import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
@@ -23,6 +23,7 @@ import type {
   ToolInstallation,
 } from "@ai-config-hub/core";
 import {
+  AssetDisablementService,
   DeploymentExecutionService,
   DeploymentPreviewService,
   DeploymentRollbackService,
@@ -107,6 +108,7 @@ interface DesktopRuntime {
   readonly databaseRecovery: boolean;
   readonly appDataRoot: AbsolutePath;
   readonly backupRoot: AbsolutePath;
+  readonly disabledAssetsRoot: AbsolutePath;
   readonly historyRoot: AbsolutePath;
   readonly history: LocalHistoryService;
   readonly pathLocks: PathLockManager;
@@ -147,6 +149,9 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
   const backupRoot = await ensurePrivateDirectory(
     join(options.userDataPath, "backups", "deployments"),
   );
+  const disabledAssetsRoot = await ensurePrivateDirectory(
+    join(options.userDataPath, "disabled-assets"),
+  );
   const historyRoot = await ensurePrivateDirectory(
     join(options.userDataPath, "history", "local-git"),
   );
@@ -160,6 +165,7 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
     databaseRecovery: opened.mode === "read_only_recovery",
     appDataRoot: AbsolutePathSchema.parse(options.userDataPath),
     backupRoot,
+    disabledAssetsRoot,
     historyRoot,
     history: new LocalHistoryService({
       git: new SystemLocalGitPort(),
@@ -194,6 +200,11 @@ function createServices(
   const cwd = AbsolutePathSchema.parse(resolve(options.cwd ?? process.cwd()));
   const homeDirectory = AbsolutePathSchema.parse(resolve(options.homeDirectory ?? homedir()));
   const registry = createDefaultAdapterRegistry();
+  const assetDisablement = new AssetDisablementService({
+    indexRepository: runtime.repositories.index,
+    disabledAssetsRoot: runtime.disabledAssetsRoot,
+    now: () => IsoDateTimeSchema.parse(now(runtime)),
+  });
 
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
     "scan.start": async (payload) => {
@@ -458,19 +469,14 @@ function createServices(
     },
     "assets.disable": async (payload) => {
       const request = payload as CommandRequest<"assets.disable">;
-      const result = await runtime.repositories.index.setAssetStatus(
-        AssetIdSchema.parse(request.assetId),
-        "disabled",
-      );
-      return { assetId: result.assetId, status: "disabled" as const };
+      return assetDisablement.disable({
+        assetId: AssetIdSchema.parse(request.assetId),
+        method: request.method,
+      });
     },
     "assets.enable": async (payload) => {
       const request = payload as CommandRequest<"assets.enable">;
-      const result = await runtime.repositories.index.setAssetStatus(
-        AssetIdSchema.parse(request.assetId),
-        "enabled",
-      );
-      return { assetId: result.assetId, status: "enabled" as const };
+      return assetDisablement.enable({ assetId: AssetIdSchema.parse(request.assetId) });
     },
     "effective.resolve": async (payload) =>
       resolveEffectiveView(runtime, registry, payload as CommandRequest<"effective.resolve">),
@@ -1511,7 +1517,7 @@ function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOpti
       description:
         "Remove this server entry from the tool configuration and keep a Hub manifest record for recovery.",
     });
-  } else if (["rule", "agent", "skill"].includes(asset.resource.kind)) {
+  } else if (isFileDisablementAsset(asset)) {
     options.push({
       method: "move_file",
       label: "Move file out of the tool load path",
@@ -1530,14 +1536,15 @@ function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOpti
 function nativeDisablementOption(
   asset: Asset,
 ): Omit<AssetDisablementOption, "recommended"> | undefined {
-  if (asset.toolId === "opencode" && asset.resource.kind === "agent") {
+  if (!isOpenCodeConfigAsset(asset)) return undefined;
+  if (asset.resource.kind === "agent") {
     return {
       method: "native",
       label: "Set OpenCode agent disable to true",
       description: "Write disable=true for this agent in the OpenCode configuration.",
     };
   }
-  if (asset.toolId === "opencode" && asset.resource.kind === "mcp") {
+  if (asset.resource.kind === "mcp") {
     return {
       method: "native",
       label: "Set OpenCode MCP enabled to false",
@@ -1545,6 +1552,23 @@ function nativeDisablementOption(
     };
   }
   return undefined;
+}
+
+function isOpenCodeConfigAsset(asset: Asset): boolean {
+  return (
+    asset.toolId === "opencode" &&
+    (asset.resource.kind === "agent" || asset.resource.kind === "mcp") &&
+    basename(asset.canonicalSourcePath).startsWith("opencode.json")
+  );
+}
+
+function isFileDisablementAsset(asset: Asset): boolean {
+  return (
+    (asset.resource.kind === "rule" ||
+      asset.resource.kind === "agent" ||
+      asset.resource.kind === "skill") &&
+    !isOpenCodeConfigAsset(asset)
+  );
 }
 
 type AssetListLoadState = {

@@ -252,10 +252,10 @@ function repository(
     getAssetStatuses: (assetIds: Parameters<IndexRepository["getAssetStatuses"]>[0]) =>
       Promise.resolve(
         new Map(
-          assetIds.map((assetId) => [
-            assetId,
-            seed.assets?.find((asset) => asset.assetId === assetId)?.status ?? "enabled",
-          ]),
+          assetIds.flatMap((assetId) => {
+            const status = seed.assets?.find((asset) => asset.assetId === assetId)?.status;
+            return status === undefined ? [] : [[assetId, status]];
+          }),
         ),
       ),
     listScopes: () => Promise.resolve(seed.scopes ?? []),

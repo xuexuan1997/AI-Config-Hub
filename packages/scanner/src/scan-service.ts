@@ -458,7 +458,7 @@ async function applyStoredAssetStatuses(
   return assets.map((asset) =>
     AssetSchema.parse({
       ...asset,
-      status: statuses.get(asset.assetId) === "disabled" ? "disabled" : asset.status,
+      status: statuses.get(asset.assetId) ?? asset.status,
     }),
   );
 }

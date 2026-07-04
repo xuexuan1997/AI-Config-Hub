@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir, platform } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
 import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
@@ -21,6 +21,7 @@ import type {
   ToolInstallation,
 } from "@ai-config-hub/core";
 import {
+  AssetDisablementService,
   DeploymentPreviewService,
   DeploymentExecutionService,
   DeploymentRollbackService,
@@ -81,6 +82,7 @@ interface CliRuntime {
   readonly databaseRecovery: boolean;
   readonly appDataRoot: AbsolutePath;
   readonly backupRoot: AbsolutePath;
+  readonly disabledAssetsRoot: AbsolutePath;
   readonly historyRoot: AbsolutePath;
   readonly history: LocalHistoryService;
   readonly pathLocks: PathLockManager;
@@ -116,6 +118,7 @@ async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
   const userData = dataRoot(env);
   await ensurePrivateDirectory(userData);
   const backupRoot = await ensurePrivateDirectory(join(userData, "backups", "deployments"));
+  const disabledAssetsRoot = await ensurePrivateDirectory(join(userData, "disabled-assets"));
   const historyRoot = await ensurePrivateDirectory(join(userData, "history", "local-git"));
   const opened = await openDatabase({
     path: join(userData, "ai-config-hub.sqlite"),
@@ -127,6 +130,7 @@ async function createRuntime(options: CliServiceOptions): Promise<CliRuntime> {
     databaseRecovery: opened.mode === "read_only_recovery",
     appDataRoot: AbsolutePathSchema.parse(userData),
     backupRoot,
+    disabledAssetsRoot,
     historyRoot,
     history: new LocalHistoryService({
       git: new SystemLocalGitPort(),
@@ -144,6 +148,11 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
   const cwd = AbsolutePathSchema.parse(resolve(options.cwd ?? process.cwd()));
   const homeDirectory = AbsolutePathSchema.parse(resolve(options.homeDirectory ?? homedir()));
   const registry = createDefaultAdapterRegistry();
+  const assetDisablement = new AssetDisablementService({
+    indexRepository: runtime.repositories.index,
+    disabledAssetsRoot: runtime.disabledAssetsRoot,
+    now: () => IsoDateTimeSchema.parse(now(runtime)),
+  });
 
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
     "scan.start": async (payload) => {
@@ -329,6 +338,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           scopeId: asset.scopeId,
           logicalKey: asset.locator,
           status: asset.status,
+          disablementOptions: disablementOptionsForAsset(asset),
           ...(include.includes("normalized") ? { normalized: toJson(asset.resource) } : {}),
           ...(include.includes("references") ? { references: asset.references } : {}),
           ...(include.includes("diagnostics") ? { diagnosticIds: [] } : {}),
@@ -348,19 +358,14 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
     },
     "assets.disable": async (payload) => {
       const request = payload as CommandRequest<"assets.disable">;
-      const result = await runtime.repositories.index.setAssetStatus(
-        AssetIdSchema.parse(request.assetId),
-        "disabled",
-      );
-      return { assetId: result.assetId, status: "disabled" as const };
+      return assetDisablement.disable({
+        assetId: AssetIdSchema.parse(request.assetId),
+        method: request.method,
+      });
     },
     "assets.enable": async (payload) => {
       const request = payload as CommandRequest<"assets.enable">;
-      const result = await runtime.repositories.index.setAssetStatus(
-        AssetIdSchema.parse(request.assetId),
-        "enabled",
-      );
-      return { assetId: result.assetId, status: "enabled" as const };
+      return assetDisablement.enable({ assetId: AssetIdSchema.parse(request.assetId) });
     },
     "effective.resolve": async (payload) =>
       resolveEffectiveView(runtime, registry, payload as CommandRequest<"effective.resolve">),
@@ -1240,6 +1245,78 @@ function scopeKindsForAssets(
     rows
       .filter(({ domain_id }) => scopeIds.has(domain_id))
       .map(({ domain_id, scope_kind }) => [domain_id, ScopeKindSchema.parse(scope_kind)]),
+  );
+}
+
+type AssetDisablementOption = {
+  readonly method: "native" | "move_file" | "remove_config_entry" | "hub_ignore";
+  readonly label: string;
+  readonly description: string;
+  readonly recommended: boolean;
+};
+
+function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOption[] {
+  const options: Omit<AssetDisablementOption, "recommended">[] = [];
+  const native = nativeDisablementOption(asset);
+  if (native !== undefined) options.push(native);
+  if (asset.resource.kind === "mcp") {
+    options.push({
+      method: "remove_config_entry",
+      label: "Remove the configuration entry",
+      description:
+        "Remove this server entry from the tool configuration and keep a Hub manifest record for recovery.",
+    });
+  } else if (isFileDisablementAsset(asset)) {
+    options.push({
+      method: "move_file",
+      label: "Move file out of the tool load path",
+      description: "Move the source file into the AI Config Hub disabled-assets area.",
+    });
+  }
+  options.push({
+    method: "hub_ignore",
+    label: "Ignore inside AI Config Hub only",
+    description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+  });
+
+  return options.map((option, index) => ({ ...option, recommended: index === 0 }));
+}
+
+function nativeDisablementOption(
+  asset: Asset,
+): Omit<AssetDisablementOption, "recommended"> | undefined {
+  if (!isOpenCodeConfigAsset(asset)) return undefined;
+  if (asset.resource.kind === "agent") {
+    return {
+      method: "native",
+      label: "Set OpenCode agent disable to true",
+      description: "Write disable=true for this agent in the OpenCode configuration.",
+    };
+  }
+  if (asset.resource.kind === "mcp") {
+    return {
+      method: "native",
+      label: "Set OpenCode MCP enabled to false",
+      description: "Write enabled=false for this MCP server in the OpenCode configuration.",
+    };
+  }
+  return undefined;
+}
+
+function isOpenCodeConfigAsset(asset: Asset): boolean {
+  return (
+    asset.toolId === "opencode" &&
+    (asset.resource.kind === "agent" || asset.resource.kind === "mcp") &&
+    basename(asset.canonicalSourcePath).startsWith("opencode.json")
+  );
+}
+
+function isFileDisablementAsset(asset: Asset): boolean {
+  return (
+    (asset.resource.kind === "rule" ||
+      asset.resource.kind === "agent" ||
+      asset.resource.kind === "skill") &&
+    !isOpenCodeConfigAsset(asset)
   );
 }
 

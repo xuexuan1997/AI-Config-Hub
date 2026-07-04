@@ -205,12 +205,22 @@ export function createCliProgram(options: CliProgramOptions): Command {
   assets
     .command("disable")
     .argument("<asset-id>", "asset id")
+    .requiredOption(
+      "--method <method>",
+      "disable method: native, move_file, remove_config_entry, or hub_ignore",
+    )
     .option("--json", "print a CLI JSON envelope")
-    .action(async (assetId: string, flags: GlobalOptions, command: Command) => {
+    .action(
+      async (
+        assetId: string,
+        flags: { readonly method: string } & GlobalOptions,
+        command: Command,
+      ) => {
       const outputFlags = withInheritedJson(flags, command);
-      const response = await callApi("assets.disable", { assetId });
+      const response = await callApi("assets.disable", { assetId, method: flags.method });
       return finishResponse("assets.disable", "assets.disable", response, outputFlags);
-    });
+      },
+    );
   assets
     .command("enable")
     .argument("<asset-id>", "asset id")
