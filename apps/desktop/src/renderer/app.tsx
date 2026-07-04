@@ -226,6 +226,10 @@ export function App(props: { readonly api: DesktopApi }) {
         status: response.data.status,
       } as const;
       dispatch(statusAction);
+      dispatch({
+        type: "message",
+        message: t(locale, nextStatus === "disabled" ? "Asset disabled." : "Asset enabled."),
+      });
       const detail = await refreshAssetDetail(props.api, assetId);
       if (detail !== undefined) dispatch({ type: "assetDetail", detail });
       dispatch(statusAction);

@@ -570,10 +570,12 @@ describe("renderer project selection state", () => {
     });
 
     expect(disabled.assets[0]?.status).toBe("disabled");
+    expect(disabled.migrationSourceAssets[0]?.status).toBe("disabled");
     expect(disabled.assetDetail?.asset.status).toBe("disabled");
     expect(disabled.migration.sourceAssetIds).toEqual(["asset-1"]);
     expect(disabled.preview).toBe(withPreview.preview);
     expect(enabled.assets[0]?.status).toBe("enabled");
+    expect(enabled.migrationSourceAssets[0]?.status).toBe("enabled");
     expect(enabled.assetDetail?.asset.status).toBe("enabled");
     expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
   });

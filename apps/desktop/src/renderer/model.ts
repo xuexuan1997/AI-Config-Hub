@@ -404,9 +404,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
         migrationTargetAssets: action.assets,
       });
     case "assetStatus": {
-      const assets = state.assets.map((asset) =>
-        asset.id === action.assetId ? { ...asset, status: action.status } : asset,
-      );
+      const updateAssetStatus = (asset: AppState["assets"][number]) =>
+        asset.id === action.assetId ? { ...asset, status: action.status } : asset;
+      const assets = state.assets.map(updateAssetStatus);
+      const migrationSourceAssets = state.migrationSourceAssets.map(updateAssetStatus);
+      const migrationTargetAssets = state.migrationTargetAssets.map(updateAssetStatus);
       const assetDetail =
         state.assetDetail?.asset.id === action.assetId
           ? {
@@ -417,6 +419,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const refreshed = {
         ...state,
         assets,
+        migrationSourceAssets,
+        migrationTargetAssets,
         ...(assetDetail === undefined ? {} : { assetDetail }),
       };
       return refreshed;

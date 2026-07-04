@@ -1256,7 +1256,12 @@ type AssetDisablementOption = {
 };
 
 function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOption[] {
-  const options: Omit<AssetDisablementOption, "recommended">[] = [];
+  const hubIgnore = {
+    method: "hub_ignore",
+    label: "Ignore inside AI Config Hub only",
+    description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
+  } as const satisfies Omit<AssetDisablementOption, "recommended">;
+  const options: Omit<AssetDisablementOption, "recommended">[] = [hubIgnore];
   const native = nativeDisablementOption(asset);
   if (native !== undefined) options.push(native);
   if (asset.resource.kind === "mcp") {
@@ -1273,11 +1278,6 @@ function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOpti
       description: "Move the source file into the AI Config Hub disabled-assets area.",
     });
   }
-  options.push({
-    method: "hub_ignore",
-    label: "Ignore inside AI Config Hub only",
-    description: "Keep the tool configuration unchanged and ignore the asset in Hub.",
-  });
 
   return options.map((option, index) => ({ ...option, recommended: index === 0 }));
 }

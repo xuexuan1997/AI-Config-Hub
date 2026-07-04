@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { localeForState, t, type DesktopLocale } from "../i18n.js";
+import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import type { AppState, AssetDisablementMethod } from "../model.js";
 
 export function AssetsView(props: {
@@ -144,6 +144,7 @@ export function AssetsView(props: {
           diagnostics={props.state.diagnostics}
           assetLabels={assetLabels}
           locale={locale}
+          message={props.state.message}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
           onLoadEffective={props.onLoadEffective}
@@ -398,14 +399,6 @@ function assetStatusFor(asset: { readonly status?: string }): AssetStatus {
 
 function assetStatusLabel(locale: DesktopLocale, status: AssetStatus): string {
   return status === "disabled" ? t(locale, "Disabled") : t(locale, "Enabled");
-}
-
-function nextAssetStatus(status: AssetStatus): AssetStatus {
-  return status === "disabled" ? "enabled" : "disabled";
-}
-
-function assetStatusActionLabel(locale: DesktopLocale, status: AssetStatus): string {
-  return status === "disabled" ? t(locale, "Enable asset") : t(locale, "Disable asset");
 }
 
 function assetLoadStateFor(asset: AssetSummary): AssetLoadState {
@@ -812,6 +805,7 @@ function AssetDetailDialog(props: {
   readonly diagnostics: AppState["diagnostics"];
   readonly assetLabels: ReadonlyMap<string, string>;
   readonly locale: DesktopLocale;
+  readonly message: string | undefined;
   readonly onOpenSource: () => void;
   readonly onToggleAssetStatus: (
     assetId: AppState["assets"][number]["id"],
@@ -825,12 +819,11 @@ function AssetDetailDialog(props: {
   const detail = props.detail;
   const effective = props.effective;
   const status = assetStatusFor(detail.asset);
-  const targetStatus = nextAssetStatus(status);
   const disablementOptions = detail.asset.disablementOptions ?? [];
   const defaultDisablementMethod = selectedDefaultDisablementMethod(disablementOptions);
   const [selectedDisablementMethod, setSelectedDisablementMethod] =
     useState(defaultDisablementMethod);
-  const showsDisablementOptions = targetStatus === "disabled" && disablementOptions.length > 0;
+  const showsDisablementOptions = status === "enabled" && disablementOptions.length > 0;
 
   useEffect(() => {
     setSelectedDisablementMethod(defaultDisablementMethod);
@@ -858,22 +851,15 @@ function AssetDetailDialog(props: {
             <button type="button" onClick={props.onOpenSource}>
               {t(props.locale, "Open source")}
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                props.onToggleAssetStatus(
-                  detail.asset.id,
-                  targetStatus,
-                  targetStatus === "disabled" ? selectedDisablementMethod : undefined,
-                )
-              }
-            >
-              {assetStatusActionLabel(props.locale, status)}
-            </button>
             <button type="button" onClick={props.onLoadEffective}>
               {t(props.locale, "Load effective configuration")}
             </button>
           </div>
+          {props.message === undefined ? null : (
+            <div className="asset-detail-message" role="status">
+              {localizeUiMessage(props.locale, props.message)}
+            </div>
+          )}
           <dl>
             <dt>{t(props.locale, "Tool")}</dt>
             <dd>{toolLabel(detail.asset.toolKey)}</dd>
@@ -888,29 +874,67 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
+          {status === "disabled" ? (
+            <section
+              aria-label={t(props.locale, "Asset status action")}
+              className="asset-status-control disabled"
+            >
+              <div>
+                <h3>{t(props.locale, "Asset is disabled")}</h3>
+                <p>
+                  {t(
+                    props.locale,
+                    "Enable it to include it again in review, effective configuration, and migration.",
+                  )}
+                </p>
+              </div>
+              <button
+                className="enable-asset-primary"
+                type="button"
+                onClick={() => props.onToggleAssetStatus(detail.asset.id, "enabled")}
+              >
+                {t(props.locale, "Enable asset")}
+              </button>
+            </section>
+          ) : null}
           {showsDisablementOptions ? (
             <fieldset className="disable-methods">
-              <legend>{t(props.locale, "Disable method")}</legend>
+              <legend>{t(props.locale, "Disable impact")}</legend>
+              <p>{t(props.locale, "Choose how far this disable action should go.")}</p>
               <div className="disable-method-list">
-                {disablementOptions.map((option) => (
-                  <label key={option.method} className="disable-method-option">
-                    <input
-                      type="radio"
-                      name={`disable-method-${detail.asset.id}`}
-                      value={option.method}
-                      checked={selectedDisablementMethod === option.method}
-                      onChange={() => setSelectedDisablementMethod(option.method)}
-                    />
-                    <span className="disable-method-copy">
-                      <strong>{option.label}</strong>
-                      <span>{option.description}</span>
-                    </span>
-                    {option.recommended ? (
-                      <span className="method-recommended">{t(props.locale, "Recommended")}</span>
-                    ) : null}
-                  </label>
-                ))}
+                {disablementOptions.map((option) => {
+                  const optionCopy = disablementOptionCopy(props.locale, option);
+                  return (
+                    <label key={option.method} className="disable-method-option">
+                      <input
+                        type="radio"
+                        name={`disable-method-${detail.asset.id}`}
+                        value={option.method}
+                        checked={selectedDisablementMethod === option.method}
+                        onChange={() => setSelectedDisablementMethod(option.method)}
+                      />
+                      <span className="disable-method-copy">
+                        <strong>{optionCopy.label}</strong>
+                        <span>{optionCopy.description}</span>
+                      </span>
+                      {option.recommended ? (
+                        <span className="method-recommended">
+                          {t(props.locale, "Recommended")}
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
               </div>
+              <button
+                className="disable-asset-primary"
+                type="button"
+                onClick={() =>
+                  props.onToggleAssetStatus(detail.asset.id, "disabled", selectedDisablementMethod)
+                }
+              >
+                {t(props.locale, "Disable asset")}
+              </button>
             </fieldset>
           ) : null}
           <section className="asset-detail-diagnostics">
@@ -1007,4 +1031,44 @@ function AssetDetailDialog(props: {
       </section>
     </div>
   );
+}
+
+function disablementOptionCopy(
+  locale: DesktopLocale,
+  option: NonNullable<AppState["assetDetail"]>["asset"]["disablementOptions"][number],
+): { readonly label: string; readonly description: string } {
+  switch (option.method) {
+    case "native":
+      return {
+        label: t(locale, "Use the tool's native disable switch"),
+        description: t(
+          locale,
+          "Keeps the asset in place and asks the AI tool to stop loading it.",
+        ),
+      };
+    case "move_file":
+      return {
+        label: t(locale, "Also disables it in the AI tool"),
+        description: t(
+          locale,
+          "Moves the source out of the active load path so the tool itself stops loading it.",
+        ),
+      };
+    case "remove_config_entry":
+      return {
+        label: t(locale, "Remove it from the tool configuration"),
+        description: t(
+          locale,
+          "Updates the tool configuration so this asset is no longer referenced.",
+        ),
+      };
+    case "hub_ignore":
+      return {
+        label: t(locale, "Only hide it in AI Config Hub"),
+        description: t(
+          locale,
+          "Leaves the tool configuration untouched; AI Config Hub will ignore it for review and migration.",
+        ),
+      };
+  }
 }

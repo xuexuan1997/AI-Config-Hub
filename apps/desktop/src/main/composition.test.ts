@@ -265,6 +265,23 @@ describe("desktop command service composition", () => {
       if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
 
       expect(
+        await runtime.services["assets.disable"]({ assetId: source.id, method: "hub_ignore" }),
+      ).toEqual({
+        assetId: source.id,
+        status: "disabled",
+      });
+      await expect(readFile(join(project, "AGENTS.md"), "utf8")).resolves.toBe(
+        "Use local TypeScript conventions.\n",
+      );
+      expect(await runtime.services["assets.enable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "enabled",
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "enabled",
+      );
+
+      expect(
         await runtime.services["assets.disable"]({ assetId: source.id, method: "move_file" }),
       ).toEqual({
         assetId: source.id,
@@ -286,8 +303,8 @@ describe("desktop command service composition", () => {
           ({ method, recommended }) => ({ method, recommended }),
         ),
       ).toEqual([
-        { method: "move_file", recommended: true },
-        { method: "hub_ignore", recommended: false },
+        { method: "hub_ignore", recommended: true },
+        { method: "move_file", recommended: false },
       ]);
       await expect(
         runtime.services["migration.preview"]({
