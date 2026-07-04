@@ -2,25 +2,19 @@
 
 语言：简体中文 | [English](./README.en.md)
 
-AI Config Hub 是一个本地优先的 AI 编程工具配置中枢，用统一领域模型读取、解释、诊断和迁移 Claude Code、Cursor、Codex 与 OpenCode 的 Rules、Agents、Skills 和 MCP 配置。它通过可预览、可备份、可验证、可回滚的事务式部署流程，降低多工具配置共存和迁移时覆盖用户文件的风险。
+AI Config Hub 是一个本地优先的 AI 编程工具配置工作台，用统一模型扫描、诊断、解释和迁移 Claude Code、Cursor、Codex 与 OpenCode 的 Rules、Agents、Skills 和 MCP 配置。当前产品体验以 Electron 桌面端为主：先选择项目并审查资产，再选择源/目标项目预览迁移，最后在明确确认后写入可验证的配置文件。
 
-### 项目背景
+它不是简单的文件同步工具。AI Config Hub 会在写入前展示目标影响、字段丢失、哈希快照、漂移风险和必需确认项，并通过备份、验证、历史记录和回滚接口降低跨工具迁移时覆盖本地配置的风险。
 
-AI 编程工具正在快速分化：不同工具使用不同目录、文件格式、继承规则和 MCP 配置方式。同一团队或个人在 Claude Code、Cursor、Codex、OpenCode 之间切换时，常见问题包括配置分散、有效配置难以解释、跨工具迁移存在语义丢失、手工复制容易覆盖已有文件，以及缺少可审计的回滚记录。
+### 当前体验
 
-AI Config Hub 的目标是在不接管工具原生文件、不执行第三方配置脚本、不依赖云端服务的前提下，为这些本地配置提供统一的扫描、诊断、转换、预览、部署和历史能力。
+桌面端是当前最完整的 UX 入口，左侧导航包含三个工作区：
 
-### 项目概述
+- **Asset Review（资产审查）**：选择当前项目后自动扫描配置资产，按工具和资源类型筛选 Rules、Agents、Skills、MCP；查看逻辑键、来源目录、是否会加载、诊断数量和资产详情。
+- **Asset Migration（资产迁移）**：独立选择源项目和目标项目，选择源资产、目标工具和冲突策略，先生成写入预览，再在确认哈希、字段损失、覆盖/删除等风险后执行迁移。
+- **Settings（设置）**：配置主题和语言，支持跟随系统、浅色、深色，以及英文/简体中文界面。
 
-当前仓库是一个 TypeScript 模块化 Monorepo，包含共享核心、适配器、扫描器、部署器、存储层、中央资产库、Git 历史与远程资产库能力，以及 CLI、Electron 桌面端和本地 Web UI 入口。
-
-核心设计原则：
-
-- 本地工具配置文件是事实来源，SQLite 只保存可重建的索引、规范化结果、诊断和操作记录。
-- 扫描默认只读，不执行 Skill、Hook、MCP 命令或配置中引用的第三方脚本。
-- 写入必须经过转换、差异预览、用户确认、漂移检查、备份、原子写入、重新扫描验证和失败回滚。
-- 工具差异被限制在适配器内，CLI 和桌面端共享同一套核心用例和错误语义。
-- Electron renderer 不直接访问文件系统、SQLite、Git 或 shell，只通过白名单 preload IPC 调用业务级 API。
+桌面端的资产详情对话框支持打开来源文件、启用/禁用资产、加载有效配置，并展示标准化内容、引用、贡献者、被忽略资产和有效配置诊断。迁移页会在执行前展示差异摘要、目标文件变更、字段保留/丢弃/转换、源漂移、源/目标哈希快照和任务执行状态。
 
 ### 图示概览
 
@@ -28,33 +22,63 @@ AI Config Hub 的目标是在不接管工具原生文件、不执行第三方配
 
 ![AI Config Hub 功能流程](./docs/readme/assets/feature-flow.svg)
 
-#### 界面预览
+#### 当前桌面工作流
 
-截图来自当前桌面端工作流，并已裁剪掉本机路径栏。
+截图来自桌面端审查和迁移流程，并已裁剪掉本机路径栏。
 
-| 资产扫描与诊断 | 迁移预览 | 历史与回滚证据 |
+| 资产审查 | 迁移预览 | 设置 |
 | --- | --- | --- |
-| <img src="./docs/readme/assets/desktop-assets.png" alt="资产扫描与诊断界面" width="320"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="迁移预览界面" width="320"> | <img src="./docs/readme/assets/desktop-history-detail.png" alt="历史与回滚证据界面" width="320"> |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="资产审查界面" width="300"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="迁移预览界面" width="300"> | <img src="./docs/readme/assets/desktop-settings.png" alt="设置界面" width="300"> |
 
 #### 架构概览
 
 ![AI Config Hub 架构概览](./docs/readme/assets/architecture.svg)
 
-### 功能
+### 已实现能力
 
-- 多工具配置扫描：发现 Claude Code、Cursor、Codex 与 OpenCode 的 Rules、Agents、Skills、MCP 配置资产。
-- 统一资产模型：将工具专属文件解析为通用的 `rule`、`agent`、`skill`、`mcp` 资源。
-- 生效配置解释：按用户级、项目级、目录级作用域解释继承、覆盖、忽略和贡献关系。
-- 诊断与报告：定位解析、兼容、权限、冲突、漂移、部署和验证问题，并支持导出诊断。
-- 转换与迁移预览：评估跨工具转换结果，区分完整支持、部分支持和不支持，并展示字段保留、丢弃和变换信息。
-- 事务式部署：生成结构化操作和 diff，在确认后执行备份、原子写入、验证和可验证回滚。
-- 中央资产库与 Preset：提供个人文件系统资产库、资产导入、Preset 定义、预览、应用、来源追踪和回滚记录。
-- Git 资产库工作流：支持远程资产库 clone、pull、commit、push、tag、restore、history，以及冲突状态提示和恢复引导。
-- 自定义工具声明式配置：支持安全的内部工具 ID 和声明式扫描规则，用于发现 Rules、Agents、Skills 或 MCP 配置。
-- 本地历史与 Git 证据：记录部署、回滚和本地快照证据，为后续审计和恢复提供依据。
-- 多入口体验：提供 `apps/cli` 命令行入口、`apps/desktop` Electron + React 桌面入口，以及通过 Local API 连接的 `apps/web` 本地 Web UI。
+- 多工具扫描：发现 Claude Code、Cursor、Codex 和 OpenCode 的 Rules、Agents、Skills、MCP 配置资产。
+- 统一资产模型：将工具专属文件解析为 `rule`、`agent`、`skill`、`mcp` 等通用资源，并保留来源、作用域、哈希和诊断信息。
+- 资产审查：按工具、资源类型、作用域和诊断情况查看资产；支持打开来源文件、启用/禁用资产和定位诊断。
+- 有效配置解释：解析贡献者、继承、合并、覆盖、被忽略资产和有效配置诊断，帮助判断“最终会生效什么”。
+- 诊断与报告：覆盖解析、兼容性、权限、冲突、明文密钥风险、漂移、部署和验证问题；CLI 支持导出诊断。
+- 迁移预览：跨工具生成计划、diff、兼容性结果、字段损失、源/目标哈希和目标影响。
+- 受控部署：部署必须基于未过期的预览计划哈希，并通过覆盖、部分转换、删除等必需确认项后才会写入。
+- 恢复证据：CLI 和 API 支持部署/回滚历史、回滚执行、任务事件和本地 Git 快照证据。
+- 设置与本地化：桌面端支持主题、语言和设置修订版本；当前界面提供英文与简体中文。
+- 多入口：桌面端用于主要交互工作流，CLI 用于自动化与审计，本地 Web UI 用于连接 Local API、触发扫描、查看资产和任务事件。
 
-当前实现状态见 [docs/implementation/phase-status.md](./docs/implementation/phase-status.md)。诊断、转换、部署、中央资产库、Git 资产库基础工作流、本地 API、本地 Web UI 和三平台打包均已覆盖当前 tracked scope；团队身份、审批流、托管协作服务和在线分享市场仍在 MVP 边界外。
+当前实现状态见 [docs/implementation/phase-status.md](./docs/implementation/phase-status.md)。诊断、转换、部署、中央资产库、Git 资产库基础工作流、本地 API、本地 Web UI 和三平台打包已覆盖当前 tracked scope；团队身份、审批流、托管协作服务和在线分享市场仍在 MVP 边界外。
+
+### 命令行入口
+
+CLI 暴露与桌面端共享的核心用例，适合脚本化、CI 检查和审计：
+
+```bash
+ai-config-hub scan <roots...>
+ai-config-hub assets list --tool claude-code
+ai-config-hub assets get <asset-id> --include normalized --include diagnostics
+ai-config-hub effective --tool claude-code --project <project-id> --scope <scope-id>
+ai-config-hub diagnose --severity error
+ai-config-hub diagnose export --format markdown
+ai-config-hub migrate --dry-run --asset <asset-id> --to cursor --scope <target-scope>
+ai-config-hub deploy <plan-id> --plan-hash <hash> --yes
+ai-config-hub history --kind deployment
+ai-config-hub rollback <deployment-id> --yes
+```
+
+所有主要 CLI 命令都支持 `--json` 输出。`migrate` 只生成预览计划；实际写入必须通过 `deploy` 显式确认。
+
+### 本地 API 与 Web UI
+
+`packages/local-api` 提供本机 HTTP/SSE API、认证和来源限制。`apps/web` 是轻量 Local API 客户端，当前用于输入本机 API 地址和 token、触发扫描、刷新资产列表并查看任务事件。完整审查和迁移体验以桌面端为准。
+
+### 设计原则
+
+- 本地配置文件是事实来源；SQLite 只保存可重建的索引、规范化结果、诊断和操作记录。
+- 扫描默认只读，不执行 Skill、Hook、MCP 命令或配置中引用的第三方脚本。
+- 写入必须经过转换、差异预览、用户确认、漂移检查、备份、原子写入、重新扫描验证和失败回滚。
+- 工具差异隔离在适配器内，CLI、桌面端和 Local API 共享同一套核心用例和错误语义。
+- Electron renderer 不直接访问文件系统、SQLite、Git 或 shell，只通过白名单 preload IPC 调用业务级 API。
 
 ### 开发环境准备
 

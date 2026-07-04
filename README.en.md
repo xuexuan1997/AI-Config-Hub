@@ -2,25 +2,19 @@
 
 Language: [简体中文](./README.md) | English
 
-AI Config Hub is a local-first configuration hub for AI coding tools. It uses a unified domain model to read, interpret, diagnose, and migrate Rules, Agents, Skills, and MCP configuration across Claude Code, Cursor, Codex, and OpenCode. Its deployment workflow is previewable, backed up, verifiable, and rollback-aware, reducing the risk of overwriting user files when multiple tools and formats coexist.
+AI Config Hub is a local-first configuration workbench for AI coding tools. It uses one domain model to scan, diagnose, explain, and migrate Rules, Agents, Skills, and MCP configuration across Claude Code, Cursor, Codex, and OpenCode. The current product experience is centered on the Electron desktop app: choose a project and review assets, choose source and target projects for migration, preview writes, then explicitly confirm before verified configuration files are written.
 
-### Background
+It is not a simple file sync tool. Before writing, AI Config Hub surfaces target impact, field loss, hash snapshots, drift risk, and required confirmations, then reduces migration risk through backups, verification, history records, and rollback APIs.
 
-AI coding tools are evolving with different directories, file formats, inheritance rules, and MCP configuration models. When individuals or teams move between Claude Code, Cursor, Codex, and OpenCode, they often face fragmented configuration, unclear effective behavior, lossy cross-tool migration, risky manual copying, and limited audit or rollback evidence.
+### Current Experience
 
-AI Config Hub aims to provide unified local scanning, diagnostics, conversion, preview, deployment, and history without taking ownership of native tool files, executing third-party configuration scripts, or depending on a hosted cloud service.
+The desktop app is the most complete UX entry point today. Its sidebar has three workspaces:
 
-### Overview
+- **Asset Review**: select a current project and scan automatically; filter Rules, Agents, Skills, and MCP assets by tool and resource type; review logical keys, source directories, load state, diagnostic counts, and asset detail.
+- **Asset Migration**: choose source and target projects independently, select source assets, target tool, and conflict policy, create a write preview, then confirm hashes, field loss, overwrite/delete risks, and execute the migration.
+- **Settings**: configure theme and language, including system, light, dark, English, and Simplified Chinese.
 
-This repository is a modular TypeScript Monorepo. It contains a shared core, tool adapters, scanner, deployer, storage layer, central asset library, Git history and remote asset-repository support, plus CLI, Electron desktop, and local Web UI entry points.
-
-Core principles:
-
-- Local tool configuration files remain the source of truth; SQLite stores only rebuildable indexes, normalized results, diagnostics, and operation records.
-- Scans are read-only by default and do not execute Skills, Hooks, MCP commands, or third-party scripts referenced by configuration.
-- Writes must go through conversion, diff preview, user confirmation, drift checks, backups, atomic writes, rescan verification, and rollback on failure.
-- Tool-specific behavior is isolated inside adapters, while the CLI and desktop app share the same core use cases and error semantics.
-- The Electron renderer cannot access the filesystem, SQLite, Git, or shell directly; it only calls business-level APIs through an allowlisted preload IPC bridge.
+The asset detail dialog can open the source file, enable or disable an asset, load effective configuration, and show normalized content, references, contributors, ignored assets, and effective diagnostics. The migration page shows difference summaries, target file changes, retained/dropped/transformed fields, source drift, source/target hash snapshots, and task execution status.
 
 ### Visual Overview
 
@@ -28,33 +22,63 @@ Core principles:
 
 ![AI Config Hub feature flow](./docs/readme/assets/feature-flow.svg)
 
-#### Interface Preview
+#### Current Desktop Workflow
 
-The screenshots come from the current desktop workflow and are cropped so the local path bar is not shown.
+The screenshots come from the desktop review and migration flow and are cropped so the local path bar is not shown.
 
-| Asset scanning and diagnostics                                                                                 | Migration preview                                                                                            | History and rollback evidence                                                                                         |
-| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset scanning and diagnostics interface" width="320"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Migration preview interface" width="320"> | <img src="./docs/readme/assets/desktop-history-detail.png" alt="History and rollback evidence interface" width="320"> |
+| Asset review                                                                                 | Migration preview                                                                                            | Settings                                                                                   |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset review interface" width="300"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Migration preview interface" width="300"> | <img src="./docs/readme/assets/desktop-settings.png" alt="Settings interface" width="300"> |
 
 #### Architecture Overview
 
 ![AI Config Hub architecture overview](./docs/readme/assets/architecture.svg)
 
-### Features
+### Implemented Capabilities
 
-- Multi-tool configuration scanning for Claude Code, Cursor, Codex, and OpenCode Rules, Agents, Skills, and MCP assets.
-- Unified asset model that normalizes tool-specific files into `rule`, `agent`, `skill`, and `mcp` resources.
-- Effective configuration resolution across user, project, and directory scopes, with inheritance, override, ignored asset, and contribution evidence.
-- Diagnostics and reporting for parsing, compatibility, permissions, conflicts, drift, deployment, and verification issues.
-- Conversion and migration preview with explicit full, partial, and unsupported outcomes, including retained, dropped, and transformed fields.
-- Transactional deployment with structured operations, diffs, backups, atomic writes, verification, and verifiable rollback.
-- Central asset library and Presets with a personal filesystem library, asset import, Preset definition, preview, apply, source tracking, and rollback records.
-- Git asset repository workflows for clone, pull, commit, push, tag, restore, history, conflict status, and recovery guidance.
-- Declarative custom tool configuration with safe internal tool IDs and declarative scan rules for Rules, Agents, Skills, or MCP configuration.
-- Local history and Git evidence for deployment, rollback, and snapshot audit trails.
-- Multiple entry points through the `apps/cli` Node.js CLI, the `apps/desktop` Electron + React desktop app, and the `apps/web` local Web UI over the Local API.
+- Multi-tool scanning for Claude Code, Cursor, Codex, and OpenCode Rules, Agents, Skills, and MCP assets.
+- Unified asset model that normalizes tool-specific files into `rule`, `agent`, `skill`, and `mcp` resources while preserving source, scope, hash, and diagnostic evidence.
+- Asset review by tool, resource type, scope, and diagnostics, with source opening, enable/disable controls, and diagnostic location.
+- Effective configuration explanation for contributors, inheritance, merge, override, ignored assets, and effective diagnostics.
+- Diagnostics and reports for parsing, compatibility, permissions, conflicts, literal secret risk, drift, deployment, and verification; the CLI can export diagnostics.
+- Migration previews with plans, diffs, compatibility results, field loss, source/target hashes, and target impact.
+- Controlled deployment from a fresh preview plan hash, with required confirmations for overwrite, partial conversion, and delete risks.
+- Recovery evidence through CLI and API support for deployment/rollback history, rollback execution, task events, and local Git snapshot evidence.
+- Settings and localization for desktop theme, language, settings revisions, English, and Simplified Chinese.
+- Multiple entry points: the desktop app for the main interactive workflow, the CLI for automation and audit, and the local Web UI for Local API connection, scanning, asset listing, and task events.
 
 See [docs/implementation/phase-status.md](./docs/implementation/phase-status.md) for the current implementation status. Diagnostics, conversion, deployment, the central asset library, Git asset repository primitives, Local API, local Web UI, and three-platform packaging are covered for the current tracked scope; team identity, approval flows, hosted collaboration services, and online sharing markets remain outside the MVP boundary.
+
+### CLI
+
+The CLI exposes the same core use cases as the desktop app and is useful for scripting, CI checks, and audit:
+
+```bash
+ai-config-hub scan <roots...>
+ai-config-hub assets list --tool claude-code
+ai-config-hub assets get <asset-id> --include normalized --include diagnostics
+ai-config-hub effective --tool claude-code --project <project-id> --scope <scope-id>
+ai-config-hub diagnose --severity error
+ai-config-hub diagnose export --format markdown
+ai-config-hub migrate --dry-run --asset <asset-id> --to cursor --scope <target-scope>
+ai-config-hub deploy <plan-id> --plan-hash <hash> --yes
+ai-config-hub history --kind deployment
+ai-config-hub rollback <deployment-id> --yes
+```
+
+All major CLI commands support `--json`. `migrate` only creates a preview plan; actual writes must be explicitly confirmed through `deploy`.
+
+### Local API And Web UI
+
+`packages/local-api` provides a local HTTP/SSE API with authentication and origin restrictions. `apps/web` is a lightweight Local API client for entering a local API URL and token, starting scans, refreshing assets, and viewing task events. The complete review and migration workflow lives in the desktop app.
+
+### Design Principles
+
+- Local configuration files remain the source of truth; SQLite stores only rebuildable indexes, normalized results, diagnostics, and operation records.
+- Scans are read-only by default and do not execute Skills, Hooks, MCP commands, or third-party scripts referenced by configuration.
+- Writes must go through conversion, diff preview, user confirmation, drift checks, backups, atomic writes, rescan verification, and rollback on failure.
+- Tool-specific behavior is isolated inside adapters, while the CLI, desktop app, and Local API share the same core use cases and error semantics.
+- The Electron renderer cannot access the filesystem, SQLite, Git, or shell directly; it only calls business-level APIs through an allowlisted preload IPC bridge.
 
 ### Development Setup
 
