@@ -14,9 +14,20 @@ export type Route = "assets" | "migration" | "settings";
 export type MigrationTargetToolKey = CommandRequest<"migration.preview">["targetToolKey"];
 export type MigrationConflictPolicy = CommandRequest<"migration.preview">["conflictPolicy"];
 export type MigrationSourceAssetId = CommandResponse<"assets.list">["items"][number]["id"];
+export type AssetDisablementMethod = CommandRequest<"assets.disable">["method"];
+export type AssetStatus = NonNullable<CommandResponse<"assets.list">["items"][number]["status"]>;
 export type DeploymentConfirmation = CommandRequest<"deployment.execute">["confirmations"][number];
 export type ThemeSetting = NonNullable<CommandResponse<"settings.get">["values"]["theme"]>;
 export type LanguageSetting = NonNullable<CommandResponse<"settings.get">["values"]["language"]>;
+export type AssetStatusChangeRequest =
+  | {
+      readonly command: "assets.disable";
+      readonly request: CommandRequest<"assets.disable">;
+    }
+  | {
+      readonly command: "assets.enable";
+      readonly request: CommandRequest<"assets.enable">;
+    };
 
 export const MIGRATION_TARGET_TOOL_OPTIONS = [
   "claude-code",
@@ -195,6 +206,20 @@ export const initialState: AppState = {
     requiresRestart: false,
   },
 };
+
+export function assetStatusChangeRequestFor(
+  assetId: CommandResponse<"assets.list">["items"][number]["id"],
+  nextStatus: AssetStatus,
+  disablementMethod?: AssetDisablementMethod,
+): AssetStatusChangeRequest {
+  if (nextStatus === "disabled") {
+    if (disablementMethod === undefined) {
+      throw new Error("Disablement method is required to disable an asset.");
+    }
+    return { command: "assets.disable", request: { assetId, method: disablementMethod } };
+  }
+  return { command: "assets.enable", request: { assetId } };
+}
 
 function clearPreview(state: AppState): AppState {
   const { preview: discardedPreview, ...withoutPreview } = state;

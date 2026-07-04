@@ -17,7 +17,7 @@ import type {
 } from "@ai-config-hub/shared";
 
 import type { Asset } from "../domain/asset.js";
-import type { AssetStatus } from "../domain/asset.js";
+import type { AssetDisablementMethod, AssetStatus } from "../domain/asset.js";
 import type { DeploymentPlan, DeploymentRecord } from "../domain/deployment.js";
 import type { Diagnostic } from "../domain/diagnostic.js";
 import type { EffectiveConfig } from "../domain/effective-config.js";
@@ -95,6 +95,11 @@ export interface AssetOpenSourceResult {
 
 export interface AssetStatusChangeRequest {
   readonly assetId: AssetId;
+}
+
+export interface AssetDisableRequest {
+  readonly assetId: AssetId;
+  readonly method: AssetDisablementMethod;
 }
 
 export interface AssetStatusChangeResult {
@@ -230,7 +235,7 @@ export interface UseCaseContractMap {
     readonly output: AssetOpenSourceResult;
   };
   readonly "assets.disable": {
-    readonly input: AssetStatusChangeRequest;
+    readonly input: AssetDisableRequest;
     readonly output: { readonly assetId: AssetId; readonly status: "disabled" };
   };
   readonly "assets.enable": {

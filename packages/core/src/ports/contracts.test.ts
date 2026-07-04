@@ -7,6 +7,7 @@ import {
   type CoreUseCases,
   type UseCaseContractMap,
 } from "../use-cases/contracts.js";
+import type { AssetDisablementMethod } from "../domain/asset.js";
 import type { AdapterReadApi, ToolAdapter } from "./adapter.js";
 import type { AssetRepositoryGitPort, LocalGitPort } from "./git.js";
 
@@ -84,6 +85,7 @@ describe("core use cases", () => {
     }>();
     expectTypeOf<UseCaseContractMap["assets.disable"]["input"]>().toEqualTypeOf<{
       readonly assetId: AssetId;
+      readonly method: AssetDisablementMethod;
     }>();
     expectTypeOf<UseCaseContractMap["assets.disable"]["output"]>().toEqualTypeOf<{
       readonly assetId: AssetId;

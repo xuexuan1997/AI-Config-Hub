@@ -146,12 +146,42 @@ describe("AssetsView", () => {
     expect(html).toContain('aria-label="Asset detail"');
     expect(html).toContain('class="asset-detail-dialog"');
     expect(html).toContain('class="asset-detail-scroll"');
-    expect(html).toContain("Disable methods");
+    expect(html).toContain("Disable method");
     expect(html).toContain("Move file out of the tool load path");
     expect(html).toContain("Ignore inside AI Config Hub only");
     expect(html).toContain("Recommended");
     expect(html).toContain(">Close</button>");
     expect(html).not.toContain('<section class="detail-panel" aria-label="Asset detail">');
+  });
+
+  it("renders disablement options as an accessible radio group defaulting to the recommended method", () => {
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+    });
+
+    expect(html).toContain('<fieldset class="disable-methods">');
+    expect(html).toContain("<legend>Disable method</legend>");
+    expect(html).toContain(
+      'type="radio" name="disable-method-asset-1" checked="" value="move_file"',
+    );
+    expect(html).toContain('type="radio" name="disable-method-asset-1" value="hub_ignore"');
+    expect(html).toContain("Move file out of the tool load path");
+    expect(html).toContain("Ignore inside AI Config Hub only");
+    expect(html).toContain("Recommended");
+  });
+
+  it("does not show disablement method selection when restoring a disabled asset", () => {
+    const detail = assetDetailFixture("asset-1", "rule:AGENTS");
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS", { status: "disabled" })],
+      assetDetail: { ...detail, asset: { ...detail.asset, status: "disabled" } },
+    });
+
+    expect(html).toContain(">Enable asset</button>");
+    expect(html).not.toContain('<fieldset class="disable-methods">');
+    expect(html).not.toContain("<legend>Disable method</legend>");
+    expect(html).not.toContain('type="radio"');
   });
 
   it("clears inspected asset detail and effective configuration when inspect closes", () => {
@@ -273,6 +303,7 @@ function assetSummaryFixture(
       | "sourceDirectory"
       | "loadState"
       | "coveredByLogicalKey"
+      | "status"
     >
   > = {},
   diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },

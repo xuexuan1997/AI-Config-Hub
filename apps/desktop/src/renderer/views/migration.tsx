@@ -57,6 +57,10 @@ export function MigrationView(props: {
   const grantedConfirmations = new Set(props.state.deploymentConfirmationGrants);
   const activeTask =
     props.state.activeTask?.taskKind === "deployment" ? props.state.activeTask : undefined;
+  const targetRows = useMemo(
+    () => targetRowsForState(props.state, activeResourceType),
+    [props.state, activeResourceType],
+  );
 
   useEffect(() => {
     if (
@@ -251,7 +255,7 @@ export function MigrationView(props: {
         <section className="migration-target-panel panel">
           <header className="panel-title">
             <strong>{t(locale, "Target assets")}</strong>
-            <span>{formatAssetCount(locale, preview?.changes.length ?? 0)}</span>
+            <span>{formatAssetCount(locale, targetRows.length)}</span>
           </header>
           <dl className="target-context">
             <dt>{t(locale, "Target project")}</dt>
@@ -260,37 +264,33 @@ export function MigrationView(props: {
             <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
           </dl>
           <div className="migration-asset-list">
-            {preview === undefined ? (
-              <p>{t(locale, "Preview writes to see target impact.")}</p>
-            ) : activeGroup === undefined ||
-              differenceCountForGroup(props.state, activeGroup) === 0 ? (
-              <p>{t(locale, "No differences for this asset type.")}</p>
+            {props.state.migration.targetScopeId === undefined ? (
+              <p>{t(locale, "Choose a target project to see target assets.")}</p>
+            ) : targetRows.length === 0 ? (
+              <p>{t(locale, "No target assets for this tool and type.")}</p>
             ) : (
-              preview.changes.map((change) => (
-                <div
-                  key={change.pathDisplay}
-                  className={`target-change-row ${targetChangeTone(change.operation)}`}
-                >
-                  <div className="target-change-heading">
-                    <strong>{change.pathDisplay}</strong>
-                    <span>{changeOperationLabel(locale, change.operation)}</span>
-                  </div>
-                  <dl>
-                    <dt>{t(locale, "Target project")}</dt>
-                    <dd>{props.state.migration.targetScopeId}</dd>
-                    <dt>{t(locale, "Target tool")}</dt>
-                    <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
-                    <dt>{t(locale, "Source asset")}</dt>
-                    <dd>{sourceAssetSummaryForPreview(preview, assetLabels)}</dd>
-                    <dt>{t(locale, "Hash change")}</dt>
-                    <dd>
-                      {change.beforeHash === null ? t(locale, "absent") : change.beforeHash}{" "}
-                      {" -> "}
-                      {change.afterHash === null ? t(locale, "absent") : change.afterHash}
-                    </dd>
-                  </dl>
-                </div>
-              ))
+              targetRows.map((row) =>
+                row.kind === "asset" ? (
+                  <TargetAssetRow
+                    key={row.asset.id}
+                    asset={row.asset}
+                    change={row.change}
+                    locale={locale}
+                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
+                    targetProject={props.state.migration.targetScopeId}
+                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                  />
+                ) : (
+                  <PreviewTargetRow
+                    key={row.change.pathDisplay}
+                    change={row.change}
+                    locale={locale}
+                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
+                    targetProject={props.state.migration.targetScopeId}
+                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                  />
+                ),
+              )
             )}
           </div>
         </section>
@@ -359,6 +359,139 @@ export function MigrationView(props: {
 }
 
 type MigrationAssetSummary = AppState["assets"][number];
+type MigrationPreviewChange = NonNullable<AppState["preview"]>["changes"][number];
+type MigrationTargetRow =
+  | {
+      readonly kind: "asset";
+      readonly asset: MigrationAssetSummary;
+      readonly change: MigrationPreviewChange | undefined;
+    }
+  | { readonly kind: "preview"; readonly change: MigrationPreviewChange };
+
+function TargetAssetRow(props: {
+  readonly asset: MigrationAssetSummary;
+  readonly change: MigrationPreviewChange | undefined;
+  readonly locale: DesktopLocale;
+  readonly sourceAssetSummary: string;
+  readonly targetProject: string | undefined;
+  readonly targetTool: string;
+}) {
+  return (
+    <div
+      className={`target-change-row ${
+        props.change === undefined ? "is-existing" : targetChangeTone(props.change.operation)
+      }`}
+    >
+      <div className="target-change-heading">
+        <strong>{props.asset.logicalKey}</strong>
+        <span>
+          {props.change === undefined
+            ? t(props.locale, "Target asset")
+            : targetChangeStatusLabel(props.locale, props.change.operation)}
+        </span>
+      </div>
+      <dl>
+        <dt>{t(props.locale, "Target project")}</dt>
+        <dd>{props.targetProject}</dd>
+        <dt>{t(props.locale, "Target tool")}</dt>
+        <dd>{props.targetTool}</dd>
+        <dt>{t(props.locale, "Asset type")}</dt>
+        <dd>{resourceTypeLabel(props.locale, props.asset.resourceType)}</dd>
+        <dt>{t(props.locale, "Target directory")}</dt>
+        <dd>{props.asset.sourceDirectory ?? t(props.locale, "unknown")}</dd>
+        <dt>{t(props.locale, "Content hash")}</dt>
+        <dd>{props.asset.contentHash}</dd>
+        {props.change === undefined ? null : (
+          <>
+            <dt>{t(props.locale, "Source asset")}</dt>
+            <dd>{props.sourceAssetSummary}</dd>
+            <dt>{t(props.locale, "Preview target file")}</dt>
+            <dd>{props.change.pathDisplay}</dd>
+            <dt>{t(props.locale, "Hash change")}</dt>
+            <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+          </>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function PreviewTargetRow(props: {
+  readonly change: MigrationPreviewChange;
+  readonly locale: DesktopLocale;
+  readonly sourceAssetSummary: string;
+  readonly targetProject: string | undefined;
+  readonly targetTool: string;
+}) {
+  return (
+    <div className={`target-change-row ${targetChangeTone(props.change.operation)}`}>
+      <div className="target-change-heading">
+        <strong>{props.change.pathDisplay}</strong>
+        <span>{targetChangeStatusLabel(props.locale, props.change.operation)}</span>
+      </div>
+      <dl>
+        <dt>{t(props.locale, "Target project")}</dt>
+        <dd>{props.targetProject}</dd>
+        <dt>{t(props.locale, "Target tool")}</dt>
+        <dd>{props.targetTool}</dd>
+        <dt>{t(props.locale, "Source asset")}</dt>
+        <dd>{props.sourceAssetSummary}</dd>
+        <dt>{t(props.locale, "Preview target file")}</dt>
+        <dd>{props.change.pathDisplay}</dd>
+        <dt>{t(props.locale, "Hash change")}</dt>
+        <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+      </dl>
+    </div>
+  );
+}
+
+function targetRowsForState(
+  state: AppState,
+  resourceType: string | undefined,
+): readonly MigrationTargetRow[] {
+  const targetAssets = state.migrationTargetAssets
+    .filter(
+      (asset) =>
+        asset.toolKey === state.migration.targetToolKey &&
+        (resourceType === undefined || asset.resourceType === resourceType),
+    )
+    .sort((left, right) => left.logicalKey.localeCompare(right.logicalKey));
+  const changes = state.preview?.changes ?? [];
+  const assetRows = targetAssets.map((asset): MigrationTargetRow => {
+    const change = changes.find((candidate) => candidate.beforeHash === asset.contentHash);
+    return { kind: "asset", asset, change };
+  });
+  const matchedChangePaths = new Set(
+    assetRows
+      .map((row) => (row.kind === "asset" ? row.change?.pathDisplay : undefined))
+      .filter((path): path is string => path !== undefined),
+  );
+  const previewRows = changes
+    .filter((change) => !matchedChangePaths.has(change.pathDisplay))
+    .map((change): MigrationTargetRow => ({ kind: "preview", change }));
+  return [...assetRows, ...previewRows];
+}
+
+function hashChangeLabel(locale: DesktopLocale, change: MigrationPreviewChange): string {
+  return `${change.beforeHash === null ? t(locale, "absent") : change.beforeHash} -> ${
+    change.afterHash === null ? t(locale, "absent") : change.afterHash
+  }`;
+}
+
+function targetChangeStatusLabel(
+  locale: DesktopLocale,
+  operation: MigrationPreviewChange["operation"],
+): string {
+  switch (operation) {
+    case "create":
+      return t(locale, "Will create");
+    case "replace":
+      return t(locale, "Will overwrite");
+    case "delete":
+      return t(locale, "Will delete");
+  }
+}
+
 type MigrationAssetGroup = {
   readonly resourceType: string;
   readonly assets: readonly MigrationAssetSummary[];
@@ -829,9 +962,10 @@ function targetChangeTone(
 }
 
 function sourceAssetSummaryForPreview(
-  preview: NonNullable<AppState["preview"]>,
+  preview: AppState["preview"],
   assetLabels: ReadonlyMap<string, string>,
 ): string {
+  if (preview === undefined) return "";
   return Object.keys(preview.sourceHashes)
     .sort((left, right) => left.localeCompare(right))
     .map((assetId) => assetLabel(assetId, assetLabels))

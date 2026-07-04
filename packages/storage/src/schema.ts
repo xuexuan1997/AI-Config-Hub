@@ -107,6 +107,14 @@ export const assetStatusOverrides = sqliteTable("asset_status_overrides", {
   updatedAt: requiredInteger("updated_at"),
 });
 
+export const assetDisablementRecords = sqliteTable("asset_disablement_records", {
+  assetDomainId: text("asset_domain_id").primaryKey(),
+  method: requiredText("method"),
+  recordJson: requiredText("record_json"),
+  createdAt: requiredInteger("created_at"),
+  updatedAt: requiredInteger("updated_at"),
+});
+
 export const diagnostics = sqliteTable("diagnostics", {
   id: id(),
   assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
@@ -260,6 +268,7 @@ export const storageSchema = Object.freeze({
   assets,
   assetReferences,
   assetStatusOverrides,
+  assetDisablementRecords,
   diagnostics,
   settings,
   scanRuns,

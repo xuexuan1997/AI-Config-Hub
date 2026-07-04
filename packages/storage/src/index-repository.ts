@@ -4,16 +4,19 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   AssetSchema,
+  AssetDisablementMethodSchema,
   AssetStatusSchema,
   DiagnosticSchema,
   EffectiveConfigSchema,
   ScopeSchema,
   type Asset,
+  type AssetDisablementRecord,
   type AssetStatus,
   type DerivedIndexIncrementalReplacement,
   type DerivedIndexReplacement,
   type Diagnostic,
   type IndexRepository,
+  type ToolInstallation,
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
@@ -23,6 +26,7 @@ import {
   SemVerSchema,
   ToolIdSchema,
   ToolInstallationIdSchema,
+  type AssetId,
 } from "@ai-config-hub/shared";
 
 import { parseJson, serializeJson } from "./serialization.js";
@@ -43,7 +47,7 @@ function withAssetStatus(asset: Asset, status: AssetStatus): Asset {
 function assetStatusOverrides(
   database: DatabaseSync,
   assetIds: readonly string[],
-): ReadonlyMap<string, AssetStatus> {
+): ReadonlyMap<AssetId, AssetStatus> {
   if (assetIds.length === 0) return new Map();
   const placeholders = assetIds.map(() => "?").join(",");
   const rows = database
@@ -51,12 +55,122 @@ function assetStatusOverrides(
       `SELECT asset_domain_id, status FROM asset_status_overrides WHERE asset_domain_id IN (${placeholders})`,
     )
     .all(...assetIds) as { readonly asset_domain_id: string; readonly status: string }[];
-  return new Map(rows.map((row) => [row.asset_domain_id, AssetStatusSchema.parse(row.status)]));
+  return new Map(
+    rows.map((row) => [
+      AssetIdSchema.parse(row.asset_domain_id),
+      AssetStatusSchema.parse(row.status),
+    ]),
+  );
 }
 
 function applyAssetStatus(database: DatabaseSync, asset: Asset): Asset {
-  const status = assetStatusOverrides(database, [asset.assetId]).get(asset.assetId) ?? "enabled";
+  const status = assetStatusOverrides(database, [asset.assetId]).get(asset.assetId) ?? asset.status;
   return withAssetStatus(asset, status);
+}
+
+function parseToolInstallation(value: unknown): ToolInstallation {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Disablement record tool must be an object");
+  }
+  const tool = value as Record<string, unknown>;
+  const configRoots = Array.isArray(tool["configRoots"]) ? tool["configRoots"] : [];
+  return {
+    toolId: ToolIdSchema.parse(tool["toolId"]),
+    installationId: ToolInstallationIdSchema.parse(tool["installationId"]),
+    configRoots: configRoots.map((path) => AbsolutePathSchema.parse(path)),
+    ...(typeof tool["detectedVersion"] === "string"
+      ? { detectedVersion: SemVerSchema.parse(tool["detectedVersion"]) }
+      : {}),
+    evidence:
+      typeof tool["evidence"] === "object" && tool["evidence"] !== null
+        ? (tool["evidence"] as Record<string, unknown>)
+        : {},
+  };
+}
+
+function parseDisablementRecord(text: string): AssetDisablementRecord {
+  const value = JSON.parse(text) as unknown;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Disablement record must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const restore = record["restore"];
+  if (typeof restore !== "object" || restore === null || Array.isArray(restore)) {
+    throw new TypeError("Disablement record restore metadata must be an object");
+  }
+  const restoreRecord = restore as Record<string, unknown>;
+  return {
+    assetId: AssetIdSchema.parse(record["assetId"]),
+    method: AssetDisablementMethodSchema.parse(record["method"]),
+    disabledAt:
+      typeof record["disabledAt"] === "string" ? record["disabledAt"] : new Date(0).toISOString(),
+    asset: AssetSchema.parse(record["asset"]),
+    scope: ScopeSchema.parse(record["scope"]),
+    tool: parseToolInstallation(record["tool"]),
+    restore: {
+      sourcePath: AbsolutePathSchema.parse(restoreRecord["sourcePath"]),
+      ...(restoreRecord["movedPath"] === undefined
+        ? {}
+        : { movedPath: AbsolutePathSchema.parse(restoreRecord["movedPath"]) }),
+      ...(typeof restoreRecord["originalText"] === "string"
+        ? { originalText: restoreRecord["originalText"] }
+        : {}),
+      ...(restoreRecord["originalEntry"] === undefined
+        ? {}
+        : { originalEntry: restoreRecord["originalEntry"] }),
+      ...(typeof restoreRecord["sectionKey"] === "string"
+        ? { sectionKey: restoreRecord["sectionKey"] }
+        : {}),
+      ...(typeof restoreRecord["nativeField"] === "string"
+        ? { nativeField: restoreRecord["nativeField"] }
+        : {}),
+      ...(typeof restoreRecord["nativeHadValue"] === "boolean"
+        ? { nativeHadValue: restoreRecord["nativeHadValue"] }
+        : {}),
+      ...(restoreRecord["nativePreviousValue"] === undefined
+        ? {}
+        : { nativePreviousValue: restoreRecord["nativePreviousValue"] }),
+    },
+  };
+}
+
+function activeDisablementRecords(database: DatabaseSync): readonly AssetDisablementRecord[] {
+  const rows = database.prepare("SELECT record_json FROM asset_disablement_records").all() as {
+    readonly record_json: string;
+  }[];
+  return rows.map(({ record_json }) => parseDisablementRecord(record_json));
+}
+
+function withRecordedDisabledAssets<T extends DerivedIndexReplacement>(
+  database: DatabaseSync,
+  replacement: T,
+): T {
+  const existingAssetIds = new Set(replacement.assets.map(({ assetId }) => assetId));
+  const existingScopeIds = new Set(replacement.scopes.map(({ scopeId }) => scopeId));
+  const existingInstallationIds = new Set(
+    replacement.tools.map(({ installationId }) => installationId),
+  );
+  const records = activeDisablementRecords(database).filter(
+    ({ assetId }) => !existingAssetIds.has(assetId),
+  );
+  if (records.length === 0) return replacement;
+  return {
+    ...replacement,
+    tools: [
+      ...replacement.tools,
+      ...records
+        .map(({ tool }) => tool)
+        .filter(({ installationId }) => !existingInstallationIds.has(installationId)),
+    ],
+    scopes: [
+      ...replacement.scopes,
+      ...records.map(({ scope }) => scope).filter(({ scopeId }) => !existingScopeIds.has(scopeId)),
+    ],
+    assets: [
+      ...replacement.assets,
+      ...records.map(({ asset }) => AssetSchema.parse({ ...asset, status: "disabled" })),
+    ],
+  };
 }
 
 export class SqliteIndexRepository implements IndexRepository {
@@ -71,7 +185,7 @@ export class SqliteIndexRepository implements IndexRepository {
     if (this.readOnly) return Promise.reject(readOnlyError());
     let prepared: ReturnType<typeof prepareReplacement>;
     try {
-      prepared = prepareReplacement(replacement);
+      prepared = prepareReplacement(withRecordedDisabledAssets(this.database, replacement));
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error("Index validation failed"));
     }
@@ -103,7 +217,7 @@ export class SqliteIndexRepository implements IndexRepository {
     let prepared: ReturnType<typeof prepareReplacement>;
     let changedPaths: readonly ReturnType<typeof AbsolutePathSchema.parse>[];
     try {
-      prepared = prepareReplacement(replacement);
+      prepared = prepareReplacement(withRecordedDisabledAssets(this.database, replacement));
       changedPaths = replacement.changedPaths.map((path) => AbsolutePathSchema.parse(path));
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error("Index validation failed"));
@@ -184,10 +298,7 @@ export class SqliteIndexRepository implements IndexRepository {
   ): ReturnType<IndexRepository["getAssetStatuses"]> {
     const parsedAssetIds = assetIds.map((assetId) => AssetIdSchema.parse(assetId));
     if (parsedAssetIds.length === 0) return Promise.resolve(new Map());
-    const overrides = assetStatusOverrides(this.database, parsedAssetIds);
-    return Promise.resolve(
-      new Map(parsedAssetIds.map((assetId) => [assetId, overrides.get(assetId) ?? "enabled"])),
-    );
+    return Promise.resolve(assetStatusOverrides(this.database, parsedAssetIds));
   }
 
   setAssetStatus(
@@ -212,22 +323,16 @@ export class SqliteIndexRepository implements IndexRepository {
     }
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      if (parsedStatus === "enabled") {
-        this.database
-          .prepare("DELETE FROM asset_status_overrides WHERE asset_domain_id = ?")
-          .run(parsedAssetId);
-      } else {
-        const now = Date.now();
-        this.database
-          .prepare(
-            `INSERT INTO asset_status_overrides(asset_domain_id, status, created_at, updated_at)
-             VALUES(?, ?, ?, ?)
-             ON CONFLICT(asset_domain_id) DO UPDATE SET
-               status = excluded.status,
-               updated_at = excluded.updated_at`,
-          )
-          .run(parsedAssetId, parsedStatus, now, now);
-      }
+      const now = Date.now();
+      this.database
+        .prepare(
+          `INSERT INTO asset_status_overrides(asset_domain_id, status, created_at, updated_at)
+           VALUES(?, ?, ?, ?)
+           ON CONFLICT(asset_domain_id) DO UPDATE SET
+             status = excluded.status,
+             updated_at = excluded.updated_at`,
+        )
+        .run(parsedAssetId, parsedStatus, now, now);
       const revision = String(bumpRevision(this.database));
       this.database.exec("COMMIT");
       return Promise.resolve({ assetId: parsedAssetId, status: parsedStatus, revision });
@@ -237,6 +342,76 @@ export class SqliteIndexRepository implements IndexRepository {
         error instanceof Error ? error : new Error("Asset status update failed"),
       );
     }
+  }
+
+  getAssetDisablement(
+    assetId: Parameters<IndexRepository["getAssetDisablement"]>[0],
+  ): ReturnType<IndexRepository["getAssetDisablement"]> {
+    const parsedAssetId = AssetIdSchema.parse(assetId);
+    const row = this.database
+      .prepare("SELECT record_json FROM asset_disablement_records WHERE asset_domain_id = ?")
+      .get(parsedAssetId) as { readonly record_json: string } | undefined;
+    return Promise.resolve(row === undefined ? undefined : parseDisablementRecord(row.record_json));
+  }
+
+  saveAssetDisablement(
+    record: Parameters<IndexRepository["saveAssetDisablement"]>[0],
+  ): ReturnType<IndexRepository["saveAssetDisablement"]> {
+    if (this.readOnly) return Promise.reject(readOnlyError());
+    const parsedRecord: AssetDisablementRecord = {
+      ...record,
+      assetId: AssetIdSchema.parse(record.assetId),
+      method: AssetDisablementMethodSchema.parse(record.method),
+      asset: AssetSchema.parse({ ...record.asset, status: "disabled" }),
+      scope: ScopeSchema.parse(record.scope),
+      tool: parseToolInstallation(record.tool),
+      restore: {
+        sourcePath: AbsolutePathSchema.parse(record.restore.sourcePath),
+        ...(record.restore.movedPath === undefined
+          ? {}
+          : { movedPath: AbsolutePathSchema.parse(record.restore.movedPath) }),
+        ...(record.restore.originalText === undefined
+          ? {}
+          : { originalText: record.restore.originalText }),
+        ...(record.restore.originalEntry === undefined
+          ? {}
+          : { originalEntry: record.restore.originalEntry }),
+        ...(record.restore.sectionKey === undefined
+          ? {}
+          : { sectionKey: record.restore.sectionKey }),
+        ...(record.restore.nativeField === undefined
+          ? {}
+          : { nativeField: record.restore.nativeField }),
+        ...(record.restore.nativeHadValue === undefined
+          ? {}
+          : { nativeHadValue: record.restore.nativeHadValue }),
+        ...(record.restore.nativePreviousValue === undefined
+          ? {}
+          : { nativePreviousValue: record.restore.nativePreviousValue }),
+      },
+    };
+    const now = Date.now();
+    this.database
+      .prepare(
+        `INSERT INTO asset_disablement_records(asset_domain_id, method, record_json, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(asset_domain_id) DO UPDATE SET
+           method = excluded.method,
+           record_json = excluded.record_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(parsedRecord.assetId, parsedRecord.method, JSON.stringify(parsedRecord), now, now);
+    return Promise.resolve();
+  }
+
+  clearAssetDisablement(
+    assetId: Parameters<IndexRepository["clearAssetDisablement"]>[0],
+  ): ReturnType<IndexRepository["clearAssetDisablement"]> {
+    if (this.readOnly) return Promise.reject(readOnlyError());
+    this.database
+      .prepare("DELETE FROM asset_disablement_records WHERE asset_domain_id = ?")
+      .run(AssetIdSchema.parse(assetId));
+    return Promise.resolve();
   }
 
   getEffectiveConfig(

@@ -95,6 +95,16 @@ const AssetsGetRequestSchema = z
   .strict()
   .readonly();
 const AssetsOpenSourceRequestSchema = z.object({ assetId: AssetIdSchema }).strict().readonly();
+const AssetDisablementMethodSchema = z.enum([
+  "native",
+  "move_file",
+  "remove_config_entry",
+  "hub_ignore",
+]);
+const AssetsDisableRequestSchema = z
+  .object({ assetId: AssetIdSchema, method: AssetDisablementMethodSchema })
+  .strict()
+  .readonly();
 const AssetsStatusChangeRequestSchema = z.object({ assetId: AssetIdSchema }).strict().readonly();
 const EffectiveResolveRequestSchema = z
   .object({
@@ -221,7 +231,7 @@ export const CommandRequestSchemas = {
   "assets.list": AssetsListRequestSchema,
   "assets.get": AssetsGetRequestSchema,
   "assets.openSource": AssetsOpenSourceRequestSchema,
-  "assets.disable": AssetsStatusChangeRequestSchema,
+  "assets.disable": AssetsDisableRequestSchema,
   "assets.enable": AssetsStatusChangeRequestSchema,
   "effective.resolve": EffectiveResolveRequestSchema,
   "diagnostics.list": DiagnosticsListRequestSchema,
@@ -318,12 +328,6 @@ const RedactionMarkerSchema = z
   .object({ pointer: z.string().min(1).max(500), reason: z.enum(["secret", "path", "policy"]) })
   .strict()
   .readonly();
-const AssetDisablementMethodSchema = z.enum([
-  "native",
-  "move_file",
-  "remove_config_entry",
-  "hub_ignore",
-]);
 const AssetDisablementOptionSchema = z
   .object({
     method: AssetDisablementMethodSchema,

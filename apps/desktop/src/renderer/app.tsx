@@ -6,6 +6,7 @@ import type { DesktopApi } from "../preload/api.js";
 import { AppShell } from "./components/app-shell.js";
 import { formatLocalizedUiError, localeForState, localizeUiMessage, t } from "./i18n.js";
 import {
+  assetStatusChangeRequestFor,
   deploymentBlockersForState,
   deploymentConfirmationsForState,
   effectiveRequestForState,
@@ -20,6 +21,7 @@ import {
   scanActionForTaskEvent,
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
+  type AssetDisablementMethod,
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { MigrationView } from "./views/migration.js";
@@ -66,6 +68,7 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationTargetProject",
         targetScopeId,
       });
+      await scanMigrationProject("target", targetScopeId);
     });
   }
 
@@ -204,12 +207,14 @@ export function App(props: { readonly api: DesktopApi }) {
   async function toggleAssetStatus(
     assetId: CommandResponse<"assets.list">["items"][number]["id"],
     nextStatus: CommandResponse<"assets.list">["items"][number]["status"],
+    disablementMethod?: AssetDisablementMethod,
   ) {
     await runAction(nextStatus === "disabled" ? "Disable asset" : "Enable asset", async () => {
+      const request = assetStatusChangeRequestFor(assetId, nextStatus, disablementMethod);
       const response =
-        nextStatus === "disabled"
-          ? await props.api.invoke("assets.disable", { assetId })
-          : await props.api.invoke("assets.enable", { assetId });
+        request.command === "assets.disable"
+          ? await props.api.invoke(request.command, request.request)
+          : await props.api.invoke(request.command, request.request);
       if (!response.ok) {
         dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
         return;
@@ -335,8 +340,8 @@ export function App(props: { readonly api: DesktopApi }) {
             });
           }}
           onOpenSource={() => void openSource()}
-          onToggleAssetStatus={(assetId, nextStatus) => {
-            void toggleAssetStatus(assetId, nextStatus);
+          onToggleAssetStatus={(assetId, nextStatus, disablementMethod) => {
+            void toggleAssetStatus(assetId, nextStatus, disablementMethod);
           }}
           onCloseInspect={() => {
             dispatch({ type: "assetDetailClosed" });

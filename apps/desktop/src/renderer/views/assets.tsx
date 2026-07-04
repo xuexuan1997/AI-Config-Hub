@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { localeForState, t, type DesktopLocale } from "../i18n.js";
-import type { AppState } from "../model.js";
+import type { AppState, AssetDisablementMethod } from "../model.js";
 
 export function AssetsView(props: {
   readonly state: AppState;
@@ -12,6 +12,7 @@ export function AssetsView(props: {
   readonly onToggleAssetStatus: (
     assetId: AppState["assets"][number]["id"],
     nextStatus: AssetStatus,
+    disablementMethod?: AssetDisablementMethod,
   ) => void;
   readonly onRescanAfterEdit?: () => void;
   readonly onCloseInspect: () => void;
@@ -799,6 +800,12 @@ function AssetStatusBadge(props: { readonly locale: DesktopLocale; readonly stat
   );
 }
 
+function selectedDefaultDisablementMethod(
+  options: NonNullable<AppState["assetDetail"]>["asset"]["disablementOptions"],
+): AssetDisablementMethod | undefined {
+  return options.find((option) => option.recommended)?.method ?? options[0]?.method;
+}
+
 function AssetDetailDialog(props: {
   readonly detail: NonNullable<AppState["assetDetail"]>;
   readonly effective: AppState["effective"];
@@ -809,6 +816,7 @@ function AssetDetailDialog(props: {
   readonly onToggleAssetStatus: (
     assetId: AppState["assets"][number]["id"],
     nextStatus: AssetStatus,
+    disablementMethod?: AssetDisablementMethod,
   ) => void;
   readonly onLoadEffective: () => void;
   readonly onCloseInspect: () => void;
@@ -819,6 +827,15 @@ function AssetDetailDialog(props: {
   const status = assetStatusFor(detail.asset);
   const targetStatus = nextAssetStatus(status);
   const disablementOptions = detail.asset.disablementOptions ?? [];
+  const defaultDisablementMethod = selectedDefaultDisablementMethod(disablementOptions);
+  const [selectedDisablementMethod, setSelectedDisablementMethod] =
+    useState(defaultDisablementMethod);
+  const showsDisablementOptions = targetStatus === "disabled" && disablementOptions.length > 0;
+
+  useEffect(() => {
+    setSelectedDisablementMethod(defaultDisablementMethod);
+  }, [defaultDisablementMethod, detail.asset.id]);
+
   return (
     <div className="asset-detail-modal">
       <section
@@ -843,7 +860,13 @@ function AssetDetailDialog(props: {
             </button>
             <button
               type="button"
-              onClick={() => props.onToggleAssetStatus(detail.asset.id, targetStatus)}
+              onClick={() =>
+                props.onToggleAssetStatus(
+                  detail.asset.id,
+                  targetStatus,
+                  targetStatus === "disabled" ? selectedDisablementMethod : undefined,
+                )
+              }
             >
               {assetStatusActionLabel(props.locale, status)}
             </button>
@@ -865,22 +888,31 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
-          {disablementOptions.length === 0 ? null : (
-            <section className="disable-methods">
-              <h3>{t(props.locale, "Disable methods")}</h3>
-              <ul>
+          {showsDisablementOptions ? (
+            <fieldset className="disable-methods">
+              <legend>{t(props.locale, "Disable method")}</legend>
+              <div className="disable-method-list">
                 {disablementOptions.map((option) => (
-                  <li key={option.method}>
-                    <strong>{option.label}</strong>
+                  <label key={option.method} className="disable-method-option">
+                    <input
+                      type="radio"
+                      name={`disable-method-${detail.asset.id}`}
+                      value={option.method}
+                      checked={selectedDisablementMethod === option.method}
+                      onChange={() => setSelectedDisablementMethod(option.method)}
+                    />
+                    <span className="disable-method-copy">
+                      <strong>{option.label}</strong>
+                      <span>{option.description}</span>
+                    </span>
                     {option.recommended ? (
                       <span className="method-recommended">{t(props.locale, "Recommended")}</span>
                     ) : null}
-                    <span>{option.description}</span>
-                  </li>
+                  </label>
                 ))}
-              </ul>
-            </section>
-          )}
+              </div>
+            </fieldset>
+          ) : null}
           <section className="asset-detail-diagnostics">
             <h3>{t(props.locale, "Diagnostics")}</h3>
             {props.diagnostics.length === 0 ? (

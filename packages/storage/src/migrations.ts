@@ -32,6 +32,10 @@ const assetStatusOverridesSql = readFileSync(
   new URL("./migrations/0004-asset-status-overrides.sql", import.meta.url),
   "utf8",
 );
+const assetDisablementRecordsSql = readFileSync(
+  new URL("./migrations/0005-asset-disablement-records.sql", import.meta.url),
+  "utf8",
+);
 
 export const initialMigration = migration(1, "initial", initialSql);
 export const rollbackLinksMigration = migration(2, "rollback-links", rollbackLinksSql);
@@ -41,9 +45,15 @@ export const assetStatusOverridesMigration = migration(
   "asset-status-overrides",
   assetStatusOverridesSql,
 );
+export const assetDisablementRecordsMigration = migration(
+  5,
+  "asset-disablement-records",
+  assetDisablementRecordsSql,
+);
 export const databaseMigrations = Object.freeze([
   initialMigration,
   rollbackLinksMigration,
   customToolKeysMigration,
   assetStatusOverridesMigration,
+  assetDisablementRecordsMigration,
 ]);

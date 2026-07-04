@@ -210,6 +210,26 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("can explicitly enable an adapter-reported disabled asset before the next scan", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    try {
+      const repositories = createStorageRepositories(opened);
+      const nativeDisabled = AssetSchema.parse({ ...asset("asset-a", "A"), status: "disabled" });
+      await repositories.index.replaceDerivedIndex(replacement("scan-full", [nativeDisabled]));
+      const assetAId = AssetIdSchema.parse("asset-a");
+
+      expect((await repositories.index.getAsset(assetAId))?.status).toBe("disabled");
+
+      await repositories.index.setAssetStatus(assetAId, "enabled");
+
+      expect((await repositories.index.getAsset(assetAId))?.status).toBe("enabled");
+      expect((await repositories.index.listAssets({ limit: 20 })).items[0]?.status).toBe("enabled");
+    } finally {
+      opened.database.close();
+    }
+  });
+
   it("lists diagnostics associated to an asset by source path ownership", async () => {
     const databasePath = path();
     const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });

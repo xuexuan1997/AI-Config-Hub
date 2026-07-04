@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -254,13 +264,23 @@ describe("desktop command service composition", () => {
       );
       if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
 
-      expect(await runtime.services["assets.disable"]({ assetId: source.id })).toEqual({
+      expect(
+        await runtime.services["assets.disable"]({ assetId: source.id, method: "move_file" }),
+      ).toEqual({
         assetId: source.id,
         status: "disabled",
       });
+      await expect(access(join(project, "AGENTS.md"))).rejects.toMatchObject({ code: "ENOENT" });
       expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
         "disabled",
       );
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const rescanned = await runtime.services["assets.list"]({ limit: 50 });
+      expect(rescanned.items.find((asset) => asset.id === source.id)).toMatchObject({
+        id: source.id,
+        status: "disabled",
+        loadState: "disabled",
+      });
       expect(
         (await runtime.services["assets.get"]({ assetId: source.id })).asset.disablementOptions.map(
           ({ method, recommended }) => ({ method, recommended }),
@@ -282,6 +302,65 @@ describe("desktop command service composition", () => {
         assetId: source.id,
         status: "enabled",
       });
+      await expect(readFile(join(project, "AGENTS.md"), "utf8")).resolves.toBe(
+        "Use local TypeScript conventions.\n",
+      );
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("enables OpenCode native-disabled assets that were discovered during scan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-native-enable-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(project);
+    const configPath = join(project, "opencode.json");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        { mcp: { docs: { command: ["node", "server.js"], enabled: false } } },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({
+        mode: "full",
+        roots: [project],
+        toolKeys: ["opencode"],
+      });
+      const assets = await runtime.services["assets.list"]({ toolKeys: ["opencode"], limit: 50 });
+      const source = assets.items.find((asset) => asset.logicalKey === "mcp:docs");
+      if (source === undefined) throw new Error("Expected scanned OpenCode MCP asset");
+      expect(source.status).toBe("disabled");
+
+      expect(await runtime.services["assets.enable"]({ assetId: source.id })).toEqual({
+        assetId: source.id,
+        status: "enabled",
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "enabled",
+      );
+      expect(JSON.parse(await readFile(configPath, "utf8")).mcp.docs.enabled).toBe(true);
+
+      await runtime.services["scan.start"]({
+        mode: "full",
+        roots: [project],
+        toolKeys: ["opencode"],
+      });
+      expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
+        "enabled",
+      );
     } finally {
       runtime.close();
     }
