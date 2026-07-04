@@ -54,10 +54,13 @@ export interface ScanServiceOptions {
   readonly now?: () => string;
 }
 
+export type ScanCommitMode = "replace-all" | "merge-scoped";
+
 export interface ScanInput {
   readonly scanRunId: string;
   readonly candidateRoots: readonly AbsolutePath[];
   readonly changedPaths?: readonly AbsolutePath[];
+  readonly commitMode?: ScanCommitMode;
   readonly homeDirectory: AbsolutePath;
   readonly platform: "linux" | "darwin" | "win32";
   readonly signal: CancellationSignal;
@@ -327,12 +330,21 @@ export class ScanService {
       effectiveConfigs,
       diagnostics,
     };
+    const commitChangedPaths =
+      input.changedPaths ??
+      (input.commitMode === "merge-scoped"
+        ? await scopedCommitChangedPaths({
+            repository: this.options.indexRepository,
+            candidateRoots: input.candidateRoots,
+            parsedItems,
+          })
+        : undefined);
     const committed =
-      input.changedPaths === undefined
+      commitChangedPaths === undefined
         ? await this.options.indexRepository.replaceDerivedIndex(replacement)
         : await this.options.indexRepository.mergeIncrementalIndex({
             ...replacement,
-            changedPaths: input.changedPaths,
+            changedPaths: commitChangedPaths,
           });
     const summary = ScanRunSummarySchema.parse({
       scanRunId,
@@ -587,6 +599,28 @@ async function listAllAssets(repository: IndexRepository) {
   }
 }
 
+async function scopedCommitChangedPaths(input: {
+  readonly repository: IndexRepository;
+  readonly candidateRoots: readonly AbsolutePath[];
+  readonly parsedItems: readonly ParsedItem[];
+}): Promise<readonly AbsolutePath[]> {
+  const indexedAssets = await listAllAssets(input.repository);
+  return uniqueChangedPaths([
+    ...indexedAssets
+      .filter((asset) => pathWithinAnyRoot(asset.canonicalSourcePath, input.candidateRoots))
+      .map((asset) => asset.canonicalSourcePath),
+    ...input.parsedItems.map((item) => item.candidate.sourcePath),
+  ]);
+}
+
+function uniqueChangedPaths(paths: readonly AbsolutePath[]): readonly AbsolutePath[] {
+  const byNormalizedPath = new Map<string, AbsolutePath>();
+  for (const path of paths) byNormalizedPath.set(normalizePath(path), path);
+  return [...byNormalizedPath.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, path]) => path);
+}
+
 function affectedInstallations(
   tools: readonly ToolInstallation[],
   work: readonly WorkItem[],
@@ -627,6 +661,10 @@ function pathWithinRoot(path: AbsolutePath, root: AbsolutePath): boolean {
   const normalizedPath = normalizePath(path);
   const normalizedRoot = normalizePath(root);
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function pathWithinAnyRoot(path: AbsolutePath, roots: readonly AbsolutePath[]): boolean {
+  return roots.some((root) => pathWithinRoot(path, root));
 }
 
 function uniqueResolutionTargets(items: readonly ParsedItem[]) {

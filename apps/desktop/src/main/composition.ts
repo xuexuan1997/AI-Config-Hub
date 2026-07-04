@@ -211,6 +211,7 @@ function createServices(
       const request = payload as {
         readonly changedPaths?: readonly string[];
         readonly mode?: "full" | "incremental";
+        readonly projectId?: string;
         readonly roots?: readonly string[];
         readonly toolKeys?: readonly string[];
       };
@@ -255,6 +256,7 @@ function createServices(
         ...(request.mode === "incremental" && canonicalChangedPaths !== undefined
           ? { changedPaths: canonicalChangedPaths }
           : {}),
+        ...(request.projectId === undefined ? {} : { commitMode: "merge-scoped" as const }),
         homeDirectory,
         platform: scannerPlatform(),
         signal: cancellation.signal,

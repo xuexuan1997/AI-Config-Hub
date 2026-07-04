@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -182,6 +183,66 @@ describe("desktop command service composition", () => {
       expect(sourceAssets.items.map((asset) => asset.logicalKey)).toContain("rule:AGENTS");
       expect(targetAssets.items.map((asset) => asset.logicalKey)).toContain("rule:AGENTS");
       expect([...sourceAssetIds].filter((assetId) => targetAssetIds.has(assetId))).toEqual([]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("preserves migration source assets when scanning a target project independently", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-migration-scope-"));
+    temporaryDirectories.push(root);
+    const sourceProject = join(root, "source");
+    const targetProject = join(root, "target");
+    const userData = join(root, "user-data");
+    await mkdir(sourceProject);
+    await mkdir(targetProject);
+    await writeFile(join(sourceProject, "AGENTS.md"), "Use source conventions.\n", "utf8");
+    await writeFile(join(targetProject, "AGENTS.md"), "Use target conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: sourceProject,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject] });
+      const canonicalSourceProject = await realpath(sourceProject);
+      const databaseAfterSource = new DatabaseSync(join(userData, "ai-config-hub.sqlite"));
+      const sourceProjectId =
+        projectIdForIndexedRoot(databaseAfterSource, canonicalSourceProject) ??
+        expect.fail(`Expected indexed project: ${canonicalSourceProject}`);
+      databaseAfterSource.close();
+
+      const sourceAssetsBeforeTargetScan = await runtime.services["assets.list"]({
+        projectId: sourceProjectId,
+        limit: 50,
+      });
+      expect(sourceAssetsBeforeTargetScan.items.map((asset) => asset.logicalKey)).toContain(
+        "rule:AGENTS",
+      );
+
+      const canonicalTargetProject = await realpath(targetProject);
+      const targetProjectId = deterministicProjectId(canonicalTargetProject);
+      await runtime.services["scan.start"]({
+        mode: "full",
+        roots: [targetProject],
+        projectId: targetProjectId,
+      });
+
+      const sourceAssetsAfterTargetScan = await runtime.services["assets.list"]({
+        projectId: sourceProjectId,
+        limit: 50,
+      });
+      const targetAssets = await runtime.services["assets.list"]({
+        projectId: targetProjectId,
+        limit: 50,
+      });
+
+      expect(sourceAssetsAfterTargetScan.items.map((asset) => asset.logicalKey)).toContain(
+        "rule:AGENTS",
+      );
+      expect(targetAssets.items.map((asset) => asset.logicalKey)).toContain("rule:AGENTS");
     } finally {
       runtime.close();
     }
@@ -1128,4 +1189,16 @@ function projectIdForIndexedRoot(database: DatabaseSync, root: string): string |
     .prepare("SELECT domain_id FROM projects WHERE root_path_normalized = ?")
     .get(root) as { readonly domain_id: string } | undefined;
   return row?.domain_id;
+}
+
+function deterministicProjectId(root: string): `project:${string}` {
+  const hash = createHash("sha256")
+    .update("ai-config-hub:identity:v1\0")
+    .update("project")
+    .update("\0")
+    .update(String(Buffer.byteLength(root)))
+    .update(":")
+    .update(root)
+    .digest("hex");
+  return `project:${hash}`;
 }

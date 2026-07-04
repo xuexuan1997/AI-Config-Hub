@@ -14,6 +14,7 @@ import {
   migrationPreviewBlockersForState,
   openSourceRequestForState,
   previewRequestForState,
+  projectIdForRoot,
   reducer,
   refreshAssetDetail,
   refreshAssets,
@@ -56,7 +57,7 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationSourceProject",
         sourceProjectRoot,
       });
-      await scanMigrationProject("source", sourceProjectRoot);
+      await scanMigrationSourceProject(sourceProjectRoot);
     });
   }
 
@@ -68,7 +69,7 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationTargetProject",
         targetScopeId,
       });
-      await scanMigrationProject("target", targetScopeId);
+      await refreshMigrationProjectAssets("target", targetScopeId);
     });
   }
 
@@ -152,11 +153,13 @@ export function App(props: { readonly api: DesktopApi }) {
     });
   }
 
-  async function scanMigrationProject(kind: "source" | "target", root: string) {
-    await runAction(kind === "source" ? "Start source scan" : "Start target scan", async () => {
+  async function scanMigrationSourceProject(root: string) {
+    await runAction("Start source scan", async () => {
+      const projectId = await projectIdForRoot(root);
       const response = await props.api.invoke("scan.start", {
         mode: "full",
         roots: [root],
+        projectId,
       });
       dispatch({
         type: "scan",
@@ -172,11 +175,11 @@ export function App(props: { readonly api: DesktopApi }) {
           const taskAction = taskActionForTaskEvent(event);
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
-            void refreshMigrationProjectAssets(kind, root);
+            void refreshMigrationProjectAssets("source", root);
           }
         });
       }
-      await refreshMigrationProjectAssets(kind, root);
+      await refreshMigrationProjectAssets("source", root);
     });
   }
 
