@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 
 import type { CommandRequest, CommandResponse, TaskEvent } from "@ai-config-hub/api";
 
@@ -30,6 +30,8 @@ import { SettingsView } from "./views/settings.js";
 
 export function App(props: { readonly api: DesktopApi }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [updateStatus, setUpdateStatus] =
+    useState<Awaited<ReturnType<DesktopApi["updateStatus"]>>>();
   const locale = localeForState(state);
 
   async function runAction(action: string, work: () => Promise<void>) {
@@ -114,7 +116,28 @@ export function App(props: { readonly api: DesktopApi }) {
 
   useEffect(() => {
     void loadSettings();
+    void props.api.updateStatus().then(setUpdateStatus);
+    const unsubscribeUpdates = props.api.subscribeUpdates(setUpdateStatus);
+    return unsubscribeUpdates;
   }, [props.api]);
+
+  async function checkForUpdates() {
+    await runAction("Check for updates", async () => {
+      setUpdateStatus(await props.api.checkForUpdates());
+    });
+  }
+
+  async function downloadUpdate() {
+    await runAction("Download update", async () => {
+      setUpdateStatus(await props.api.downloadUpdate());
+    });
+  }
+
+  async function installUpdate() {
+    await runAction("Install update", async () => {
+      await props.api.installUpdate();
+    });
+  }
 
   async function scanReviewProject(root: string) {
     await runAction("Start scan", async () => {
@@ -413,9 +436,13 @@ export function App(props: { readonly api: DesktopApi }) {
       {state.route === "settings" ? (
         <SettingsView
           state={state}
+          {...(updateStatus === undefined ? {} : { updateStatus })}
           onThemeChange={(theme) => void updateSettings({ theme })}
           onLanguageChange={(language) => void updateSettings({ language })}
           onReload={() => void loadSettings()}
+          onCheckUpdates={() => void checkForUpdates()}
+          onDownloadUpdate={() => void downloadUpdate()}
+          onInstallUpdate={() => void installUpdate()}
         />
       ) : null}
     </AppShell>

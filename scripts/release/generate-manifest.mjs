@@ -82,7 +82,16 @@ function expectedPublishableNames(version, target) {
   const installer = installerByTarget[key];
   if (!installer) throw new Error(`Unsupported release target: ${key}`);
 
-  const required = [installer, "sbom.cdx.json"];
+  const updateMetadataByTarget = {
+    "linux-x64": ["latest-linux.yml"],
+    "windows-x64": [`${installer}.blockmap`, "latest.yml"],
+    "macos-x64": [],
+    "macos-arm64": [],
+  };
+  const updateMetadata = updateMetadataByTarget[key];
+  if (updateMetadata === undefined) throw new Error(`Unsupported release target: ${key}`);
+
+  const required = [installer, ...updateMetadata, "sbom.cdx.json"];
   const all = target.platform === "linux" ? [...required, "elf-compatibility.json"] : required;
   return { required, all };
 }

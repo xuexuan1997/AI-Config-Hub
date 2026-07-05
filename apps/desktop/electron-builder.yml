@@ -5,6 +5,7 @@ copyright: Copyright © 2026 AI Config Hub
 asar: true
 npmRebuild: false
 buildDependenciesFromSource: false
+electronUpdaterCompatibility: ">= 2.16"
 directories:
   output: ../../release/linux-x64
 files:
@@ -24,12 +25,20 @@ linux:
         - x64
   category: Development
   artifactName: AI-Config-Hub-${version}-x86_64.${ext}
+  publish:
+    provider: github
+    owner: xuexuan1997
+    repo: AI-Config-Hub
 win:
   target:
     - target: nsis
       arch:
         - x64
   artifactName: AI-Config-Hub-${version}-windows-x64.${ext}
+  publish:
+    provider: github
+    owner: xuexuan1997
+    repo: AI-Config-Hub
 nsis:
   oneClick: false
   perMachine: false

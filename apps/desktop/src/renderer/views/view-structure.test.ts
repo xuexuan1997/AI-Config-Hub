@@ -143,6 +143,43 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Revision 2");
   });
 
+  it("renders desktop update controls in settings", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsView, {
+        state: {
+          ...initialState,
+          settings: {
+            values: { theme: "dark", language: "en" },
+            revision: 2,
+            status: "ready",
+            readOnlyRecovery: false,
+            requiresRestart: false,
+          },
+        },
+        updateStatus: {
+          enabled: true,
+          status: "available",
+          currentVersion: "0.2.12",
+          updateVersion: "0.2.13",
+          releaseName: "v0.2.13",
+        },
+        onThemeChange: vi.fn(),
+        onLanguageChange: vi.fn(),
+        onReload: vi.fn(),
+        onCheckUpdates: vi.fn(),
+        onDownloadUpdate: vi.fn(),
+        onInstallUpdate: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("Software updates");
+    expect(html).toContain("Current version 0.2.12");
+    expect(html).toContain("Version 0.2.13 is available.");
+    expect(html).toContain("Check for updates");
+    expect(html).toContain("Download update");
+    expect(html).not.toContain("Restart and install");
+  });
+
   it("renders core desktop chrome and settings in Simplified Chinese", () => {
     const zhState: AppState = {
       ...initialState,

@@ -1,6 +1,6 @@
 {
   "name": "@ai-config-hub/desktop",
-  "version": "0.2.12",
+  "version": "0.2.14",
   "private": true,
   "type": "module",
   "main": "dist/main/main/main.js",
@@ -14,8 +14,8 @@
     "test:e2e": "playwright test --config ../../playwright.config.ts --project desktop",
     "package": "pnpm run build",
     "package:linux": "pnpm run package:linux:x64",
-    "package:linux:x64": "pnpm run build && electron-builder --linux AppImage --x64 --config.directories.output=../../release/linux-x64",
-    "package:windows:x64": "pnpm run build && electron-builder --win nsis --x64 --config.directories.output=../../release/windows-x64",
+    "package:linux:x64": "pnpm run build && electron-builder --linux AppImage --x64 --config.directories.output=../../release/linux-x64 --publish never",
+    "package:windows:x64": "pnpm run build && electron-builder --win nsis --x64 --config.directories.output=../../release/windows-x64 --publish never",
     "package:macos:x64": "pnpm run build && electron-builder --mac dmg --x64 --config.directories.output=../../release/macos-x64",
     "package:macos:arm64": "pnpm run build && electron-builder --mac dmg --arm64 --config.directories.output=../../release/macos-arm64"
   },
@@ -28,6 +28,7 @@
     "@ai-config-hub/scanner": "workspace:*",
     "@ai-config-hub/shared": "workspace:*",
     "@ai-config-hub/storage": "workspace:*",
+    "electron-updater": "^6.8.9",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
@@ -36,7 +37,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "electron": "42.4.1",
-    "electron-builder": "26.15.3",
+    "electron-builder": "26.15.6",
     "tslib": "2.8.1",
     "vite": "8.0.16"
   }
