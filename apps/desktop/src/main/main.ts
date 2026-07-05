@@ -5,12 +5,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createDesktopCommandServices, type DesktopCommandServiceRuntime } from "./composition.js";
 import { createProjectDialogPort } from "./dialog.js";
 import { registerIpcHandlers } from "./ipc.js";
+import { createElectronUpdaterPort, createUpdateService, type UpdateService } from "./updates.js";
 import { createSecureWindowOptions } from "./window-options.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | undefined;
 let unregisterIpc: (() => void) | undefined;
 let commandServices: DesktopCommandServiceRuntime | undefined;
+let updateService: UpdateService | undefined;
+let stopAutomaticUpdateChecks: (() => void) | undefined;
 
 async function createMainWindow(): Promise<void> {
   const preloadPath = resolve(currentDir, "../preload/preload.cjs");
@@ -44,10 +47,17 @@ if (app.requestSingleInstanceLock()) {
           },
         },
       });
+      updateService = createUpdateService({
+        appVersion: app.getVersion(),
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        updater: createElectronUpdaterPort(),
+      });
       unregisterIpc = registerIpcHandlers({
         ipcMain,
         services: commandServices.services,
         taskEvents: commandServices.taskEvents,
+        updates: updateService,
         appVersion: () => app.getVersion(),
         webContents: () => webContents.getAllWebContents(),
         dialog: createProjectDialogPort({
@@ -58,6 +68,7 @@ if (app.requestSingleInstanceLock()) {
         }),
       });
       await createMainWindow();
+      stopAutomaticUpdateChecks = updateService.startAutomaticChecks();
     })
     .catch((error: unknown) => {
       console.error(error);
@@ -66,6 +77,7 @@ if (app.requestSingleInstanceLock()) {
     if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
   });
   app.on("before-quit", () => {
+    stopAutomaticUpdateChecks?.();
     unregisterIpc?.();
     commandServices?.close();
   });

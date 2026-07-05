@@ -12,7 +12,13 @@ import {
   SELECT_PROJECT_ROOT_CHANNEL,
   TASK_SUBSCRIBE_CHANNEL,
   TASK_UNSUBSCRIBE_CHANNEL,
+  UPDATE_CHECK_CHANNEL,
+  UPDATE_DOWNLOAD_CHANNEL,
+  UPDATE_EVENT_CHANNEL,
+  UPDATE_INSTALL_CHANNEL,
+  UPDATE_STATUS_CHANNEL,
 } from "../main/ipc.js";
+import type { UpdateStatus } from "../main/updates.js";
 
 const supportedCommandNames = new Set<string>(API_COMMAND_NAMES);
 
@@ -28,12 +34,17 @@ export interface DesktopApi {
   ): () => void;
   selectProjectRoot(): Promise<string | undefined>;
   appVersion(): Promise<string>;
+  updateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
+  installUpdate(): Promise<void>;
+  subscribeUpdates(listener: (status: UpdateStatus) => void): () => void;
 }
 
 export interface PreloadTransport {
-  invoke(channel: string, payload?: unknown): Promise<unknown>;
-  on(channel: string, listener: (event: unknown, payload: unknown) => void): void;
-  off(channel: string, listener: (event: unknown, payload: unknown) => void): void;
+  invoke: (channel: string, payload?: unknown) => Promise<unknown>;
+  on: (channel: string, listener: (event: unknown, payload: unknown) => void) => void;
+  off: (channel: string, listener: (event: unknown, payload: unknown) => void) => void;
 }
 
 export interface PreloadApiOptions {
@@ -79,6 +90,27 @@ export function createDesktopApi(
     },
     appVersion() {
       return transport.invoke(APP_VERSION_CHANNEL) as Promise<string>;
+    },
+    updateStatus() {
+      return transport.invoke(UPDATE_STATUS_CHANNEL) as Promise<UpdateStatus>;
+    },
+    checkForUpdates() {
+      return transport.invoke(UPDATE_CHECK_CHANNEL) as Promise<UpdateStatus>;
+    },
+    downloadUpdate() {
+      return transport.invoke(UPDATE_DOWNLOAD_CHANNEL) as Promise<UpdateStatus>;
+    },
+    async installUpdate() {
+      await transport.invoke(UPDATE_INSTALL_CHANNEL);
+    },
+    subscribeUpdates(listener: (status: UpdateStatus) => void): () => void {
+      const wrapped = (_event: unknown, payload: unknown) => {
+        listener(payload as UpdateStatus);
+      };
+      transport.on(UPDATE_EVENT_CHANNEL, wrapped);
+      return () => {
+        transport.off(UPDATE_EVENT_CHANNEL, wrapped);
+      };
     },
   });
 }

@@ -7,7 +7,15 @@ import {
 import { AssetIdSchema, ContentHashSchema, TaskIdSchema } from "@ai-config-hub/shared";
 import { describe, expect, it, vi } from "vitest";
 
-import { registerIpcHandlers } from "./ipc.js";
+import {
+  registerIpcHandlers,
+  UPDATE_CHECK_CHANNEL,
+  UPDATE_DOWNLOAD_CHANNEL,
+  UPDATE_EVENT_CHANNEL,
+  UPDATE_INSTALL_CHANNEL,
+  UPDATE_STATUS_CHANNEL,
+} from "./ipc.js";
+import type { UpdateStatus } from "./updates.js";
 
 describe("desktop IPC handlers", () => {
   it("dispatches API commands to the injected command services", async () => {
@@ -133,6 +141,122 @@ describe("desktop IPC handlers", () => {
     expect(sent).toEqual([{ channel: TASK_EVENT_CHANNEL, payload: taskEvent }]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it("dispatches update commands and forwards update events to trusted windows", async () => {
+    const sent: unknown[] = [];
+    const unsubscribe = vi.fn();
+    const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents((channel, payload) => sent.push({ channel, payload }));
+    const status = {
+      enabled: true,
+      status: "available" as const,
+      currentVersion: "0.2.12",
+      updateVersion: "0.2.13",
+    } satisfies UpdateStatus;
+    const updates = {
+      status: vi.fn(() => status),
+      check: vi.fn().mockResolvedValue(status),
+      download: vi.fn().mockResolvedValue(status),
+      install: vi.fn().mockResolvedValue(undefined),
+      startAutomaticChecks: vi.fn(() => vi.fn()),
+      subscribe: vi.fn((listener: (event: typeof status) => void) => {
+        listener(status);
+        return unsubscribe;
+      }),
+    };
+
+    const unregister = registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      updates,
+      appVersion: () => "0.2.12",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    expect(await ipcMain.invoke(UPDATE_STATUS_CHANNEL, undefined, trustedEvent(sender))).toBe(
+      status,
+    );
+    await ipcMain.invoke(UPDATE_CHECK_CHANNEL, undefined, trustedEvent(sender));
+    await ipcMain.invoke(UPDATE_DOWNLOAD_CHANNEL, undefined, trustedEvent(sender));
+    await ipcMain.invoke(UPDATE_INSTALL_CHANNEL, undefined, trustedEvent(sender));
+    unregister();
+
+    expect(updates.check).toHaveBeenCalledTimes(1);
+    expect(updates.download).toHaveBeenCalledTimes(1);
+    expect(updates.install).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([{ channel: UPDATE_EVENT_CHANNEL, payload: status }]);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects update commands from unknown senders", async () => {
+    const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents();
+    const unknownSender = fakeWebContents();
+    const updates = {
+      status: vi.fn(),
+      check: vi.fn(),
+      download: vi.fn(),
+      install: vi.fn(),
+      startAutomaticChecks: vi.fn(() => vi.fn()),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+
+    registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      updates,
+      appVersion: () => "0.2.12",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    await expect(
+      ipcMain.invoke(UPDATE_STATUS_CHANNEL, undefined, trustedEvent(unknownSender)),
+    ).rejects.toThrow("Untrusted IPC sender");
+    expect(updates.status).not.toHaveBeenCalled();
+  });
+
+  it("skips destroyed windows when forwarding update events", () => {
+    const ipcMain = fakeIpcMain();
+    const destroyedSend = vi.fn(() => {
+      throw new Error("destroyed window cannot receive updates");
+    });
+    const destroyedWindow = fakeWebContents(destroyedSend, { destroyed: true });
+    const liveSend = vi.fn();
+    const liveWindow = fakeWebContents(liveSend);
+    const status = {
+      enabled: true,
+      status: "available" as const,
+      currentVersion: "0.2.12",
+      updateVersion: "0.2.13",
+    } satisfies UpdateStatus;
+    const updates = {
+      status: vi.fn(() => status),
+      check: vi.fn().mockResolvedValue(status),
+      download: vi.fn().mockResolvedValue(status),
+      install: vi.fn(),
+      startAutomaticChecks: vi.fn(() => vi.fn()),
+      subscribe: vi.fn((listener: (event: typeof status) => void) => {
+        listener(status);
+        return vi.fn();
+      }),
+    };
+
+    expect(() =>
+      registerIpcHandlers({
+        ipcMain: ipcMain as never,
+        services: commandServices({}),
+        updates,
+        appVersion: () => "0.2.12",
+        dialog: { selectDirectory: () => Promise.resolve(undefined) },
+        webContents: () => [destroyedWindow as never, liveWindow as never],
+      }),
+    ).not.toThrow();
+
+    expect(destroyedSend).not.toHaveBeenCalled();
+    expect(liveSend).toHaveBeenCalledWith(UPDATE_EVENT_CHANNEL, status);
+  });
 });
 
 function fakeIpcMain() {
@@ -152,9 +276,12 @@ function fakeIpcMain() {
   };
 }
 
-function fakeWebContents(send: (channel: string, payload: unknown) => void = vi.fn()) {
+function fakeWebContents(
+  send: (channel: string, payload: unknown) => void = vi.fn(),
+  options: { readonly destroyed?: boolean } = {},
+) {
   const mainFrame = { frameId: 1 };
-  return { mainFrame, send };
+  return { isDestroyed: () => options.destroyed ?? false, mainFrame, send };
 }
 
 function trustedEvent(sender: ReturnType<typeof fakeWebContents>) {

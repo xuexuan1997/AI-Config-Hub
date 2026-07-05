@@ -1081,6 +1081,32 @@ pre {
   margin: 0;
 }
 
+.settings-update-panel {
+  align-items: start;
+  border-top: 1px solid var(--panel-border);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 1rem;
+}
+
+.settings-update-panel h2 {
+  font-size: 1rem;
+  margin: 0.2rem 0 0.35rem;
+}
+
+.settings-update-panel p {
+  color: var(--subtle-text);
+  margin: 0;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
 .settings-note {
   color: var(--subtle-text);
   margin: 0;
@@ -1749,6 +1775,14 @@ main {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-update-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-update-actions {
+    justify-content: flex-start;
   }
 
   .review-project-card,

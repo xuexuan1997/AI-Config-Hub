@@ -534,6 +534,9 @@ describe("storage repositories", () => {
         ) VALUES('/project/AGENTS.md', ?, 'failed_deployment', 1, 1)`,
       )
       .run(deploymentRow.id);
+    const recoveryLockMessageMatcher: unknown = expect.stringContaining(
+      "Resolve recovery or rollback state",
+    );
     await expect(
       repositories.maintenance.clearLocalData({
         categories: ["deployment_history"],
@@ -541,7 +544,7 @@ describe("storage repositories", () => {
       }),
     ).rejects.toMatchObject({
       code: "CONFLICT",
-      message: expect.stringContaining("Resolve recovery or rollback state"),
+      message: recoveryLockMessageMatcher,
     });
     expect(rowCount(opened.database, "deployments")).toBe(1);
     expect(rowCount(opened.database, "recovery_locks")).toBe(1);

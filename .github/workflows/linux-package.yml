@@ -33,6 +33,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm package:linux:x64
+      - run: node -e "require('node:fs').statSync('release/linux-x64/latest-linux.yml')"
       - run: pnpm release:sbom release/linux-x64/sbom.cdx.json
       - run: scripts/release/audit-linux-elf.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage release/linux-x64/elf-compatibility.json
       - run: scripts/release/smoke-appimage.sh release/linux-x64/AI-Config-Hub-*-x86_64.AppImage
@@ -81,6 +82,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm --filter @ai-config-hub/desktop test
       - run: pnpm ${{ matrix.package_script }}
+      - if: matrix.artifact == 'windows-x64'
+        run: node -e "const fs=require('node:fs'); fs.statSync('release/windows-x64/latest.yml'); if (!fs.readdirSync('release/windows-x64').some((name) => /^AI-Config-Hub-.*-windows-x64\\.exe\\.blockmap$/.test(name))) throw new Error('missing Windows NSIS blockmap');"
       - run: pnpm release:sbom ${{ matrix.release_dir }}/sbom.cdx.json
       - run: pnpm release:evidence ${{ matrix.release_dir }} ${{ matrix.platform }} ${{ matrix.arch }}
       - run: pnpm release:verify ${{ matrix.release_dir }}

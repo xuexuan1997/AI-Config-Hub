@@ -14,14 +14,23 @@ describe("desktop installer packaging config", () => {
     assert.match(config, /^asar: true$/m);
     assert.match(config, /^npmRebuild: false$/m);
     assert.match(config, /^buildDependenciesFromSource: false$/m);
+    assert.match(config, /^electronUpdaterCompatibility: ">= 2\.16"$/m);
     assert.match(config, /directories:\r?\n\s+output: \.\.\/\.\.\/release\/linux-x64/);
     assert.match(config, /linux:[\s\S]*target: AppImage/);
     assert.match(config, /linux:[\s\S]*arch:\r?\n\s+- x64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-x86_64\.\$\{ext\}/);
     assert.match(config, /category: Development/);
+    assert.match(
+      config,
+      /linux:[\s\S]*publish:\r?\n\s+provider: github\r?\n\s+owner: xuexuan1997\r?\n\s+repo: AI-Config-Hub/,
+    );
     assert.match(config, /win:[\s\S]*target: nsis/);
     assert.match(config, /win:[\s\S]*arch:\r?\n\s+- x64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-windows-x64\.\$\{ext\}/);
+    assert.match(
+      config,
+      /win:[\s\S]*publish:\r?\n\s+provider: github\r?\n\s+owner: xuexuan1997\r?\n\s+repo: AI-Config-Hub/,
+    );
     assert.match(config, /nsis:[\s\S]*allowToChangeInstallationDirectory: true/);
     assert.match(config, /mac:[\s\S]*target: dmg/);
     assert.match(config, /mac:[\s\S]*arch:\r?\n\s+- x64\r?\n\s+- arm64/);
@@ -35,6 +44,9 @@ describe("desktop installer packaging config", () => {
   it("builds every desktop main workspace dependency before packaging", async () => {
     const manifest = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
     const buildMain = manifest.scripts["build:main"];
+
+    assert.match(manifest.scripts["package:linux:x64"], /--publish never/);
+    assert.match(manifest.scripts["package:windows:x64"], /--publish never/);
 
     for (const workspacePackage of [
       "@ai-config-hub/shared",

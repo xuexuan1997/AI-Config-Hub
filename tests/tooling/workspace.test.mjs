@@ -53,12 +53,20 @@ describe("workspace contract", () => {
   });
 
   it("pins the secure desktop Electron and React toolchain", async () => {
-    const manifest = JSON.parse(await readFile("apps/desktop/package.json", "utf8"));
+    const [workspaceConfig, manifest] = await Promise.all([
+      readFile("pnpm-workspace.yaml", "utf8"),
+      readFile("apps/desktop/package.json", "utf8").then(JSON.parse),
+    ]);
 
     assert.equal(manifest.dependencies.react, "19.2.7");
     assert.equal(manifest.dependencies["react-dom"], "19.2.7");
+    assert.ok(
+      typeof manifest.dependencies["electron-updater"] === "string",
+      "desktop app must ship electron-updater as a runtime dependency",
+    );
+    assert.match(workspaceConfig, /overrides:\r?\n\s+"@noble\/hashes": 1\.8\.0/);
     assert.equal(manifest.devDependencies.electron, "42.4.1");
-    assert.equal(manifest.devDependencies["electron-builder"], "26.15.3");
+    assert.equal(manifest.devDependencies["electron-builder"], "26.15.6");
     assert.equal(manifest.devDependencies.vite, "8.0.16");
     assert.equal(manifest.devDependencies["@vitejs/plugin-react"], "6.0.2");
     assert.equal(manifest.devDependencies["@types/react"], "19.2.17");
@@ -112,7 +120,10 @@ describe("workspace contract", () => {
     );
     assert.match(workflow, /gh release create "\$GITHUB_REF_NAME"/);
     assert.match(workflow, /AI-Config-Hub-\*-x86_64\.AppImage/);
+    assert.match(workflow, /latest-linux\.yml/);
     assert.match(workflow, /AI-Config-Hub-\*-windows-x64\.exe/);
+    assert.match(workflow, /AI-Config-Hub-\*-windows-x64\.exe\.blockmap/);
+    assert.match(workflow, /latest\.yml/);
     assert.match(workflow, /AI-Config-Hub-\*-macos-x64\.dmg/);
     assert.match(workflow, /AI-Config-Hub-\*-macos-arm64\.dmg/);
     assert.match(workflow, /linux-x64-version-manifest\.json/);
@@ -136,9 +147,12 @@ describe("workspace contract", () => {
     assert.match(workflow, /node-version-file: \.node-version/);
     assert.doesNotMatch(workflow, /dnf install .*nodejs npm/);
     assert.match(workflow, /pnpm package:linux:x64/);
+    assert.match(workflow, /release\/linux-x64\/latest-linux\.yml/);
     assert.match(workflow, /windows-latest/);
     assert.match(workflow, /macos-latest/);
     assert.match(workflow, /package:windows:x64/);
+    assert.match(workflow, /release\/windows-x64\/latest\.yml/);
+    assert.match(workflow, /missing Windows NSIS blockmap/);
     assert.match(workflow, /package:macos:x64/);
     assert.match(workflow, /package:macos:arm64/);
     assert.match(auditScript, /JSON\.stringify/);

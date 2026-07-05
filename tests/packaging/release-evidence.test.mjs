@@ -21,10 +21,16 @@ describe("release evidence scripts", () => {
     await writeFile(join(linux, `AI-Config-Hub-${version}-x86_64.AppImage`), "linux-demo");
     await writeFile(join(linux, "builder-debug.yml"), "internal: true\n");
     await writeFile(join(linux, "elf-compatibility.json"), "{}\n");
+    await writeFile(join(linux, "latest-linux.yml"), "version: demo\n");
     await writeFile(join(linux, "sbom.cdx.json"), "{}\n");
 
     await mkdir(windows, { recursive: true });
     await writeFile(join(windows, `AI-Config-Hub-${version}-windows-x64.exe`), "windows-demo");
+    await writeFile(
+      join(windows, `AI-Config-Hub-${version}-windows-x64.exe.blockmap`),
+      "windows-blockmap",
+    );
+    await writeFile(join(windows, "latest.yml"), "version: demo\n");
     await writeFile(join(windows, "win-unpacked"), "not-a-file-entry");
     await writeFile(join(windows, "sbom.cdx.json"), "{}\n");
 
@@ -52,6 +58,7 @@ describe("release evidence scripts", () => {
     const linuxManifest = JSON.parse(await readFile(join(linux, "version-manifest.json"), "utf8"));
     assert.match(linuxSums, new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-x86_64\\.AppImage`));
     assert.match(linuxSums, /elf-compatibility\.json/);
+    assert.match(linuxSums, /latest-linux\.yml/);
     assert.doesNotMatch(linuxSums, /builder-debug\.yml/);
     assert.doesNotMatch(linuxSums, /linux-unpacked/);
     assert.equal(linuxManifest.platform, "linux");
@@ -66,6 +73,11 @@ describe("release evidence scripts", () => {
       windowsSums,
       new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-windows-x64\\.exe`),
     );
+    assert.match(
+      windowsSums,
+      new RegExp(`AI-Config-Hub-${escapeRegExp(version)}-windows-x64\\.exe\\.blockmap`),
+    );
+    assert.match(windowsSums, /latest\.yml/);
     assert.doesNotMatch(windowsSums, /elf-compatibility\.json/);
     assert.equal(windowsManifest.platform, "windows");
     assert.equal(windowsManifest.architecture, "x64");
@@ -110,7 +122,10 @@ describe("release evidence scripts", () => {
     assert.match(releaseWorkflow, /macos-x64-release-candidate/);
     assert.match(releaseWorkflow, /macos-arm64-release-candidate/);
     assert.match(releaseWorkflow, /linux-x64-SHA256SUMS/);
+    assert.match(releaseWorkflow, /latest-linux\.yml/);
     assert.match(releaseWorkflow, /windows-x64-SHA256SUMS/);
+    assert.match(releaseWorkflow, /latest\.yml/);
+    assert.match(releaseWorkflow, /AI-Config-Hub-\*-windows-x64\.exe\.blockmap/);
     assert.match(releaseWorkflow, /macos-x64-SHA256SUMS/);
     assert.match(releaseWorkflow, /macos-arm64-SHA256SUMS/);
     assert.match(releaseWorkflow, /gh release upload "\$GITHUB_REF_NAME"/);

@@ -50,11 +50,14 @@ jobs:
         run: |
           source_assets=(
             release/linux-x64/AI-Config-Hub-*-x86_64.AppImage
+            release/linux-x64/latest-linux.yml
             release/linux-x64/SHA256SUMS
             release/linux-x64/version-manifest.json
             release/linux-x64/sbom.cdx.json
             release/linux-x64/elf-compatibility.json
             release/windows-x64/AI-Config-Hub-*-windows-x64.exe
+            release/windows-x64/AI-Config-Hub-*-windows-x64.exe.blockmap
+            release/windows-x64/latest.yml
             release/windows-x64/SHA256SUMS
             release/windows-x64/version-manifest.json
             release/windows-x64/sbom.cdx.json
@@ -74,11 +77,14 @@ jobs:
           publish_dir=release/publish-assets
           mkdir -p "$publish_dir"
           cp release/linux-x64/AI-Config-Hub-*-x86_64.AppImage "$publish_dir/"
+          cp release/linux-x64/latest-linux.yml "$publish_dir/latest-linux.yml"
           cp release/linux-x64/SHA256SUMS "$publish_dir/linux-x64-SHA256SUMS"
           cp release/linux-x64/version-manifest.json "$publish_dir/linux-x64-version-manifest.json"
           cp release/linux-x64/sbom.cdx.json "$publish_dir/linux-x64-sbom.cdx.json"
           cp release/linux-x64/elf-compatibility.json "$publish_dir/linux-x64-elf-compatibility.json"
           cp release/windows-x64/AI-Config-Hub-*-windows-x64.exe "$publish_dir/"
+          cp release/windows-x64/AI-Config-Hub-*-windows-x64.exe.blockmap "$publish_dir/"
+          cp release/windows-x64/latest.yml "$publish_dir/latest.yml"
           cp release/windows-x64/SHA256SUMS "$publish_dir/windows-x64-SHA256SUMS"
           cp release/windows-x64/version-manifest.json "$publish_dir/windows-x64-version-manifest.json"
           cp release/windows-x64/sbom.cdx.json "$publish_dir/windows-x64-sbom.cdx.json"
