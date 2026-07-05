@@ -71,7 +71,21 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           references: [],
           diagnosticIds: [],
         },
-        source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },
+        source: {
+          pathDisplay: "AGENTS.md",
+          contentHash: hash,
+          observedAt: now,
+          files: [
+            {
+              pathDisplay: "AGENTS.md",
+              relativePath: "AGENTS.md",
+              role: "primary",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: hash,
+            },
+          ],
+        },
         redactions: [],
       }),
     "assets.openSource": (payload) =>
@@ -145,6 +159,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         changes: [
           {
             operation: "create",
+            deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/AGENTS.mdc",
             beforeHash: null,
             afterHash: hash,
@@ -204,6 +219,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         changes: [
           {
             operation: "create",
+            deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/AGENTS.mdc",
             beforeHash: null,
             afterHash: hash,
@@ -626,6 +642,7 @@ describe("CLI program", () => {
               changes: [
                 {
                   operation: "replace",
+                  deploymentType: "generated_file",
                   pathDisplay: ".cursor/rules/AGENTS.mdc",
                   beforeHash: hash,
                   afterHash: hash,

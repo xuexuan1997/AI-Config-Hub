@@ -725,3 +725,15 @@ packages/adapters/test/golden/
 | 注册与版本 | 重复注册、契约主版本不符、Schema 不可读在启动时失败；未知新工具版本按约定阻断写入 |
 
 契约测试应在 Windows、macOS 与 Linux 路径语义下运行；涉及原生依赖或打包运行时的适配器还必须纳入 glibc 2.28 基线 CI。黄金文件更新必须与适配器版本变更一同评审，禁止仅为“让测试通过”批量接受未知差异。
+
+## Source Graph Adapter Contract Update
+
+Adapters now parse every asset with a source graph and native identity. `ParseContext.read` exposes text reads plus byte snapshots so Skill package parsing can enumerate `SKILL.md`, support files, metadata files such as `agents/openai.yaml`, media types, and per-file hashes without giving adapters unrestricted filesystem access.
+
+Built-in Skill parsing enforces package limits before normalization: package members are bounded by count and total bytes, binary files are tracked in `sourceFiles`, and package hashes include every member. Tool-specific Skill identity rules are preserved through `nativeIdentity`: Claude Code keeps invocation-oriented directory names, Codex keeps directory identity while allowing duplicate display names, and Cursor/OpenCode validate lower-hyphen names that match the directory.
+
+Schema-aware diagnostics are part of adapter output. Missing required Skill fields, invalid target-specific names, unsupported native fields, missing Codex agent descriptions, Cursor rule activation metadata that cannot be expressed elsewhere, and unsupported MCP native fields now produce stable diagnostics or partial-conversion warnings rather than silent loss.
+
+Conversion planning distinguishes generated outputs from source outputs. The preview service resolves adapter outputs into `resolvedOutputs`, validates generated text hashes from text, validates `copy` and `symlink` source hashes from current source bytes, and gives target adapters the target adapter `writtenSchemaVersion`. Phase 1 built-in Skill migration emits generated `SKILL.md` plus `copy` outputs for text support files; binary support files remain hashed in the package graph and make conversion partial.
+
+Incremental scan matching is source-graph aware. A changed support or metadata path maps back to the owning primary candidate, cached assets are excluded when any `asset.sourceFiles[].path` changes, and diagnostics attached to support files roll up to the owning Skill asset.

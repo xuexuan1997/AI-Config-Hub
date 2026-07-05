@@ -12,6 +12,7 @@ describe("NormalizedResourceSchema", () => {
       kind: "agent",
       data: {
         name: "reviewer",
+        description: "Review risky changes",
         instructions: "Review changes",
         allowedTools: ["read"],
         extensions: {},
@@ -55,5 +56,19 @@ describe("NormalizedResourceSchema", () => {
 
   it("rejects an unknown resource kind", () => {
     expect(NormalizedResourceSchema.safeParse({ kind: "hook", data: {} }).success).toBe(false);
+  });
+
+  it("accepts agent resources without a description during migration from older scans", () => {
+    expect(
+      NormalizedResourceSchema.safeParse({
+        kind: "agent",
+        data: {
+          name: "reviewer",
+          instructions: "Review changes",
+          allowedTools: ["read"],
+          extensions: {},
+        },
+      }).success,
+    ).toBe(true);
   });
 });

@@ -45,6 +45,7 @@ describe("Cursor adapter read path", () => {
           tool,
           candidate,
           snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+          read,
           signal: neverCancelled,
         }),
       ),
@@ -58,8 +59,71 @@ describe("Cursor adapter read path", () => {
     expect(discovery.candidates.map(({ sourcePath }) => sourcePath)).not.toContain(
       "/project/src/.cursor/rules/nested.mdc",
     );
+    expect(assets.find(({ locator }) => locator === "rule:project")?.resource).toMatchObject({
+      kind: "rule",
+      data: {
+        globs: ["src/**/*.ts"],
+        extensions: {
+          description: "Project rules",
+          alwaysApply: false,
+          unknownMode: "kept",
+        },
+      },
+    });
+    expect(assets.find(({ locator }) => locator === "agent:reviewer")?.resource).toMatchObject({
+      kind: "agent",
+      data: { name: "reviewer", description: "Review code" },
+    });
+    expect(results.flatMap(({ diagnostics }) => diagnostics)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RULE_UNSUPPORTED_NATIVE_FIELD",
+          evidence: expect.objectContaining({ field: "alwaysApply" }) as unknown,
+        }),
+      ]),
+    );
     expect(discovery.diagnostics).toContainEqual(
       expect.objectContaining({ code: "CURSOR_LEGACY_RULE_FORMAT", severity: "warning" }),
+    );
+  });
+
+  it("diagnoses Cursor skill names that do not match the package directory", async () => {
+    const read = memoryReadApi({
+      "/project/.cursor/skills/refactor/SKILL.md":
+        "---\nname: safer-refactor\ndescription: Refactor safely\n---\nKeep tests green.\n",
+    });
+    const adapter = cursorRegistration.create({ logger: { debug() {}, warn() {} } });
+    const discovery = await adapter.discover({
+      tool,
+      allowedRoots: tool.configRoots,
+      read,
+      signal: neverCancelled,
+    });
+    const candidate = discovery.candidates.find(
+      ({ sourcePath }) => sourcePath === "/project/.cursor/skills/refactor/SKILL.md",
+    );
+    if (candidate === undefined) throw new Error("Expected Cursor skill candidate");
+
+    const result = await adapter.parse({
+      tool,
+      candidate,
+      snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      read,
+      signal: neverCancelled,
+    });
+
+    expect(result.status).toBe("parsed");
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "SKILL_NAME_DIRECTORY_MISMATCH",
+          blocking: true,
+          evidence: expect.objectContaining({
+            field: "name",
+            relativePath: "SKILL.md",
+          }) as unknown,
+        }),
+      ]),
     );
   });
 });

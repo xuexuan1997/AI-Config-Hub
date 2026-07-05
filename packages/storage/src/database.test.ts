@@ -28,6 +28,7 @@ afterEach(() => {
 });
 
 const expectedTables = [
+  "asset_disablement_records",
   "asset_references",
   "asset_status_overrides",
   "assets",

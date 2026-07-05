@@ -35,6 +35,7 @@ import {
   walkFiles,
 } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
+import { parseSkillPackage } from "./skill-packages.js";
 
 export interface DeclarativeResourceRule {
   readonly directories?: readonly string[];
@@ -286,8 +287,8 @@ function capabilitiesFor(definition: ParsedDeclarativeToolDefinition): AdapterCa
   return {
     supportedToolVersions: SemVerRangeSchema.parse(">=0.0.0"),
     testedToolVersions: [],
-    readableSchemaVersions: [SemVerRangeSchema.parse("^1.0.0")],
-    writtenSchemaVersion: SemVerSchema.parse("1.0.0"),
+    readableSchemaVersions: [SemVerRangeSchema.parse("^1.1.0")],
+    writtenSchemaVersion: SemVerSchema.parse("1.1.0"),
     resourceKinds: resourceKinds(definition),
     scopeKinds: ["user", "project", "directory"],
     supportsNestedScopes: true,
@@ -398,13 +399,15 @@ class DeclarativeToolAdapter extends BaseToolAdapter {
   parse(context: ParseContext): Promise<ParseResult> {
     context.signal.throwIfAborted();
     const result =
-      context.candidate.resourceKindHint === "mcp"
-        ? parseMcpJson(context.candidate, context.snapshot.text, context.snapshot.contentHash)
-        : parseMarkdownAsset(
-            context.candidate,
-            context.snapshot.text,
-            context.snapshot.contentHash,
-          );
+      context.candidate.resourceKindHint === "skill"
+        ? parseSkillPackage(context)
+        : context.candidate.resourceKindHint === "mcp"
+          ? parseMcpJson(context.candidate, context.snapshot.text, context.snapshot.contentHash)
+          : parseMarkdownAsset(
+              context.candidate,
+              context.snapshot.text,
+              context.snapshot.contentHash,
+            );
     return Promise.resolve(result);
   }
 }

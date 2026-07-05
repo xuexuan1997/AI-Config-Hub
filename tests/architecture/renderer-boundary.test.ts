@@ -5,19 +5,33 @@ import { describe, expect, it } from "vitest";
 
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
 const dependencyCruiseTimeoutMs = 30_000;
-
 function cruise(fixture: string) {
-  return spawnSync(
-    "pnpm",
-    [
-      "exec",
-      "depcruise",
-      "--config",
-      "dependency-cruiser.mjs",
-      `tests/architecture/fixtures/renderer/${fixture}`,
-    ],
-    { cwd: workspace, encoding: "utf8" },
-  );
+  const pnpmExecPath = process.env["npm_execpath"];
+  if (pnpmExecPath === undefined && process.platform === "win32") {
+    return spawnSync(
+      process.env["ComSpec"] ?? "cmd.exe",
+      [
+        "/d",
+        "/s",
+        "/c",
+        `pnpm exec depcruise --config dependency-cruiser.mjs tests/architecture/fixtures/renderer/${fixture}`,
+      ],
+      { cwd: workspace, encoding: "utf8" },
+    );
+  }
+  const command = pnpmExecPath === undefined ? "pnpm" : process.execPath;
+  const commandArgs = [
+    ...(pnpmExecPath === undefined ? [] : [pnpmExecPath]),
+    "exec",
+    "depcruise",
+    "--config",
+    "dependency-cruiser.mjs",
+    `tests/architecture/fixtures/renderer/${fixture}`,
+  ];
+  return spawnSync(command, commandArgs, {
+    cwd: workspace,
+    encoding: "utf8",
+  });
 }
 
 describe("renderer trust boundary", () => {

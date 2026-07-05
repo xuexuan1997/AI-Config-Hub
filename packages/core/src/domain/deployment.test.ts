@@ -7,6 +7,7 @@ import {
 } from "./deployment.js";
 
 const operation = {
+  deploymentType: "generated_file",
   kind: "replace",
   targetPath: "/workspace/.cursor/rules/generated.mdc",
   nextText: "Use strict TypeScript",
@@ -87,8 +88,10 @@ describe("DeploymentOperationSchema", () => {
     for (const deploymentType of ["copy", "symlink"] as const) {
       expect(
         DeploymentOperationSchema.parse({
-          ...operation,
           deploymentType,
+          kind: "replace",
+          targetPath: operation.targetPath,
+          expectedTargetHash: operation.expectedTargetHash,
           sourcePath,
           sourceHash,
         }),
@@ -98,6 +101,84 @@ describe("DeploymentOperationSchema", () => {
         false,
       );
     }
+  });
+
+  it("rejects generated create and replace operations without nextText", () => {
+    expect(
+      DeploymentOperationSchema.safeParse({
+        deploymentType: "generated_file",
+        kind: "create",
+        targetPath: operation.targetPath,
+        expectedTargetHash: "absent",
+      }).success,
+    ).toBe(false);
+    expect(
+      DeploymentOperationSchema.safeParse({
+        deploymentType: "generated_file",
+        kind: "replace",
+        targetPath: operation.targetPath,
+        expectedTargetHash: operation.expectedTargetHash,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects nextText on copy and symlink create and replace operations", () => {
+    const sourcePath = "/central-assets/rules/generated.mdc";
+    const sourceHash = `sha256:${"e".repeat(64)}`;
+
+    for (const deploymentType of ["copy", "symlink"] as const) {
+      expect(
+        DeploymentOperationSchema.safeParse({
+          deploymentType,
+          kind: "create",
+          targetPath: operation.targetPath,
+          expectedTargetHash: "absent",
+          sourcePath,
+          sourceHash,
+          nextText: "do not persist copied text",
+        }).success,
+      ).toBe(false);
+      expect(
+        DeploymentOperationSchema.safeParse({
+          deploymentType,
+          kind: "replace",
+          targetPath: operation.targetPath,
+          expectedTargetHash: operation.expectedTargetHash,
+          sourcePath,
+          sourceHash,
+          nextText: "do not persist copied text",
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects delete operations with copy or symlink types or source metadata", () => {
+    const sourcePath = "/central-assets/rules/generated.mdc";
+    const sourceHash = `sha256:${"e".repeat(64)}`;
+
+    for (const deploymentType of ["copy", "symlink"] as const) {
+      expect(
+        DeploymentOperationSchema.safeParse({
+          deploymentType,
+          kind: "delete",
+          targetPath: operation.targetPath,
+          expectedTargetHash: operation.expectedTargetHash,
+          sourcePath,
+          sourceHash,
+        }).success,
+      ).toBe(false);
+    }
+
+    expect(
+      DeploymentOperationSchema.safeParse({
+        deploymentType: "generated_file",
+        kind: "delete",
+        targetPath: operation.targetPath,
+        expectedTargetHash: operation.expectedTargetHash,
+        sourcePath,
+        sourceHash,
+      }).success,
+    ).toBe(false);
   });
 
   it("defaults legacy operations to generated_file metadata", () => {

@@ -874,6 +874,37 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
+          {detail.source.files.length <= 1 ? null : (
+            <section
+              className="asset-source-files"
+              aria-label={t(props.locale, "Source package files")}
+            >
+              <h3>{t(props.locale, "Source package files")}</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t(props.locale, "Role")}</th>
+                    <th>{t(props.locale, "Path")}</th>
+                    <th>{t(props.locale, "Media")}</th>
+                    <th>{t(props.locale, "Hash")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.source.files.map((sourceFile) => (
+                    <tr key={`${sourceFile.role}:${sourceFile.relativePath}`}>
+                      <td>{sourceFileRoleLabel(props.locale, sourceFile.role)}</td>
+                      <td title={sourceFile.pathDisplay}>{sourceFile.relativePath}</td>
+                      <td>
+                        {sourceFile.mediaType} /{" "}
+                        {sourceFileTextLabel(props.locale, sourceFile.isText)}
+                      </td>
+                      <td>{sourceFile.contentHash}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
           {status === "disabled" ? (
             <section
               aria-label={t(props.locale, "Asset status action")}
@@ -918,9 +949,7 @@ function AssetDetailDialog(props: {
                         <span>{optionCopy.description}</span>
                       </span>
                       {option.recommended ? (
-                        <span className="method-recommended">
-                          {t(props.locale, "Recommended")}
-                        </span>
+                        <span className="method-recommended">{t(props.locale, "Recommended")}</span>
                       ) : null}
                     </label>
                   );
@@ -1041,10 +1070,7 @@ function disablementOptionCopy(
     case "native":
       return {
         label: t(locale, "Use the tool's native disable switch"),
-        description: t(
-          locale,
-          "Keeps the asset in place and asks the AI tool to stop loading it.",
-        ),
+        description: t(locale, "Keeps the asset in place and asks the AI tool to stop loading it."),
       };
     case "move_file":
       return {
@@ -1071,4 +1097,21 @@ function disablementOptionCopy(
         ),
       };
   }
+}
+
+function sourceFileRoleLabel(locale: DesktopLocale, role: string): string {
+  switch (role) {
+    case "primary":
+      return t(locale, "primary");
+    case "metadata":
+      return t(locale, "metadata");
+    case "support":
+      return t(locale, "support");
+    default:
+      return role;
+  }
+}
+
+function sourceFileTextLabel(locale: DesktopLocale, isText: boolean): string {
+  return isText ? t(locale, "text") : t(locale, "binary");
 }

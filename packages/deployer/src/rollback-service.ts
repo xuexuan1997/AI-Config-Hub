@@ -144,6 +144,9 @@ export class DeploymentRollbackService {
           });
           await this.assertAbsent(operation.targetPath);
         } else {
+          if (operation.nextText === undefined) {
+            throw appError("VALIDATION_FAILED", "Rollback operation is missing generated text");
+          }
           const result = await this.options.deploymentFiles.atomicReplace({
             target: operation.targetPath,
             text: operation.nextText,

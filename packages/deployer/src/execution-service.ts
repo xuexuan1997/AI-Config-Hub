@@ -180,11 +180,14 @@ function journalHash(completed: CompletedOperation): ContentHash {
 
 function operationDesiredHash(operation: DeploymentOperation): ContentHash | undefined {
   if (operation.kind === "delete") return undefined;
-  if (
-    (operation.deploymentType === "copy" || operation.deploymentType === "symlink") &&
-    operation.sourceHash !== undefined
-  ) {
+  if (operation.deploymentType === "copy" || operation.deploymentType === "symlink") {
+    if (operation.sourceHash === undefined) {
+      throw appError("INTERNAL_ERROR", "Source deployment operation is missing source hash");
+    }
     return operation.sourceHash;
+  }
+  if (operation.nextText === undefined) {
+    throw appError("INTERNAL_ERROR", "Generated deployment operation is missing text");
   }
   return textHash(operation.nextText);
 }
@@ -429,6 +432,9 @@ export class DeploymentExecutionService {
         })
       ).resultingHash;
     }
+    if (operation.nextText === undefined) {
+      throw appError("VALIDATION_FAILED", "Generated deployment operation is missing text");
+    }
     return (
       await this.options.deploymentFiles.atomicReplace({
         target: operation.targetPath,
@@ -449,6 +455,15 @@ export class DeploymentExecutionService {
     if (operation.kind === "delete") {
       return snapshot === undefined ? { operation } : undefined;
     }
+    if (
+      (operation.deploymentType === "copy" || operation.deploymentType === "symlink") &&
+      operation.sourceHash !== undefined
+    ) {
+      return snapshot?.contentHash === operation.sourceHash
+        ? { operation, resultingHash: snapshot.contentHash }
+        : undefined;
+    }
+    if (snapshot === undefined || operation.nextText === undefined) return undefined;
     if (
       snapshot?.text === operation.nextText &&
       snapshot.contentHash === textHash(operation.nextText)

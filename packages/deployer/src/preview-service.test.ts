@@ -9,6 +9,8 @@ import {
 } from "@ai-config-hub/adapters";
 import {
   AssetSchema,
+  type ConvertedOutput,
+  type ConversionResult,
   type DeploymentPlan,
   type DeploymentRecord,
   type DeploymentRepository,
@@ -19,6 +21,7 @@ import {
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
+  AssetIdSchema,
   ContentHashSchema,
   ConversionResultIdSchema,
   CorrelationIdSchema,
@@ -37,6 +40,13 @@ function hash(text: string): ContentHash {
   return ContentHashSchema.parse(`sha256:${createHash("sha256").update(text).digest("hex")}`);
 }
 
+function expectGeneratedOutput(
+  output: ConvertedOutput | undefined,
+): Extract<ConvertedOutput, { readonly deploymentType: "generated_file" }> {
+  if (output?.deploymentType !== "generated_file") throw new Error("expected generated output");
+  return output;
+}
+
 function asset(
   id: string,
   resource: NormalizedResource = {
@@ -44,15 +54,31 @@ function asset(
     data: { name: id, instructions: `Instruction for ${id}.`, globs: [], extensions: {} },
   },
 ) {
+  const canonicalSourcePath = AbsolutePathSchema.parse(`/source/${id}.md`);
+  const sourceHash = hash(`source:${id}:primary`);
   return AssetSchema.parse({
     assetId: id,
     toolId: "claude-code",
     resource,
     scopeId: "scope-project",
-    canonicalSourcePath: `/source/${id}.md`,
+    canonicalSourcePath,
     locator: `rule:${id}`,
     sourceFormat: "markdown",
     contentHash: hash(`source:${id}`),
+    sourceFiles: [
+      {
+        path: canonicalSourcePath,
+        relativePath: `${id}.md`,
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash: sourceHash,
+      },
+    ],
+    nativeIdentity: {
+      nativeId: `rule:${id}`,
+      displayName: id,
+    },
     normalizedSchemaVersion: "1.0.0",
     adapterId: "fixture-adapter",
     adapterVersion: "1.0.0",
@@ -110,9 +136,9 @@ function fixture(
       }),
   );
   const canonicalize = vi.fn<PathPolicyPort["canonicalize"]>(({ path, allowedRoots }) => {
-    const resolved = posix.resolve(path);
+    const resolved = posix.resolve(toPosixFixturePath(path));
     const allowed = allowedRoots.some((root) => {
-      const relative = posix.relative(root, resolved);
+      const relative = posix.relative(toPosixFixturePath(root), resolved);
       return relative === "" || (!relative.startsWith("../") && relative !== "..");
     });
     if (!allowed)
@@ -129,6 +155,10 @@ function fixture(
   return { service, repository, snapshot, canonicalize };
 }
 
+function toPosixFixturePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
+}
+
 function registryWithConversion(
   convert: ToolAdapter["convert"],
   toolId: "codex" | "cursor" = "codex",
@@ -142,6 +172,30 @@ function registryWithConversion(
       return adapter;
     },
   };
+}
+
+function registryWithConvertedOutputs(
+  outputs: readonly ConvertedOutput[],
+  toolId: "codex" | "cursor" = "codex",
+): AdapterRegistry {
+  return registryWithConversion(
+    (input) =>
+      Promise.resolve({
+        conversionResultId: ConversionResultIdSchema.parse(`conversion:${input.asset.assetId}`),
+        sourceAssetId: input.asset.assetId,
+        sourceContentHash: input.asset.contentHash,
+        targetToolId: input.target.toolId,
+        targetResourceKind: input.target.resourceKind,
+        targetSchemaVersion: input.target.targetSchemaVersion,
+        adapterId: toolId === "codex" ? codexRegistration.adapterId : cursorRegistration.adapterId,
+        adapterVersion:
+          toolId === "codex" ? codexRegistration.adapterVersion : cursorRegistration.adapterVersion,
+        level: "full" as const,
+        outputs,
+        diagnostics: [],
+      } satisfies ConversionResult),
+    toolId,
+  );
 }
 
 type PlanningResult = Awaited<ReturnType<ToolAdapter["planDeployment"]>>;
@@ -178,6 +232,38 @@ function request(assets: readonly ReturnType<typeof asset>[], targetRoot = ROOT)
   };
 }
 
+function generatedOutput(input: {
+  readonly relativePath: string;
+  readonly text: string;
+  readonly contentHash?: ContentHash;
+}): ConvertedOutput {
+  return {
+    deploymentType: "generated_file",
+    relativePath: input.relativePath,
+    mediaType: "text/markdown",
+    text: input.text,
+    contentHash: input.contentHash ?? hash(input.text),
+  };
+}
+
+function sourceOutput(input: {
+  readonly deploymentType: "copy" | "symlink";
+  readonly relativePath: string;
+  readonly sourcePath: string;
+  readonly sourceText: string;
+  readonly sourceHash?: ContentHash;
+}): ConvertedOutput {
+  const sourceHash = input.sourceHash ?? hash(input.sourceText);
+  return {
+    deploymentType: input.deploymentType,
+    relativePath: input.relativePath,
+    mediaType: "text/markdown",
+    sourcePath: AbsolutePathSchema.parse(input.sourcePath),
+    sourceHash,
+    contentHash: sourceHash,
+  };
+}
+
 describe("DeploymentPreviewService", () => {
   it("uses adapter planning for Codex rule to Cursor previews and emits generated-file metadata", async () => {
     const base = createAdapterRegistry([cursorRegistration]);
@@ -192,13 +278,18 @@ describe("DeploymentPreviewService", () => {
         return adapter;
       },
     };
+    const baseSource = asset("codex-rule");
+    const sourcePath = AbsolutePathSchema.parse("/source/AGENTS.md");
     const source = AssetSchema.parse({
-      ...asset("codex-rule"),
+      ...baseSource,
       toolId: "codex",
       adapterId: codexRegistration.adapterId,
       adapterVersion: codexRegistration.adapterVersion,
-      canonicalSourcePath: "/source/AGENTS.md",
+      canonicalSourcePath: sourcePath,
       locator: "rule:AGENTS.md",
+      sourceFiles: baseSource.sourceFiles.map((sourceFile, index) =>
+        index === 0 ? { ...sourceFile, path: sourcePath, relativePath: "AGENTS.md" } : sourceFile,
+      ),
     });
     const context = fixture({}, { registry });
 
@@ -258,6 +349,9 @@ describe("DeploymentPreviewService", () => {
     const { service } = fixture({ "/target/AGENTS.md": existing });
 
     const { plan, conversions } = await service.preview(request([large]));
+    const [conversion] = conversions;
+    const expectedText =
+      conversion?.level === "unsupported" ? "" : expectGeneratedOutput(conversion?.outputs[0]).text;
 
     expect(plan.operations).toEqual([
       expect.objectContaining({
@@ -266,7 +360,7 @@ describe("DeploymentPreviewService", () => {
         deploymentType: "generated_file",
         targetResourceKind: "rule",
         expectedTargetHash: hash(existing),
-        nextText: conversions[0]?.level === "unsupported" ? "" : conversions[0]?.outputs[0]?.text,
+        nextText: expectedText,
       }),
     ]);
     expect(plan.expectedTargetHashes).toEqual({ "/target/AGENTS.md": hash(existing) });
@@ -276,24 +370,107 @@ describe("DeploymentPreviewService", () => {
     );
   });
 
-  it("accepts adapter-planned copy and symlink operations with confined source metadata", async () => {
+  it("rejects generated converted outputs whose content hash does not match text", async () => {
+    const context = fixture(
+      {},
+      {
+        registry: registryWithConvertedOutputs([
+          generatedOutput({
+            relativePath: "AGENTS.md",
+            text: "Actual output.\n",
+            contentHash: hash("Different output.\n"),
+          }),
+        ]),
+      },
+    );
+
+    await expect(
+      context.service.preview(request([asset("bad-output-hash")])),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects source converted outputs whose source bytes drift before planning", async () => {
+    const sourcePath = "/source/shared-rule.md";
+    const context = fixture(
+      { [sourcePath]: "Changed rule.\n" },
+      {
+        registry: registryWithConvertedOutputs([
+          sourceOutput({
+            deploymentType: "copy",
+            relativePath: "copied.md",
+            sourcePath,
+            sourceText: "Shared rule.\n",
+          }),
+        ]),
+      },
+    );
+
+    await expect(
+      context.service.preview({
+        ...request([asset("source-drift")]),
+        allowedRoots: [ROOT, AbsolutePathSchema.parse("/source")],
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(context.repository.savePlanAndRecord).not.toHaveBeenCalled();
+  });
+
+  it("plans source converted outputs with confined source metadata and no nextText", async () => {
     const sourcePath = AbsolutePathSchema.parse("/source/shared-rule.md");
     const sourceHash = hash("Shared rule.\n");
     for (const deploymentType of ["copy", "symlink"] as const) {
+      const planDeployment = vi.fn<ToolAdapter["planDeployment"]>();
+      const base = createAdapterRegistry([codexRegistration]);
       const context = fixture(
-        {},
+        { [sourcePath]: "Shared rule.\n" },
         {
-          registry: registryWithPlanningMutation((planning) => ({
-            ...planning,
-            draft: {
-              ...planning.draft,
-              operations: planning.draft.operations.map((operation) =>
-                operation.kind === "create" || operation.kind === "replace"
-                  ? { ...operation, deploymentType, sourcePath, sourceHash }
-                  : operation,
-              ),
+          registry: {
+            ...base,
+            create(requestedToolId, logger) {
+              const adapter = base.create(requestedToolId, logger);
+              const originalPlanDeployment = adapter.planDeployment.bind(adapter);
+              Object.defineProperty(adapter, "convert", {
+                value: () =>
+                  Promise.resolve({
+                    conversionResultId: ConversionResultIdSchema.parse(
+                      `conversion:${deploymentType}`,
+                    ),
+                    sourceAssetId: AssetIdSchema.parse(`asset-${deploymentType}`),
+                    sourceContentHash: hash(`source:asset-${deploymentType}`),
+                    targetToolId: "codex",
+                    targetResourceKind: "rule",
+                    targetSchemaVersion: "1.0.0",
+                    adapterId: codexRegistration.adapterId,
+                    adapterVersion: codexRegistration.adapterVersion,
+                    level: "full" as const,
+                    outputs: [
+                      sourceOutput({
+                        deploymentType,
+                        relativePath: "copied.md",
+                        sourcePath,
+                        sourceText: "Shared rule.\n",
+                      }),
+                    ],
+                    diagnostics: [],
+                  } satisfies ConversionResult),
+              });
+              planDeployment.mockImplementation((planningContext) => {
+                const resolved = planningContext.resolvedOutputs.get("copied.md");
+                expect(resolved).toMatchObject({
+                  deploymentType,
+                  contentHash: sourceHash,
+                  sourcePath,
+                  sourceHash,
+                  previewText: "Shared rule.\n",
+                });
+                return originalPlanDeployment(planningContext);
+              });
+              Object.defineProperty(adapter, "planDeployment", { value: planDeployment });
+              return adapter;
             },
-          })),
+          },
         },
       );
 
@@ -303,8 +480,17 @@ describe("DeploymentPreviewService", () => {
       });
 
       expect(result.plan.operations).toEqual([
-        expect.objectContaining({ deploymentType, sourcePath, sourceHash }),
+        expect.objectContaining({
+          kind: "create",
+          deploymentType,
+          sourcePath,
+          sourceHash,
+          targetPath: "/target/copied.md",
+        }),
       ]);
+      expect(result.plan.operations[0]).not.toHaveProperty("nextText");
+      expect(result.plan.diffs[0]?.unifiedText).toContain("+Shared rule.");
+      expect(planDeployment).toHaveBeenCalledTimes(1);
       expect(context.repository.savePlanAndRecord).toHaveBeenCalledTimes(1);
     }
   });
@@ -420,12 +606,14 @@ describe("DeploymentPreviewService", () => {
                   level: "full" as const,
                   outputs: [
                     {
+                      deploymentType: "generated_file",
                       relativePath: "first.md",
                       mediaType: "text/markdown",
                       text: twoOutputText.first,
                       contentHash: hash(twoOutputText.first),
                     },
                     {
+                      deploymentType: "generated_file",
                       relativePath: "second.md",
                       mediaType: "text/markdown",
                       text: twoOutputText.second,

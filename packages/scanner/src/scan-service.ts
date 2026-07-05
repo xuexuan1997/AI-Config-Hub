@@ -129,7 +129,12 @@ export class ScanService {
         for (const candidate of discovery.candidates) work.push({ adapter, tool, candidate });
       }
     }
-    const changedPaths = input.changedPaths;
+    const indexedAssetsForChange =
+      input.changedPaths === undefined ? [] : await listAllAssets(this.options.indexRepository);
+    const changedPaths =
+      input.changedPaths === undefined
+        ? undefined
+        : expandChangedPaths(input.changedPaths, indexedAssetsForChange);
     const affectedInstallationIds =
       changedPaths === undefined ? undefined : affectedInstallations(tools, work, changedPaths);
     const narrowedWork =
@@ -189,6 +194,7 @@ export class ScanService {
           tool: item.tool,
           candidate: item.candidate,
           snapshot: item.snapshot,
+          read: this.options.read,
           signal: input.signal,
         });
         return {
@@ -223,10 +229,14 @@ export class ScanService {
             toolId: parsed.toolId,
             resource: parsed.resource,
             scopeId: ScopeIdSchema.parse(scopeId(item.tool.installationId, parsed)),
-            canonicalSourcePath: parsed.canonicalSourcePath,
+            canonicalSourcePath:
+              parsed.sourceFiles.find((sourceFile) => sourceFile.role === "primary")?.path ??
+              parsed.canonicalSourcePath,
             locator: parsed.locator,
             sourceFormat: parsed.sourceFormat,
-            contentHash: parsed.sourceContentHash,
+            contentHash: parsed.contentHash,
+            sourceFiles: parsed.sourceFiles,
+            nativeIdentity: parsed.nativeIdentity,
             normalizedSchemaVersion: item.adapter.capabilities.writtenSchemaVersion,
             adapterId: item.adapter.adapterId,
             adapterVersion: item.adapter.adapterVersion,
@@ -430,9 +440,15 @@ function summarizeAssetDiagnostics(
   );
   const assetsByPath = new Map<string, Asset[]>();
   for (const asset of assets) {
-    const current = assetsByPath.get(asset.canonicalSourcePath) ?? [];
-    current.push(asset);
-    assetsByPath.set(asset.canonicalSourcePath, current);
+    const paths =
+      asset.sourceFiles.length === 0
+        ? [asset.canonicalSourcePath]
+        : asset.sourceFiles.map((sourceFile) => sourceFile.path);
+    for (const path of paths) {
+      const current = assetsByPath.get(path) ?? [];
+      current.push(asset);
+      assetsByPath.set(path, current);
+    }
   }
 
   for (const diagnostic of diagnostics) {
@@ -580,7 +596,8 @@ async function cachedClosure(input: {
   const scopeIds = new Set(scopes.map(({ scopeId }) => scopeId));
   const assets = (await listAllAssets(input.repository)).filter(
     (asset) =>
-      scopeIds.has(asset.scopeId) && !changed.has(normalizePath(asset.canonicalSourcePath)),
+      scopeIds.has(asset.scopeId) &&
+      !assetSourcePaths(asset).some((sourcePath) => changed.has(normalizePath(sourcePath))),
   );
   return { assets, scopes };
 }
@@ -608,8 +625,12 @@ async function scopedCommitChangedPaths(input: {
   return uniqueChangedPaths([
     ...indexedAssets
       .filter((asset) => pathWithinAnyRoot(asset.canonicalSourcePath, input.candidateRoots))
-      .map((asset) => asset.canonicalSourcePath),
-    ...input.parsedItems.map((item) => item.candidate.sourcePath),
+      .flatMap((asset) => assetSourcePaths(asset)),
+    ...input.parsedItems.flatMap((item) =>
+      item.parsedAssets.length === 0
+        ? [item.candidate.sourcePath]
+        : item.parsedAssets.flatMap((asset) => assetSourcePaths(asset)),
+    ),
   ]);
 }
 
@@ -644,6 +665,21 @@ function affectedInstallations(
   return result;
 }
 
+function expandChangedPaths(
+  changedPaths: readonly AbsolutePath[],
+  indexedAssets: readonly Asset[],
+): readonly AbsolutePath[] {
+  const expanded = new Map(changedPaths.map((path) => [normalizePath(path), path]));
+  const changed = new Set(expanded.keys());
+  for (const asset of indexedAssets) {
+    if (!assetSourcePaths(asset).some((path) => changed.has(normalizePath(path)))) continue;
+    expanded.set(normalizePath(asset.canonicalSourcePath), asset.canonicalSourcePath);
+  }
+  return [...expanded.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, path]) => path);
+}
+
 function pathMatchesAnyChangedPath(
   candidatePath: AbsolutePath,
   changedPaths: readonly AbsolutePath[],
@@ -655,6 +691,12 @@ function pathMatchesAnyChangedPath(
 
 function normalizePath(path: AbsolutePath): string {
   return path.replaceAll("\\", "/");
+}
+
+function assetSourcePaths(asset: Pick<Asset, "canonicalSourcePath" | "sourceFiles">) {
+  return asset.sourceFiles.length === 0
+    ? [asset.canonicalSourcePath]
+    : asset.sourceFiles.map((sourceFile) => sourceFile.path);
 }
 
 function pathWithinRoot(path: AbsolutePath, root: AbsolutePath): boolean {

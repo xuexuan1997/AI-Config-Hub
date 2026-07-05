@@ -114,7 +114,10 @@ function projectDeployment(deployment: DeploymentRecord): unknown {
       kind: operation.kind,
       targetPathDigest: digestText(operation.targetPath),
       expectedTargetHash: operation.expectedTargetHash,
-      nextTextHash: "nextText" in operation ? digestText(operation.nextText) : undefined,
+      nextTextHash:
+        operation.kind === "delete" || operation.nextText === undefined
+          ? undefined
+          : digestText(operation.nextText),
     })),
     backupLocations: Object.fromEntries(
       Object.entries(deployment.backupLocations)

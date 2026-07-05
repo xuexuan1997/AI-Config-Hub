@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -63,7 +63,11 @@ export abstract class BaseToolAdapter implements ToolAdapter {
     const diagnostics: AdapterDiagnostic[] = [];
     const firstByLocator = new Map<string, (typeof context.assets)[number]>();
     const assetPaths = new Set(
-      context.assets.map(({ canonicalSourcePath }) => canonicalSourcePath),
+      context.assets.flatMap((asset) =>
+        asset.sourceFiles.length === 0
+          ? [asset.canonicalSourcePath]
+          : asset.sourceFiles.map((sourceFile) => sourceFile.path),
+      ),
     );
 
     for (const asset of [...context.assets].sort((left, right) =>
@@ -184,44 +188,69 @@ export abstract class BaseToolAdapter implements ToolAdapter {
     context.signal.throwIfAborted();
     const operations: DeploymentPlanningResult["draft"]["operations"][number][] = [];
     const diffs: DeploymentPlanningResult["draft"]["diffs"][number][] = [];
+    const diagnostics: AdapterDiagnostic[] = [];
 
     for (const output of [...context.conversion.outputs].sort((left, right) =>
       left.relativePath.localeCompare(right.relativePath),
     )) {
       context.signal.throwIfAborted();
-      const targetPath = AbsolutePathSchema.parse(
-        resolve(context.target.canonicalRootPath, output.relativePath),
-      );
+      const resolvedOutput = context.resolvedOutputs.get(output.relativePath);
+      if (resolvedOutput === undefined) {
+        diagnostics.push(
+          adapterDiagnostic(
+            "CONVERSION_SOURCE_OUTPUT_UNRESOLVED",
+            "error",
+            `Converted output was not resolved before deployment planning: ${output.relativePath}`,
+            true,
+          ),
+        );
+        continue;
+      }
+      const targetPath = resolveTargetPath(context.target.canonicalRootPath, output.relativePath);
       const current = context.currentTargetSnapshots.get(targetPath);
-      if (current?.contentHash === output.contentHash && current.text === output.text) continue;
+      if (current?.contentHash === resolvedOutput.contentHash) continue;
+
+      const nextPreviewText =
+        resolvedOutput.deploymentType === "generated_file"
+          ? resolvedOutput.text
+          : resolvedOutput.previewText;
+      const operationMetadata =
+        resolvedOutput.deploymentType === "generated_file"
+          ? {
+              nextText: resolvedOutput.text,
+              deploymentType: "generated_file" as const,
+            }
+          : {
+              deploymentType: resolvedOutput.deploymentType,
+              sourcePath: resolvedOutput.sourcePath,
+              sourceHash: resolvedOutput.sourceHash,
+            };
 
       if (current === undefined) {
         operations.push({
           kind: "create",
           targetPath,
-          nextText: output.text,
           expectedTargetHash: "absent",
-          deploymentType: "generated_file",
           targetResourceKind: context.conversion.targetResourceKind,
+          ...operationMetadata,
         });
         diffs.push({
           targetPath,
           summary: `Create ${targetPath}`,
-          unifiedText: unifiedDiff(targetPath, undefined, output.text),
+          unifiedText: unifiedDiff(targetPath, undefined, nextPreviewText),
         });
       } else {
         operations.push({
           kind: "replace",
           targetPath,
-          nextText: output.text,
           expectedTargetHash: current.contentHash,
-          deploymentType: "generated_file",
           targetResourceKind: context.conversion.targetResourceKind,
+          ...operationMetadata,
         });
         diffs.push({
           targetPath,
           summary: `Replace ${targetPath}`,
-          unifiedText: unifiedDiff(targetPath, current.text, output.text),
+          unifiedText: unifiedDiff(targetPath, current.text, nextPreviewText),
         });
       }
     }
@@ -236,16 +265,18 @@ export abstract class BaseToolAdapter implements ToolAdapter {
         adapterVersion: this.adapterVersion,
       },
       diagnostics:
-        operations.length === 0
-          ? [
-              adapterDiagnostic(
-                "DEPLOYMENT_TARGETS_ALREADY_IDENTICAL",
-                "info",
-                "All generated outputs are already byte-identical to their targets",
-                false,
-              ),
-            ]
-          : [],
+        diagnostics.length > 0
+          ? diagnostics
+          : operations.length === 0
+            ? [
+                adapterDiagnostic(
+                  "DEPLOYMENT_TARGETS_ALREADY_IDENTICAL",
+                  "info",
+                  "All generated outputs are already byte-identical to their targets",
+                  false,
+                ),
+              ]
+            : [],
     });
   }
 
@@ -282,6 +313,41 @@ export abstract class BaseToolAdapter implements ToolAdapter {
           );
           continue;
         }
+        const deploymentType = operation.deploymentType ?? "generated_file";
+        if (deploymentType === "copy" || deploymentType === "symlink") {
+          const actualSnapshot = await context.read.snapshotFile(operation.targetPath);
+          if (actualSnapshot === undefined) {
+            diagnostics.push(
+              verificationDiagnostic(
+                "DEPLOYMENT_TARGET_MISSING",
+                `Deployment target is not a file: ${operation.targetPath}`,
+                operation.targetPath,
+              ),
+            );
+            continue;
+          }
+          const actualHash = actualSnapshot.contentHash;
+          verifiedHashes[operation.targetPath] = actualHash;
+          const expectedHash = context.deployment.resultingHashes[operation.targetPath];
+          if (expectedHash === undefined) {
+            diagnostics.push(
+              verificationDiagnostic(
+                "DEPLOYMENT_RESULT_HASH_MISSING",
+                `Deployment result hash is missing for ${operation.targetPath}`,
+                operation.targetPath,
+              ),
+            );
+          } else if (actualHash !== expectedHash) {
+            diagnostics.push(
+              verificationDiagnostic(
+                "DEPLOYMENT_TARGET_HASH_MISMATCH",
+                `Deployment target hash does not match the recorded write: ${operation.targetPath}`,
+                operation.targetPath,
+              ),
+            );
+          }
+          continue;
+        }
         const actualText = await context.read.readText(operation.targetPath);
         const actualHash = hash(actualText);
         verifiedHashes[operation.targetPath] = actualHash;
@@ -306,11 +372,7 @@ export abstract class BaseToolAdapter implements ToolAdapter {
         } else {
           hashMatches = true;
         }
-        if (
-          hashMatches &&
-          (operation.deploymentType ?? "generated_file") === "generated_file" &&
-          operation.targetResourceKind !== undefined
-        ) {
+        if (hashMatches && operation.targetResourceKind !== undefined) {
           const parseResult = await this.parse({
             tool: context.target.tool,
             candidate: parseCandidate({
@@ -326,6 +388,7 @@ export abstract class BaseToolAdapter implements ToolAdapter {
               modifiedAt: stat.modifiedAt,
               size: stat.size,
             },
+            read: context.read,
             signal: context.signal,
           });
           if (parseResult.status === "rejected") {
@@ -412,6 +475,13 @@ function renderDiff(
   const body = [...groups.map(({ text }) => text)].join("\n");
   const header = diffHeader(path, previousExists, oldCount, newCount);
   return `${truncated ? `${DIFF_TRUNCATION_MARKER}\n` : ""}${header}${body === "" ? "" : `\n${body}`}`;
+}
+
+function resolveTargetPath(root: AbsolutePath, relativePath: string): AbsolutePath {
+  if (/^[A-Za-z]:[\\/]/.test(root)) {
+    return AbsolutePathSchema.parse(resolve(root, relativePath));
+  }
+  return AbsolutePathSchema.parse(posix.resolve(root.replace(/\\/g, "/"), relativePath));
 }
 
 function unifiedDiff(path: AbsolutePath, previous: string | undefined, next: string): string {

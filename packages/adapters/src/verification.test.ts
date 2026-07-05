@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { AssetSchema, DeploymentRecordSchema } from "@ai-config-hub/core";
 import type {
   Asset,
+  DeployableConversionResult,
   DeploymentRecord,
   DeploymentTarget,
   FileSnapshot,
   ParsedAsset,
+  ResolvedConvertedOutput,
+  ConvertedOutput,
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
@@ -19,15 +23,23 @@ import {
   type AbsolutePath,
   type ContentHash,
 } from "@ai-config-hub/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { claudeCodeRegistration } from "./claude-code.js";
 import { codexRegistration } from "./codex.js";
 import { cursorRegistration } from "./cursor.js";
 import { opencodeRegistration } from "./opencode.js";
+import { packageContentHash, safeRelativePath, sourceFile } from "./source-files.js";
 import { memoryReadApi, neverCancelled } from "./test-support.js";
 
 const target = AbsolutePathSchema.parse("/project/AGENTS.md");
+
+function generatedOutput(
+  output: ConvertedOutput | undefined,
+): Extract<ConvertedOutput, { readonly deploymentType: "generated_file" }> {
+  if (output?.deploymentType !== "generated_file") throw new Error("expected generated output");
+  return output;
+}
 
 describe("adapter deployment verification", () => {
   it("passes when written targets match deployment result hashes", async () => {
@@ -180,6 +192,43 @@ describe("adapter deployment verification", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("verifies copy targets with snapshotFile byte hashes and does not semantic-parse them", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 3, 4]);
+    const binaryTarget = AbsolutePathSchema.parse(
+      "/project/.agents/skills/release/assets/logo.png",
+    );
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const parse = vi.fn(() => {
+      throw new Error("copy verification must not parse copied targets");
+    });
+    Object.defineProperty(adapter, "parse", { value: parse });
+
+    const result = await adapter.verify({
+      deployment: record({
+        operations: [
+          {
+            kind: "create",
+            targetPath: binaryTarget,
+            expectedTargetHash: "absent",
+            deploymentType: "copy",
+            sourcePath: AbsolutePathSchema.parse("/project/source-logo.png"),
+            sourceHash: hashBytes(bytes),
+            targetResourceKind: "skill",
+          },
+        ],
+        resultingHashes: { [binaryTarget]: hashBytes(bytes) },
+      }),
+      target: deploymentTarget(),
+      read: memoryReadApi({ [binaryTarget]: bytes }),
+      signal: neverCancelled,
+    });
+
+    expect(result.status).toBe("passed");
+    expect(result.verifiedHashes[binaryTarget]).toBe(hashBytes(bytes));
+    expect(result.diagnostics).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+  });
+
   it("fails generated-file verification when the target reparses as a different resource kind", async () => {
     const text = "Use local TypeScript conventions.\n";
     const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
@@ -259,6 +308,7 @@ describe("adapter generated-file deployment planning", () => {
           conversion,
           target: deploymentTargetFor(registration.toolId),
           currentTargetSnapshots: new Map(),
+          resolvedOutputs: resolvedOutputsFor(conversion),
           signal: neverCancelled,
         });
 
@@ -294,14 +344,14 @@ describe("adapter generated-file deployment planning", () => {
       signal: neverCancelled,
     });
     if (conversion.level === "unsupported") throw new Error("unexpected unsupported conversion");
-    const output = conversion.outputs[0];
-    if (output === undefined) throw new Error("missing output");
-    const targetPath = AbsolutePathSchema.parse(`/project/${output.relativePath}`);
+    const output = generatedOutput(conversion.outputs[0]);
+    const targetPath = AbsolutePathSchema.parse(posix.resolve("/project", output.relativePath));
 
     const result = await adapter.planDeployment({
       conversion,
       target: deploymentTarget(),
       currentTargetSnapshots: new Map([[targetPath, snapshot(targetPath, output.text)]]),
+      resolvedOutputs: resolvedOutputsFor(conversion),
       signal: neverCancelled,
     });
 
@@ -448,6 +498,55 @@ describe("adapter baseline diagnostics", () => {
   });
 });
 
+describe("source file helpers", () => {
+  it("provides binary-aware memory snapshots", async () => {
+    const read = memoryReadApi({ "/project/skills/release/SKILL.md": "Ship safely.\n" });
+
+    await expect(
+      read.snapshotFile(AbsolutePathSchema.parse("/project/skills/release/SKILL.md")),
+    ).resolves.toMatchObject({
+      canonicalPath: "/project/skills/release/SKILL.md",
+      isText: true,
+      text: "Ship safely.\n",
+      size: "Ship safely.\n".length,
+      contentHash: hash("Ship safely.\n"),
+    });
+    await expect(
+      read.snapshotFile(AbsolutePathSchema.parse("/project/skills/missing/SKILL.md")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("hashes package source files by path, role, media type, text state, and content hash", () => {
+    const base = packageMember();
+    const baseline = packageContentHash([base]);
+
+    for (const changed of [
+      { ...base, relativePath: "references/checklist.md" },
+      { ...base, role: "metadata" as const },
+      { ...base, mediaType: "application/json" },
+      { ...base, isText: false },
+      { ...base, contentHash: hash("changed") },
+    ]) {
+      expect(packageContentHash([changed])).not.toBe(baseline);
+    }
+  });
+
+  it("returns slash-normalized package-relative paths and rejects escapes", () => {
+    expect(
+      safeRelativePath(
+        AbsolutePathSchema.parse("/project/.agents/skills/release"),
+        AbsolutePathSchema.parse("/project/.agents/skills/release/references/checklist.md"),
+      ),
+    ).toBe("references/checklist.md");
+    expect(
+      safeRelativePath(
+        AbsolutePathSchema.parse("/project/.agents/skills/release"),
+        AbsolutePathSchema.parse("/project/.agents/other.md"),
+      ),
+    ).toBeUndefined();
+  });
+});
+
 function record(input: {
   readonly operations: DeploymentRecord["operations"];
   readonly resultingHashes: DeploymentRecord["resultingHashes"];
@@ -518,6 +617,21 @@ function parsedAgentAsset(path: AbsolutePath, contentHash: ContentHash): ParsedA
     },
     sourceFormat: "toml",
     sourceContentHash: contentHash,
+    contentHash,
+    sourceFiles: [
+      sourceFile({
+        path,
+        relativePath: "agent.toml",
+        role: "primary",
+        mediaType: "application/toml",
+        isText: true,
+        contentHash,
+      }),
+    ],
+    nativeIdentity: {
+      nativeId: "agent:wrong-kind",
+      displayName: "wrong-kind",
+    },
     resource: {
       kind: "agent",
       data: {
@@ -549,14 +663,30 @@ function baseAsset(
   resource: Asset["resource"],
   references: readonly string[] = [],
 ): Asset {
+  const absolutePath = AbsolutePathSchema.parse(path);
+  const sourceHash = hash(`source:${id}:primary`);
   return AssetSchema.parse({
     assetId: id,
     toolId: "codex",
-    canonicalSourcePath: path,
+    canonicalSourcePath: absolutePath,
     locator,
     scopeId: "scope-project",
     sourceFormat: "markdown",
     contentHash: hash(`source:${id}`),
+    sourceFiles: [
+      sourceFile({
+        path: absolutePath,
+        relativePath: sourceRelativePath(path),
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash: sourceHash,
+      }),
+    ],
+    nativeIdentity: {
+      nativeId: locator,
+      displayName: id,
+    },
     normalizedSchemaVersion: "1.0.0",
     adapterId: "builtin-codex",
     adapterVersion: "0.1.0",
@@ -564,6 +694,21 @@ function baseAsset(
     resource,
     references,
     diagnosticSummary: { info: 0, warning: 0, error: 0 },
+  });
+}
+
+function sourceRelativePath(path: string): string {
+  return path.replace(/^\/+/, "").replace(/\\/g, "/");
+}
+
+function packageMember() {
+  return sourceFile({
+    path: AbsolutePathSchema.parse("/project/.agents/skills/release/SKILL.md"),
+    relativePath: "SKILL.md",
+    role: "primary",
+    mediaType: "text/markdown",
+    isText: true,
+    contentHash: hash("skill"),
   });
 }
 
@@ -627,8 +772,42 @@ function mcpAsset(
   });
 }
 
+function resolvedOutputsFor(
+  conversion: DeployableConversionResult,
+): ReadonlyMap<string, ResolvedConvertedOutput> {
+  const entries: Array<readonly [string, ResolvedConvertedOutput]> = conversion.outputs.map(
+    (output) => {
+      if (output.deploymentType === "generated_file") {
+        return [
+          output.relativePath,
+          {
+            deploymentType: "generated_file" as const,
+            contentHash: output.contentHash,
+            text: output.text,
+          },
+        ];
+      }
+      return [
+        output.relativePath,
+        {
+          deploymentType: output.deploymentType,
+          contentHash: output.contentHash,
+          sourcePath: output.sourcePath,
+          sourceHash: output.sourceHash,
+          previewText: "",
+        },
+      ];
+    },
+  );
+  return new Map(entries);
+}
+
 function hash(text: string): ContentHash {
   return ContentHashSchema.parse(
     `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`,
   );
+}
+
+function hashBytes(bytes: Uint8Array): ContentHash {
+  return ContentHashSchema.parse(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
 }

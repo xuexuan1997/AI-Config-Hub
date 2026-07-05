@@ -54,7 +54,7 @@ async function writeCodexUserConfigFixtures(home: string): Promise<void> {
   await writeFile(join(home, "AGENTS.md"), "# User Codex guidance\nUse tests.\n", "utf8");
   await writeFile(
     join(home, ".codex", "agents", "reviewer.toml"),
-    'name = "reviewer"\ndeveloper_instructions = "Review carefully."\n',
+    'name = "reviewer"\ndescription = "Reviews code"\ndeveloper_instructions = "Review carefully."\n',
     "utf8",
   );
   await writeFile(
@@ -135,6 +135,124 @@ describe("desktop command service composition", () => {
         opened: true,
       });
       expect(openedPaths).toEqual([await realpath(sourcePath)]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("returns sorted source files for multi-file skill assets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-source-files-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".agents", "skills", "release", "assets"), { recursive: true });
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(
+      join(project, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(project, ".agents", "skills", "release", "assets", "notes.md"),
+      "Release notes template\n",
+      "utf8",
+    );
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+
+      const detail = await runtime.services["assets.get"]({ assetId: source.id });
+
+      expect(detail.source.files.map((file) => [file.role, file.relativePath])).toEqual([
+        ["primary", "SKILL.md"],
+        ["support", "assets/notes.md"],
+      ]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("maps source copy operations in migration previews without reading generated text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-copy-preview-"));
+    temporaryDirectories.push(root);
+    const sourceProject = join(root, "source");
+    const targetProject = join(root, "target");
+    const userData = join(root, "user-data");
+    await mkdir(join(sourceProject, ".agents", "skills", "release", "assets"), {
+      recursive: true,
+    });
+    await mkdir(targetProject);
+    await writeFile(
+      join(sourceProject, "AGENTS.md"),
+      "Use local TypeScript conventions.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(sourceProject, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(sourceProject, ".agents", "skills", "release", "assets", "notes.md"),
+      "Release notes template\n",
+      "utf8",
+    );
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: sourceProject,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+      const detail = await runtime.services["assets.get"]({ assetId: source.id });
+      const supportFile = detail.source.files.find(
+        (file) => file.relativePath === "assets/notes.md",
+      );
+      if (supportFile === undefined) throw new Error("Expected scanned skill support file");
+
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: targetProject,
+        conflictPolicy: "replace",
+      });
+      const copyChange = preview.changes.find((change) => change.deploymentType === "copy");
+
+      expect(copyChange).toMatchObject({
+        operation: "create",
+        sourcePathDisplay: supportFile.pathDisplay,
+        afterHash: supportFile.contentHash,
+      });
+      const history = await runtime.services["history.list"]({ kinds: ["deployment"], limit: 10 });
+      const planned = history.items.find((entry) => entry.status === "planned");
+      if (planned === undefined) throw new Error("Expected planned deployment history entry");
+      const historyDetail = await runtime.services["history.get"]({ id: planned.id });
+      expect(
+        historyDetail.changes.find((change) => change.deploymentType === "copy"),
+      ).toMatchObject({
+        sourcePathDisplay: supportFile.pathDisplay,
+        afterHash: supportFile.contentHash,
+      });
     } finally {
       runtime.close();
     }
@@ -429,7 +547,10 @@ describe("desktop command service composition", () => {
       expect((await runtime.services["assets.get"]({ assetId: source.id })).asset.status).toBe(
         "enabled",
       );
-      expect(JSON.parse(await readFile(configPath, "utf8")).mcp.docs.enabled).toBe(true);
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        readonly mcp: { readonly docs: { readonly enabled: boolean } };
+      };
+      expect(config.mcp.docs.enabled).toBe(true);
 
       await runtime.services["scan.start"]({
         mode: "full",

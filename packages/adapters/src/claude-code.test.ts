@@ -15,7 +15,11 @@ const files = {
   "/project/.claude/agents/reviewer.md":
     "---\nname: reviewer\ndescription: Reviews code\ntools: [Read, Grep]\nunknownFlag: kept\n---\nReview carefully.\n",
   "/project/.claude/skills/release/SKILL.md":
-    "---\nname: release\ndescription: Ship releases\nreferences: [checklist.md]\n---\nFollow the checklist.\n",
+    "---\nname: release\ndescription: Ship releases\nreferences: [references/checklist.md]\nwhen_to_use: Before publishing\n---\nFollow the [checklist](references/checklist.md).\n",
+  "/project/.claude/skills/release/references/checklist.md": "Check version.\n",
+  "/project/.claude/skills/release/scripts/ship.sh": "pnpm test\n",
+  "/project/.claude/skills/release/assets/logo.bin": new Uint8Array([0xff, 0xfe, 0xfd]),
+  "/project/.claude/skills/release/agents/openai.yaml": "models: []\n",
   "/project/.mcp.json": `{
     "mcpServers": {
       "empty": {},
@@ -79,6 +83,7 @@ describe("Claude Code adapter read path", () => {
           tool: tool(),
           candidate,
           snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+          read,
           signal: neverCancelled,
         }),
       ),
@@ -97,6 +102,33 @@ describe("Claude Code adapter read path", () => {
       kind: "agent",
       data: { allowedTools: ["Read", "Grep"] },
     });
+    const skill = assets.find(({ resource }) => resource.kind === "skill");
+    expect(skill).toMatchObject({
+      locator: "skill:.claude/skills/release",
+      nativeIdentity: {
+        nativeId: "skill:.claude/skills/release",
+        displayName: "release",
+        directoryName: "release",
+        invocationName: "release",
+      },
+      references: [],
+      resource: {
+        kind: "skill",
+        data: {
+          extensions: { when_to_use: "Before publishing" },
+        },
+      },
+    });
+    expect(
+      skill?.sourceFiles.map(({ relativePath, role, isText }) => [relativePath, role, isText]),
+    ).toEqual([
+      ["SKILL.md", "primary", true],
+      ["agents/openai.yaml", "metadata", true],
+      ["assets/logo.bin", "support", false],
+      ["references/checklist.md", "support", true],
+      ["scripts/ship.sh", "support", true],
+    ]);
+    expect(skill?.contentHash).not.toBe(skill?.sourceContentHash);
   });
 
   it("rejects malformed frontmatter with a located diagnostic", async () => {
@@ -119,6 +151,7 @@ describe("Claude Code adapter read path", () => {
       tool: tool(),
       candidate,
       snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      read,
       signal: neverCancelled,
     });
     expect(result.status).toBe("rejected");

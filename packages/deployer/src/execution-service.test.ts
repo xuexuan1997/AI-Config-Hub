@@ -141,6 +141,7 @@ class MemoryFiles implements FileSnapshotPort, DeploymentFilePort {
   failBackupFor?: AbsolutePath;
   failReplaceFor?: AbsolutePath;
   failReplaceAfterCommitFor?: AbsolutePath;
+  failCopyAfterCommitFor?: AbsolutePath;
   mutateBeforeFailReplaceTo?: string;
   failRemoveFor?: AbsolutePath;
 
@@ -213,6 +214,12 @@ class MemoryFiles implements FileSnapshotPort, DeploymentFilePort {
     const currentHash = current === undefined ? "absent" : hash(current);
     if (currentHash !== input.expectedHash) throw new Error("copy target drift");
     this.files.set(input.target, source);
+    if (input.target === this.failCopyAfterCommitFor) {
+      throw Object.assign(new Error("copy committed but uncertain"), {
+        committed: true,
+        durabilityUncertain: true,
+      });
+    }
     return Promise.resolve({ resultingHash: hash(source) });
   }
 
@@ -300,6 +307,11 @@ function readApi(files: MemoryFiles): AdapterReadApi {
       const snapshot = await files.snapshot({ path, allowedRoots: [ROOT] });
       if (snapshot === undefined) throw new Error("missing");
       return snapshot.text;
+    },
+    snapshotFile: async (path) => {
+      const snapshot = await files.snapshot({ path, allowedRoots: [ROOT] });
+      if (snapshot === undefined) return undefined;
+      return { ...snapshot, isText: true, text: snapshot.text };
     },
   };
 }
@@ -671,7 +683,6 @@ describe("DeploymentExecutionService", () => {
         {
           kind: "create",
           targetPath: target,
-          nextText: "copied contents",
           expectedTargetHash: "absent",
           deploymentType: "copy",
           sourcePath: source,
@@ -699,7 +710,6 @@ describe("DeploymentExecutionService", () => {
         {
           kind: "create",
           targetPath: target,
-          nextText: "linked contents",
           expectedTargetHash: "absent",
           deploymentType: "symlink",
           sourcePath: source,
@@ -717,6 +727,34 @@ describe("DeploymentExecutionService", () => {
     expect(result.status).toBe("succeeded");
     expect(files.writes).toEqual([`symlink:${source}->${target}`]);
     expect(files.files.get(target)).toBe("linked contents");
+  });
+
+  it("resnapshots uncertain committed copy operations using source hashes", async () => {
+    const source = AbsolutePathSchema.parse("/target/source.md");
+    const target = AbsolutePathSchema.parse("/target/copied.md");
+    const plan = basePlan({
+      operations: [
+        {
+          kind: "create",
+          targetPath: target,
+          expectedTargetHash: "absent",
+          deploymentType: "copy",
+          sourcePath: source,
+          sourceHash: hash("copied contents"),
+        },
+      ],
+      expectedTargetHashes: { [target]: "absent" },
+      requiredConfirmations: [],
+    });
+    const files = new MemoryFiles(new Map([[source, "copied contents"]]));
+    files.failCopyAfterCommitFor = target;
+    const { service } = serviceFixture(plan, files);
+
+    const result = await execute(service, []);
+
+    expect(result.status).toBe("rolled_back");
+    expect(files.writes).toEqual([`copy:${source}->${target}`, `remove:${target}`]);
+    expect(files.files.has(target)).toBe(false);
   });
 
   it("fails rollback instead of overwriting external drift after a write", async () => {

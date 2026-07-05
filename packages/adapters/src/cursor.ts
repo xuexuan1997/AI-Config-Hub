@@ -1,4 +1,4 @@
-import { basename, dirname, sep } from "node:path";
+import { basename, dirname } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -21,12 +21,13 @@ import { adapterDiagnostic, BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
 import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
+import { parseSkillPackage } from "./skill-packages.js";
 
 const capabilities: AdapterCapabilities = {
   supportedToolVersions: SemVerRangeSchema.parse(">=1.0.0"),
   testedToolVersions: [SemVerSchema.parse("2.4.0")],
-  readableSchemaVersions: [SemVerRangeSchema.parse("^1.0.0")],
-  writtenSchemaVersion: SemVerSchema.parse("1.0.0"),
+  readableSchemaVersions: [SemVerRangeSchema.parse("^1.1.0")],
+  writtenSchemaVersion: SemVerSchema.parse("1.1.0"),
   resourceKinds: ["rule", "agent", "skill", "mcp"],
   scopeKinds: ["user", "project", "directory"],
   supportsNestedScopes: true,
@@ -35,7 +36,7 @@ const capabilities: AdapterCapabilities = {
 
 class CursorAdapter extends BaseToolAdapter {
   readonly adapterId = AdapterIdSchema.parse("builtin-cursor");
-  readonly adapterVersion = SemVerSchema.parse("0.1.0");
+  readonly adapterVersion = SemVerSchema.parse("0.2.0");
   readonly toolId = "cursor" as const;
   readonly capabilities = capabilities;
 
@@ -101,8 +102,9 @@ class CursorAdapter extends BaseToolAdapter {
       });
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);
-        if (sourcePath.includes(`${sep}.cursor${sep}rules${sep}`) && leaf.endsWith(".mdc")) {
-          const cursorDirectory = sourcePath.slice(0, sourcePath.indexOf(`${sep}.cursor${sep}`));
+        const normalizedSourcePath = normalizePathSeparators(sourcePath);
+        if (normalizedSourcePath.includes("/.cursor/rules/") && leaf.endsWith(".mdc")) {
+          const cursorDirectory = sourcePath.slice(0, normalizedSourcePath.indexOf("/.cursor/"));
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -147,7 +149,7 @@ class CursorAdapter extends BaseToolAdapter {
               { path: sourcePath },
             ),
           );
-        } else if (sourcePath.includes(`${sep}.cursor${sep}agents${sep}`) && leaf.endsWith(".md")) {
+        } else if (normalizedSourcePath.includes("/.cursor/agents/") && leaf.endsWith(".md")) {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -159,8 +161,8 @@ class CursorAdapter extends BaseToolAdapter {
             }),
           );
         } else if (
-          (sourcePath.includes(`${sep}.cursor${sep}skills${sep}`) ||
-            sourcePath.includes(`${sep}.agents${sep}skills${sep}`)) &&
+          (normalizedSourcePath.includes("/.cursor/skills/") ||
+            normalizedSourcePath.includes("/.agents/skills/")) &&
           leaf === "SKILL.md"
         ) {
           candidates.push(
@@ -173,7 +175,7 @@ class CursorAdapter extends BaseToolAdapter {
               scopeKind,
             }),
           );
-        } else if (sourcePath.endsWith(`${sep}.cursor${sep}mcp.json`)) {
+        } else if (normalizedSourcePath.endsWith("/.cursor/mcp.json")) {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -195,6 +197,7 @@ class CursorAdapter extends BaseToolAdapter {
 
   parse(context: ParseContext): Promise<ParseResult> {
     context.signal.throwIfAborted();
+    if (context.candidate.resourceKindHint === "skill") return parseSkillPackage(context);
     return Promise.resolve(
       context.candidate.resourceKindHint === "mcp"
         ? parseMcpJson(context.candidate, context.snapshot.text, context.snapshot.contentHash)
@@ -220,10 +223,14 @@ async function existingUserRoots(
   return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
+function normalizePathSeparators(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 export const cursorRegistration: AdapterRegistration = {
   contractVersion: 1,
   adapterId: AdapterIdSchema.parse("builtin-cursor"),
-  adapterVersion: SemVerSchema.parse("0.1.0"),
+  adapterVersion: SemVerSchema.parse("0.2.0"),
   toolId: "cursor",
   capabilities,
   create: ({ logger }) => new CursorAdapter(logger),

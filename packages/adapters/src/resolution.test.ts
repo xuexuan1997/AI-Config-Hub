@@ -42,15 +42,31 @@ function asset(input: {
   resource: unknown;
   hash: string;
 }) {
+  const sourcePath = AbsolutePathSchema.parse(input.path);
+  const contentHash = ContentHashSchema.parse(`sha256:${input.hash.repeat(64)}`);
   return AssetSchema.parse({
     assetId: input.id,
     toolId: input.toolId ?? "codex",
     resource: input.resource,
     scopeId: input.scopeId,
-    canonicalSourcePath: input.path,
+    canonicalSourcePath: sourcePath,
     locator: input.id,
     sourceFormat: "markdown",
-    contentHash: ContentHashSchema.parse(`sha256:${input.hash.repeat(64)}`),
+    contentHash,
+    sourceFiles: [
+      {
+        path: sourcePath,
+        relativePath: input.path.split("/").at(-1) ?? "source.md",
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash,
+      },
+    ],
+    nativeIdentity: {
+      nativeId: input.id,
+      displayName: input.id,
+    },
     normalizedSchemaVersion: "1.0.0",
     adapterId: "builtin-codex",
     adapterVersion: "0.1.0",

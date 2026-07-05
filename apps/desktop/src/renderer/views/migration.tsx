@@ -352,6 +352,14 @@ export function MigrationView(props: {
                     {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
                   </h2>
                   <dl>
+                    <dt>{t(locale, "Deployment")}</dt>
+                    <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
+                    {change.sourcePathDisplay === undefined ? null : (
+                      <>
+                        <dt>{t(locale, "Source file")}</dt>
+                        <dd>{change.sourcePathDisplay}</dd>
+                      </>
+                    )}
                     <dt>{t(locale, "Before")}</dt>
                     <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
                     <dt>{t(locale, "After")}</dt>
@@ -423,6 +431,14 @@ function TargetAssetRow(props: {
             <dd>{props.sourceAssetSummary}</dd>
             <dt>{t(props.locale, "Preview target file")}</dt>
             <dd>{props.change.pathDisplay}</dd>
+            <dt>{t(props.locale, "Deployment")}</dt>
+            <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
+            {props.change.sourcePathDisplay === undefined ? null : (
+              <>
+                <dt>{t(props.locale, "Source file")}</dt>
+                <dd>{props.change.sourcePathDisplay}</dd>
+              </>
+            )}
             <dt>{t(props.locale, "Hash change")}</dt>
             <dd>{hashChangeLabel(props.locale, props.change)}</dd>
           </>
@@ -461,6 +477,14 @@ function PreviewTargetRow(props: {
         <dd>{props.sourceAssetSummary}</dd>
         <dt>{t(props.locale, "Preview target file")}</dt>
         <dd>{props.change.pathDisplay}</dd>
+        <dt>{t(props.locale, "Deployment")}</dt>
+        <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
+        {props.change.sourcePathDisplay === undefined ? null : (
+          <>
+            <dt>{t(props.locale, "Source file")}</dt>
+            <dd>{props.change.sourcePathDisplay}</dd>
+          </>
+        )}
         <dt>{t(props.locale, "Hash change")}</dt>
         <dd>{hashChangeLabel(props.locale, props.change)}</dd>
       </dl>
@@ -1091,6 +1115,20 @@ function changeOperationLabel(
       return t(locale, "Replace file");
     case "delete":
       return t(locale, "Delete file");
+  }
+}
+
+function deploymentTypeLabel(
+  locale: DesktopLocale,
+  deploymentType: NonNullable<AppState["preview"]>["changes"][number]["deploymentType"],
+): string {
+  switch (deploymentType) {
+    case "generated_file":
+      return t(locale, "Generated file");
+    case "copy":
+      return t(locale, "Copy source file");
+    case "symlink":
+      return t(locale, "Symlink source file");
   }
 }
 

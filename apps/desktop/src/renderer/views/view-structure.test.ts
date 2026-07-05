@@ -856,6 +856,16 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       pathDisplay: "/workspace/AGENTS.md",
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
       observedAt: "2026-06-28T08:00:00.000Z",
+      files: [
+        {
+          pathDisplay: "/workspace/AGENTS.md",
+          relativePath: "AGENTS.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        },
+      ],
     },
     redactions: [],
   };
@@ -874,6 +884,7 @@ function previewFixture(
     changes: [
       {
         operation: "replace",
+        deploymentType: "generated_file",
         pathDisplay: ".cursor/rules/agents.mdc",
         beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
         afterHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),

@@ -16,6 +16,7 @@ description = "Reviews code"
 developer_instructions = "Review carefully."
 model = "gpt-5.1-codex"
 sandbox_mode = "read-only"
+model_reasoning_effort = "high"
 `,
   "/project/.agents/skills/release/SKILL.md":
     "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
@@ -64,6 +65,7 @@ describe("Codex adapter read path", () => {
           tool,
           candidate,
           snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+          read,
           signal: neverCancelled,
         }),
       ),
@@ -76,14 +78,71 @@ describe("Codex adapter read path", () => {
       kind: "agent",
       data: {
         name: "reviewer",
+        description: "Reviews code",
         instructions: "Review carefully.",
         model: "gpt-5.1-codex",
-        extensions: { description: "Reviews code", sandbox_mode: "read-only" },
+        extensions: { sandbox_mode: "read-only", model_reasoning_effort: "high" },
       },
     });
+    expect(results.flatMap(({ diagnostics }) => diagnostics)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "AGENT_UNSUPPORTED_NATIVE_FIELD",
+          blocking: false,
+          evidence: expect.objectContaining({ field: "sandbox_mode" }) as unknown,
+        }),
+      ]),
+    );
     expect(JSON.stringify(results)).not.toContain("top-secret-canary");
     expect(JSON.stringify(results)).toContain("$DOCS_TOKEN");
     expect(JSON.stringify(results)).toContain("$REMOTE_TOKEN");
+  });
+
+  it("diagnoses Codex agents that omit required descriptions", async () => {
+    const read = memoryReadApi({
+      "/project/.codex/agents/reviewer.toml": `
+name = "reviewer"
+developer_instructions = "Review carefully."
+`,
+    });
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const discovery = await adapter.discover({
+      tool,
+      allowedRoots: tool.configRoots,
+      read,
+      signal: neverCancelled,
+    });
+    const candidate = discovery.candidates.find(
+      ({ sourcePath }) => sourcePath === "/project/.codex/agents/reviewer.toml",
+    );
+    if (candidate === undefined) throw new Error("Expected Codex agent candidate");
+
+    const result = await adapter.parse({
+      tool,
+      candidate,
+      snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      read,
+      signal: neverCancelled,
+    });
+
+    expect(result.status).toBe("parsed");
+    expect(result.assets[0]?.resource).toMatchObject({
+      kind: "agent",
+      data: { name: "reviewer" },
+    });
+    expect(
+      "description" in
+        (result.assets[0]?.resource.kind === "agent" ? result.assets[0].resource.data : {}),
+    ).toBe(false);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "AGENT_DESCRIPTION_REQUIRED",
+          blocking: true,
+          evidence: expect.objectContaining({ field: "description" }) as unknown,
+        }),
+      ]),
+    );
   });
 
   it("skips empty MCP server dictionaries instead of rejecting the config", async () => {
@@ -112,11 +171,48 @@ args = ["docs"]
       tool,
       candidate,
       snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      read,
       signal: neverCancelled,
     });
 
     expect(result.status).toBe("parsed");
     expect(result.assets.map(({ locator }) => locator)).toEqual(["mcp:docs"]);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  it("diagnoses Codex skills that omit required package metadata", async () => {
+    const read = memoryReadApi({
+      "/project/.agents/skills/release/SKILL.md": "---\nname: release\n---\nRun checks.\n",
+    });
+    const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
+    const discovery = await adapter.discover({
+      tool,
+      allowedRoots: tool.configRoots,
+      read,
+      signal: neverCancelled,
+    });
+    const candidate = discovery.candidates.find(
+      ({ sourcePath }) => sourcePath === "/project/.agents/skills/release/SKILL.md",
+    );
+    if (candidate === undefined) throw new Error("Expected Codex skill candidate");
+
+    const result = await adapter.parse({
+      tool,
+      candidate,
+      snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+      read,
+      signal: neverCancelled,
+    });
+
+    expect(result.status).toBe("parsed");
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "SKILL_DESCRIPTION_REQUIRED",
+          blocking: true,
+          evidence: expect.objectContaining({ field: "description" }) as unknown,
+        }),
+      ]),
+    );
   });
 });

@@ -1,4 +1,5 @@
 import {
+  AbsolutePathSchema,
   AdapterIdSchema,
   AssetIdSchema,
   ContentHashSchema,
@@ -22,8 +23,9 @@ const RelativeOutputPathSchema = z
       .some((segment) => segment === "" || segment === "." || segment === "..");
   }, "Expected a traversal-safe relative path");
 
-export const ConvertedOutputSchema = z
+const GeneratedConvertedOutputSchema = z
   .object({
+    deploymentType: z.literal("generated_file"),
     relativePath: RelativeOutputPathSchema,
     mediaType: z.string().trim().min(1),
     text: z.string(),
@@ -31,6 +33,54 @@ export const ConvertedOutputSchema = z
   })
   .strict()
   .readonly();
+
+const sourceOutputShape = {
+  relativePath: RelativeOutputPathSchema,
+  mediaType: z.string().trim().min(1),
+  sourcePath: AbsolutePathSchema,
+  sourceHash: ContentHashSchema,
+  contentHash: ContentHashSchema,
+} as const;
+
+const CopyConvertedOutputSchema = z
+  .object({
+    deploymentType: z.literal("copy"),
+    ...sourceOutputShape,
+  })
+  .strict()
+  .superRefine((output, context) => {
+    if (output.contentHash !== output.sourceHash) {
+      context.addIssue({
+        code: "custom",
+        message: "Source output contentHash must match sourceHash",
+        path: ["contentHash"],
+      });
+    }
+  })
+  .readonly();
+
+const SymlinkConvertedOutputSchema = z
+  .object({
+    deploymentType: z.literal("symlink"),
+    ...sourceOutputShape,
+  })
+  .strict()
+  .superRefine((output, context) => {
+    if (output.contentHash !== output.sourceHash) {
+      context.addIssue({
+        code: "custom",
+        message: "Source output contentHash must match sourceHash",
+        path: ["contentHash"],
+      });
+    }
+  })
+  .readonly();
+
+export const ConvertedOutputSchema = z.discriminatedUnion("deploymentType", [
+  GeneratedConvertedOutputSchema,
+  CopyConvertedOutputSchema,
+  SymlinkConvertedOutputSchema,
+]);
 export type ConvertedOutput = z.infer<typeof ConvertedOutputSchema>;
 
 export const FieldTransformationSchema = z
@@ -41,6 +91,7 @@ export const FieldTransformationSchema = z
   })
   .strict()
   .readonly();
+export type FieldTransformation = z.infer<typeof FieldTransformationSchema>;
 
 const conversionBaseShape = {
   conversionResultId: ConversionResultIdSchema,

@@ -91,6 +91,9 @@ function adapter(): AdapterRegistration {
                   scope: candidate.scope,
                   sourceFormat: candidate.sourceFormat,
                   sourceContentHash: snapshot.contentHash,
+                  contentHash: snapshot.contentHash,
+                  sourceFiles: [primarySourceFile(candidate.sourcePath, snapshot.contentHash)],
+                  nativeIdentity: { nativeId: "rule:good", displayName: "good" },
                   resource: {
                     kind: "rule" as const,
                     data: { name: "good", instructions: "Use tests.", globs: [], extensions: {} },
@@ -151,6 +154,9 @@ function adapterWithNativeDisabledAsset(): AdapterRegistration {
                 scope: candidate.scope,
                 sourceFormat: candidate.sourceFormat,
                 sourceContentHash: snapshot.contentHash,
+                contentHash: snapshot.contentHash,
+                sourceFiles: [primarySourceFile(candidate.sourcePath, snapshot.contentHash)],
+                nativeIdentity: { nativeId: "rule:enabled", displayName: "enabled" },
                 resource: {
                   kind: "rule" as const,
                   data: {
@@ -170,6 +176,9 @@ function adapterWithNativeDisabledAsset(): AdapterRegistration {
                 scope: candidate.scope,
                 sourceFormat: candidate.sourceFormat,
                 sourceContentHash: snapshot.contentHash,
+                contentHash: snapshot.contentHash,
+                sourceFiles: [primarySourceFile(candidate.sourcePath, snapshot.contentHash)],
+                nativeIdentity: { nativeId: "rule:disabled", displayName: "disabled" },
                 resource: {
                   kind: "rule" as const,
                   data: {
@@ -218,6 +227,17 @@ const cachedAsset = AssetSchema.parse({
   locator: "rule:cached",
   sourceFormat: "markdown",
   contentHash: `sha256:${"d".repeat(64)}`,
+  sourceFiles: [
+    {
+      path: "/project/cached.md",
+      relativePath: "cached.md",
+      role: "primary",
+      mediaType: "text/markdown",
+      isText: true,
+      contentHash: `sha256:${"d".repeat(64)}`,
+    },
+  ],
+  nativeIdentity: { nativeId: "rule:cached", displayName: "cached" },
   normalizedSchemaVersion: "1.0.0",
   adapterId: "fake-codex",
   adapterVersion: "0.1.0",
@@ -286,7 +306,19 @@ const read = {
     }),
   list: () => Promise.resolve([]),
   readText: () => Promise.resolve(""),
+  snapshotFile: () => Promise.resolve(undefined),
 };
+
+function primarySourceFile(path: string, contentHash: ReturnType<typeof ContentHashSchema.parse>) {
+  return {
+    path,
+    relativePath: path.replace(/^\/project\//, ""),
+    role: "primary" as const,
+    mediaType: "text/markdown",
+    isText: true,
+    contentHash,
+  };
+}
 
 describe("ScanService", () => {
   it("preserves adapter-reported disabled status and excludes disabled assets from effective config", async () => {

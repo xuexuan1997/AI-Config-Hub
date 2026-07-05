@@ -221,3 +221,15 @@ Windows 的大小写不敏感比较与驱动器规范化不能改变原始展示
 ### adapter 版本
 
 每个规范化结果、生效配置、转换结果、部署计划和部署记录都保存 `adapterId` 与 `adapterVersion`。适配器使用 SemVer；改变解析、优先级、转换或验证语义至少提升相应版本，并更新夹具黄金结果。历史记录展示时使用当时版本解释，重新扫描可用新版本产生新的派生结果，但不得改写既有部署审计事实。
+
+## Source Graph Update
+
+Every persisted `Asset` now carries first-class source graph fields:
+
+- `sourceFiles`: the complete set of files that define the asset. Exactly one entry has `role: "primary"` and matches `canonicalSourcePath`; package support and metadata files use `role: "support"` or `role: "metadata"` with stable package-relative paths, media types, text/binary flags, and per-file content hashes.
+- `nativeIdentity`: the tool-native identity tuple for the asset, including the native id, display name, optional directory name, and optional invocation name.
+- `contentHash`: the full asset hash. For single-file assets it is the primary file hash; for package assets it is a hash over the package source graph, so a support or metadata file change invalidates the owning asset.
+
+`ConvertedOutput` is schema-aware. `generated_file` outputs carry generated text and are verified semantically after deployment. `copy` and `symlink` outputs carry `sourcePath` and `sourceHash`, never `nextText`; preview resolves the current source bytes before planning, execution compares target bytes with `sourceHash`, and verification uses byte snapshots instead of reparsing copied targets.
+
+The scanner and storage layers use every `asset.sourceFiles[].path` for incremental invalidation, deletion matching, diagnostic ownership, and scoped changed-path commits. A changed Skill support file reparses the owning `SKILL.md` package asset instead of being treated as an unrelated resource.

@@ -216,9 +216,9 @@ export function createCliProgram(options: CliProgramOptions): Command {
         flags: { readonly method: string } & GlobalOptions,
         command: Command,
       ) => {
-      const outputFlags = withInheritedJson(flags, command);
-      const response = await callApi("assets.disable", { assetId, method: flags.method });
-      return finishResponse("assets.disable", "assets.disable", response, outputFlags);
+        const outputFlags = withInheritedJson(flags, command);
+        const response = await callApi("assets.disable", { assetId, method: flags.method });
+        return finishResponse("assets.disable", "assets.disable", response, outputFlags);
       },
     );
   assets

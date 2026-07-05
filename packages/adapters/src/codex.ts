@@ -1,4 +1,4 @@
-import { basename, dirname, sep } from "node:path";
+import { basename, dirname } from "node:path";
 
 import type {
   AdapterCapabilities,
@@ -28,16 +28,20 @@ import {
   rejectedParse,
   stringList,
   stringValue,
+  unsupportedNativeFieldDiagnostics,
   withoutKeys,
 } from "./markdown-assets.js";
+import { nativeDiagnostic } from "./native-diagnostics.js";
 import { redactStructuredValue, toSecretAwareString } from "./secrets.js";
 import { parseTomlObject, requireObject } from "./structured-config.js";
+import { nativeIdentity, singleSourceFile } from "./source-files.js";
+import { parseSkillPackage } from "./skill-packages.js";
 
 const capabilities: AdapterCapabilities = {
   supportedToolVersions: SemVerRangeSchema.parse(">=0.1.0"),
   testedToolVersions: [SemVerSchema.parse("0.101.0")],
-  readableSchemaVersions: [SemVerRangeSchema.parse("^1.0.0")],
-  writtenSchemaVersion: SemVerSchema.parse("1.0.0"),
+  readableSchemaVersions: [SemVerRangeSchema.parse("^1.1.0")],
+  writtenSchemaVersion: SemVerSchema.parse("1.1.0"),
   resourceKinds: ["rule", "agent", "skill", "mcp"],
   scopeKinds: ["user", "project", "directory"],
   supportsNestedScopes: true,
@@ -56,6 +60,19 @@ function baseAsset(
     scope: context.candidate.scope,
     sourceFormat: context.candidate.sourceFormat,
     sourceContentHash: context.snapshot.contentHash,
+    contentHash: context.snapshot.contentHash,
+    sourceFiles: [
+      singleSourceFile({
+        path: context.candidate.sourcePath,
+        relativePath: basename(context.candidate.sourcePath),
+        sourceFormat: context.candidate.sourceFormat,
+        contentHash: context.snapshot.contentHash,
+      }),
+    ],
+    nativeIdentity: nativeIdentity({
+      nativeId: locator,
+      displayName: locator.split(":").slice(1).join(":") || locator,
+    }),
     resource,
     references: [],
     extensions: {},
@@ -66,6 +83,7 @@ function parseAgent(context: ParseContext): ParseResult {
   try {
     const document = parseTomlObject(context.snapshot.text);
     const name = stringValue(document["name"]);
+    const description = stringValue(document["description"]);
     const instructions = stringValue(document["developer_instructions"]);
     if (name === undefined || instructions === undefined) {
       throw new TypeError("Codex agent requires name and developer_instructions");
@@ -74,20 +92,39 @@ function parseAgent(context: ParseContext): ParseResult {
       kind: "agent",
       data: {
         name,
+        ...(description === undefined ? {} : { description }),
         instructions,
         ...(stringValue(document["model"]) === undefined
           ? {}
           : { model: stringValue(document["model"]) }),
         allowedTools: [],
         extensions: redactStructuredValue(
-          withoutKeys(document, ["name", "developer_instructions", "model"]),
+          withoutKeys(document, ["name", "description", "developer_instructions", "model"]),
         ),
       },
     });
+    const diagnostics = [
+      ...(description === undefined
+        ? [
+            nativeDiagnostic({
+              code: "AGENT_DESCRIPTION_REQUIRED",
+              message: "Codex agent is missing required description metadata",
+              blocking: true,
+              location: { path: context.candidate.sourcePath },
+              evidence: { field: "description" },
+            }),
+          ]
+        : []),
+      ...unsupportedNativeFieldDiagnostics(
+        "agent",
+        context.candidate.sourcePath,
+        resource.data.extensions,
+      ),
+    ];
     return {
       status: "parsed",
       assets: [baseAsset(context, `agent:${name}`, resource)],
-      diagnostics: [],
+      diagnostics,
     };
   } catch (error) {
     return rejectedParse(context.candidate, error);
@@ -131,7 +168,19 @@ function parseMcp(context: ParseContext): ParseResult {
             : remoteMcp(name, config, url);
         return [baseAsset(context, `mcp:${name}`, resource)];
       });
-    return { status: "parsed", assets, diagnostics: [] };
+    return {
+      status: "parsed",
+      assets,
+      diagnostics: assets.flatMap((item) =>
+        item.resource.kind === "mcp"
+          ? unsupportedNativeFieldDiagnostics(
+              "mcp",
+              item.canonicalSourcePath,
+              item.resource.data.extensions,
+            )
+          : [],
+      ),
+    };
   } catch (error) {
     return rejectedParse(context.candidate, error);
   }
@@ -172,7 +221,7 @@ function remoteMcp(name: string, config: Record<string, unknown>, url: string | 
 
 class CodexAdapter extends BaseToolAdapter {
   readonly adapterId = AdapterIdSchema.parse("builtin-codex");
-  readonly adapterVersion = SemVerSchema.parse("0.1.0");
+  readonly adapterVersion = SemVerSchema.parse("0.2.0");
   readonly toolId = "codex" as const;
   readonly capabilities = capabilities;
 
@@ -241,6 +290,7 @@ class CodexAdapter extends BaseToolAdapter {
       );
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);
+        const normalizedSourcePath = normalizePathSeparators(sourcePath);
         if (
           leaf === "AGENTS.override.md" ||
           (leaf === "AGENTS.md" && !overrides.has(dirname(sourcePath)))
@@ -256,10 +306,7 @@ class CodexAdapter extends BaseToolAdapter {
               scopeKind,
             }),
           );
-        } else if (
-          sourcePath.includes(`${sep}.codex${sep}agents${sep}`) &&
-          leaf.endsWith(".toml")
-        ) {
+        } else if (normalizedSourcePath.includes("/.codex/agents/") && leaf.endsWith(".toml")) {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -270,7 +317,7 @@ class CodexAdapter extends BaseToolAdapter {
               scopeKind,
             }),
           );
-        } else if (sourcePath.includes(`${sep}.agents${sep}skills${sep}`) && leaf === "SKILL.md") {
+        } else if (normalizedSourcePath.includes("/.agents/skills/") && leaf === "SKILL.md") {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -281,7 +328,7 @@ class CodexAdapter extends BaseToolAdapter {
               scopeKind,
             }),
           );
-        } else if (sourcePath.endsWith(`${sep}.codex${sep}config.toml`)) {
+        } else if (normalizedSourcePath.endsWith("/.codex/config.toml")) {
           candidates.push(
             candidate({
               toolId: this.toolId,
@@ -303,6 +350,7 @@ class CodexAdapter extends BaseToolAdapter {
 
   parse(context: ParseContext): Promise<ParseResult> {
     context.signal.throwIfAborted();
+    if (context.candidate.resourceKindHint === "skill") return parseSkillPackage(context);
     const result =
       context.candidate.resourceKindHint === "agent"
         ? parseAgent(context)
@@ -330,10 +378,14 @@ async function existingUserRoots(
   return existing.filter(({ stat }) => stat.kind !== "missing").map(({ root }) => root);
 }
 
+function normalizePathSeparators(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 export const codexRegistration: AdapterRegistration = {
   contractVersion: 1,
   adapterId: AdapterIdSchema.parse("builtin-codex"),
-  adapterVersion: SemVerSchema.parse("0.1.0"),
+  adapterVersion: SemVerSchema.parse("0.2.0"),
   toolId: "codex",
   capabilities,
   create: ({ logger }) => new CodexAdapter(logger),

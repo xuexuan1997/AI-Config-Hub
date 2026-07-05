@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  formatLocalizedUiError,
-  localeForLanguageSetting,
-  localizeUiMessage,
-  t,
-} from "./i18n.js";
+import { formatLocalizedUiError, localeForLanguageSetting, localizeUiMessage, t } from "./i18n.js";
 
 describe("renderer i18n", () => {
   it("localizes generated task and action error messages in Simplified Chinese", () => {

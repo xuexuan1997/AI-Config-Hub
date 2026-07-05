@@ -65,6 +65,17 @@ function asset(id: string, instruction: string, extensions: Record<string, unkno
     locator: `rule:${id}`,
     sourceFormat: "markdown",
     contentHash: `sha256:${"a".repeat(64)}`,
+    sourceFiles: [
+      {
+        path: `/project/${id}.md`,
+        relativePath: `${id}.md`,
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash: `sha256:${"a".repeat(64)}`,
+      },
+    ],
+    nativeIdentity: { nativeId: `rule:${id}`, displayName: id },
     normalizedSchemaVersion: "1.0.0",
     adapterId: "builtin-codex",
     adapterVersion: "0.1.0",
@@ -255,6 +266,84 @@ describe("storage repositories", () => {
     });
 
     expect(page.items.map(({ diagnosticId }) => diagnosticId)).toEqual(["diagnostic-a"]);
+    opened.database.close();
+  });
+
+  it("matches incremental deletion and diagnostics through support source files", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const packageAsset = AssetSchema.parse({
+      ...asset("asset-a", "A"),
+      canonicalSourcePath: "/project/.agents/skills/release/SKILL.md",
+      locator: "skill:.agents/skills/release",
+      resource: {
+        kind: "skill",
+        data: {
+          name: "release",
+          description: "Release safely",
+          instructions: "Use the checklist.",
+          references: [],
+          extensions: {},
+        },
+      },
+      sourceFiles: [
+        {
+          path: "/project/.agents/skills/release/SKILL.md",
+          relativePath: "SKILL.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+        {
+          path: "/project/.agents/skills/release/references/checklist.md",
+          relativePath: "references/checklist.md",
+          role: "support",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"b".repeat(64)}`,
+        },
+      ],
+      nativeIdentity: {
+        nativeId: "skill:.agents/skills/release",
+        displayName: "release",
+        directoryName: "release",
+        invocationName: "release",
+      },
+    });
+    await repositories.index.replaceDerivedIndex(
+      replacement(
+        "scan-full",
+        [packageAsset],
+        [
+          diagnosticForAssetPath({
+            diagnosticId: "diagnostic-support",
+            scanRunId: "scan-full",
+            sourcePath: "/project/.agents/skills/release/references/checklist.md",
+          }),
+        ],
+      ),
+    );
+
+    expect(
+      (
+        await repositories.index.listDiagnostics({
+          assetId: AssetIdSchema.parse(packageAsset.assetId),
+          limit: 20,
+        })
+      ).items.map(({ diagnosticId }) => diagnosticId),
+    ).toEqual(["diagnostic-support"]);
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-incremental-delete", []),
+      changedPaths: [
+        AbsolutePathSchema.parse("/project/.agents/skills/release/references/checklist.md"),
+      ],
+    });
+
+    expect((await repositories.index.listAssets({ limit: 20 })).items).toEqual([]);
+    expect((await repositories.index.listDiagnostics({ limit: 20 })).items).toEqual([]);
     opened.database.close();
   });
 

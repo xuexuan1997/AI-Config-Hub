@@ -451,3 +451,29 @@ skill were never copied.
    duplicate/precedence cases, Codex directory-chain `AGENTS.md`, Cursor `.mdc`
    rule types, OpenCode `instructions`, and MCP fields such as `envFile`,
    `env`, `cwd`, OAuth, and per-agent permissions.
+
+## Implemented source-graph status
+
+The source-graph repair implements the first package-aware subset of the design
+above:
+
+- Skill package parsing is implemented for the built-in adapters. `SKILL.md` is
+  the primary source file, package members are stored in `Asset.sourceFiles`,
+  and tool-native identity is stored in `Asset.nativeIdentity`.
+- Binary support files are included in package hashes and incremental
+  invalidation. They are not deployed by built-in conversion in phase 1; their
+  omission makes conversion `partial` with an explicit warning.
+- Text support files are emitted as `copy` source outputs during Skill
+  migration. Generated `SKILL.md` outputs remain semantic text outputs.
+- Incremental scans reparse the owning Skill when a support or metadata file
+  changes, and diagnostics located on support files roll up to the owning Skill
+  asset.
+- Native field diagnostics and partial conversion warnings are implemented for
+  unsupported Skill/Agent/Rule/MCP fields, target-specific Skill name rules,
+  missing target-required descriptions, Cursor rule activation metadata, and
+  MCP fields that cannot be represented in the target format.
+
+Remaining phase 1 limits are intentional: binary support-file migration is not
+implemented, rule hierarchy and MCP scope migration remain narrower than native
+tools, and cross-resource package dependencies such as Skill-to-agent/MCP
+relationships still require future package-level planning.

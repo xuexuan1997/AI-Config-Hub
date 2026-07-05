@@ -12,6 +12,15 @@ import { ConfigParseError, parseFrontmatter } from "./frontmatter.js";
 import { redactStructuredValue, toSecretAwareString } from "./secrets.js";
 import { parseJsoncObject, requireObject } from "./structured-config.js";
 import { adapterDiagnostic } from "./base-adapter.js";
+import { nativeDiagnostic } from "./native-diagnostics.js";
+import { nativeIdentity, singleSourceFile } from "./source-files.js";
+
+const unsupportedDiagnosticCodes = {
+  agent: "AGENT_UNSUPPORTED_NATIVE_FIELD",
+  rule: "RULE_UNSUPPORTED_NATIVE_FIELD",
+  skill: "SKILL_UNSUPPORTED_NATIVE_FIELD",
+  mcp: "MCP_UNSUPPORTED_NATIVE_FIELD",
+} as const;
 
 export function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
@@ -55,17 +64,7 @@ export function parseMarkdownAsset(
     const parsed = parseFrontmatter(text);
     const kind = candidate.resourceKindHint ?? "rule";
     const name = stringValue(parsed.attributes["name"]) ?? inferredName(candidate);
-    const extensions = redactStructuredValue(
-      withoutKeys(parsed.attributes, [
-        "name",
-        "description",
-        "model",
-        "tools",
-        "allowedTools",
-        "globs",
-        "references",
-      ]),
-    ) as Readonly<Record<string, unknown>>;
+    const extensions = markdownExtensions(kind, parsed.attributes);
     const instructions = parsed.body.trim() === "" ? text.trim() : parsed.body.trim();
     const resource = NormalizedResourceSchema.parse(
       kind === "agent"
@@ -73,6 +72,9 @@ export function parseMarkdownAsset(
             kind,
             data: {
               name,
+              ...(stringValue(parsed.attributes["description"]) === undefined
+                ? {}
+                : { description: stringValue(parsed.attributes["description"]) }),
               instructions,
               ...(stringValue(parsed.attributes["model"]) === undefined
                 ? {}
@@ -107,6 +109,12 @@ export function parseMarkdownAsset(
             },
     );
     const locator = `${kind}:${name}`;
+    const primarySource = singleSourceFile({
+      path: candidate.sourcePath,
+      relativePath: basename(candidate.sourcePath),
+      sourceFormat: candidate.sourceFormat,
+      contentHash: sourceContentHash,
+    });
     return {
       status: "parsed",
       assets: [
@@ -117,16 +125,54 @@ export function parseMarkdownAsset(
           scope: candidate.scope,
           sourceFormat: candidate.sourceFormat,
           sourceContentHash,
+          contentHash: sourceContentHash,
+          sourceFiles: [primarySource],
+          nativeIdentity: nativeIdentity({
+            nativeId: locator,
+            displayName: name,
+          }),
           resource,
           references: kind === "skill" ? stringList(parsed.attributes["references"]) : [],
           extensions: {},
         },
       ],
-      diagnostics: [],
+      diagnostics: unsupportedNativeFieldDiagnostics(kind, candidate.sourcePath, extensions),
     };
   } catch (error) {
     return rejectedParse(candidate, error);
   }
+}
+
+function markdownExtensions(
+  kind: DiscoveredResource["resourceKindHint"],
+  attributes: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const excluded =
+    kind === "agent"
+      ? ["name", "description", "model", "tools", "allowedTools"]
+      : kind === "skill"
+        ? ["name", "description", "references"]
+        : ["name", "globs", "references"];
+  return redactStructuredValue(withoutKeys(attributes, excluded)) as Readonly<
+    Record<string, unknown>
+  >;
+}
+
+export function unsupportedNativeFieldDiagnostics(
+  kind: keyof typeof unsupportedDiagnosticCodes,
+  path: DiscoveredResource["sourcePath"],
+  extensions: Readonly<Record<string, unknown>>,
+) {
+  return Object.keys(extensions)
+    .sort()
+    .map((field) =>
+      nativeDiagnostic({
+        code: unsupportedDiagnosticCodes[kind],
+        message: `${kind} native field is preserved but not represented in the normalized schema: ${field}`,
+        location: { path },
+        evidence: { field },
+      }),
+    );
 }
 
 export function mcpResource(name: string, value: unknown) {
@@ -218,13 +264,38 @@ export function parseMcpJson(
             scope: candidate.scope,
             sourceFormat: candidate.sourceFormat,
             sourceContentHash,
+            contentHash: sourceContentHash,
+            sourceFiles: [
+              singleSourceFile({
+                path: candidate.sourcePath,
+                relativePath: basename(candidate.sourcePath),
+                sourceFormat: candidate.sourceFormat,
+                contentHash: sourceContentHash,
+              }),
+            ],
+            nativeIdentity: nativeIdentity({
+              nativeId: `mcp:${name}`,
+              displayName: name,
+            }),
             resource: mcpResource(name, mcpConfig),
             references: [],
             extensions: {},
           },
         ];
       });
-    return { status: "parsed", assets, diagnostics: [] };
+    return {
+      status: "parsed",
+      assets,
+      diagnostics: assets.flatMap((asset) =>
+        asset.resource.kind === "mcp"
+          ? unsupportedNativeFieldDiagnostics(
+              "mcp",
+              asset.canonicalSourcePath,
+              asset.resource.data.extensions,
+            )
+          : [],
+      ),
+    };
   } catch (error) {
     return rejectedParse(candidate, error);
   }

@@ -66,7 +66,7 @@ async function writeUserConfigFixtures(home: string): Promise<void> {
   );
   await writeFile(
     join(home, ".codex", "agents", "reviewer.toml"),
-    'name = "reviewer"\ndeveloper_instructions = "Review carefully."\n',
+    'name = "reviewer"\ndescription = "Reviews code"\ndeveloper_instructions = "Review carefully."\n',
     "utf8",
   );
   await writeFile(
@@ -177,7 +177,7 @@ describe("CLI command service composition", () => {
     await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
     await writeFile(
       join(project, ".agents", "skills", "release", "SKILL.md"),
-      "---\nname: release\ndescription: Release safely\nreferences: missing.md\n---\nRun checks.\n",
+      "---\nname: release\ndescription: Release safely\nwhen_to_use: Project releases\n---\nRun checks.\n",
       "utf8",
     );
 
@@ -353,6 +353,123 @@ describe("CLI command service composition", () => {
     }
   });
 
+  it("returns sorted source files for multi-file skill assets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-source-files-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".agents", "skills", "release", "assets"), { recursive: true });
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(
+      join(project, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(project, ".agents", "skills", "release", "assets", "notes.md"),
+      "Release notes template\n",
+      "utf8",
+    );
+
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+
+      const detail = await runtime.services["assets.get"]({ assetId: source.id });
+
+      expect(detail.source.files.map((file) => [file.role, file.relativePath])).toEqual([
+        ["primary", "SKILL.md"],
+        ["support", "assets/notes.md"],
+      ]);
+      expect(detail.source.files[0]?.pathDisplay).toContain("SKILL.md");
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("maps source copy operations in migration previews without reading generated text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-source-copy-preview-"));
+    temporaryDirectories.push(root);
+    const sourceProject = join(root, "source");
+    const targetProject = join(root, "target");
+    const userData = join(root, "user-data");
+    await mkdir(join(sourceProject, ".agents", "skills", "release", "assets"), {
+      recursive: true,
+    });
+    await mkdir(targetProject);
+    await writeFile(
+      join(sourceProject, "AGENTS.md"),
+      "Use local TypeScript conventions.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(sourceProject, ".agents", "skills", "release", "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+      "utf8",
+    );
+    await writeFile(
+      join(sourceProject, ".agents", "skills", "release", "assets", "notes.md"),
+      "Release notes template\n",
+      "utf8",
+    );
+
+    const runtime = await createCliCommandServices({
+      cwd: sourceProject,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-06-28T08:00:00.000Z",
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+      const detail = await runtime.services["assets.get"]({ assetId: source.id });
+      const supportFile = detail.source.files.find(
+        (file) => file.relativePath === "assets/notes.md",
+      );
+      if (supportFile === undefined) throw new Error("Expected scanned skill support file");
+
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: targetProject,
+        conflictPolicy: "replace",
+      });
+      const copyChange = preview.changes.find((change) => change.deploymentType === "copy");
+
+      expect(copyChange).toMatchObject({
+        operation: "create",
+        sourcePathDisplay: supportFile.pathDisplay,
+        afterHash: supportFile.contentHash,
+      });
+      const history = await runtime.services["history.list"]({ kinds: ["deployment"], limit: 10 });
+      const planned = history.items.find((entry) => entry.status === "planned");
+      if (planned === undefined) throw new Error("Expected planned deployment history entry");
+      const historyDetail = await runtime.services["history.get"]({ id: planned.id });
+      expect(
+        historyDetail.changes.find((change) => change.deploymentType === "copy"),
+      ).toMatchObject({
+        sourcePathDisplay: supportFile.pathDisplay,
+        afterHash: supportFile.contentHash,
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("records local Git snapshots for successful deployments and rollbacks", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-history-"));
     temporaryDirectories.push(root);
@@ -434,7 +551,7 @@ describe("CLI command service composition", () => {
     } finally {
       runtime.close();
     }
-  });
+  }, 15_000);
 
   it("does not fail a successful deployment when the local Git snapshot fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-history-failure-"));
@@ -525,10 +642,13 @@ describe("CLI command service composition", () => {
       expect(preview.fieldLosses).toEqual([
         {
           assetId: source.id,
-          droppedFields: ["/data/allowedTools"],
+          droppedFields: ["/data/allowedTools", "/data/description"],
           retainedFields: ["/data/name", "/data/instructions", "/data/model"],
           transformedFields: [],
-          warnings: [expect.stringContaining("/data/allowedTools")],
+          warnings: expect.arrayContaining([
+            expect.stringContaining("/data/allowedTools"),
+            expect.stringContaining("/data/description"),
+          ]) as unknown,
         },
       ]);
     } finally {
@@ -647,7 +767,7 @@ describe("CLI command service composition", () => {
     await writeFile(join(project, "AGENTS.md"), "Use local conventions.\n", "utf8");
     await writeFile(
       join(project, ".agents", "skills", "release", "SKILL.md"),
-      "---\nname: release\ndescription: Release safely\nreferences: missing.md\n---\nRun checks.\n",
+      "---\nname: release\ndescription: Release safely\nwhen_to_use: Project releases\n---\nRun checks.\n",
       "utf8",
     );
 
@@ -694,7 +814,7 @@ describe("CLI command service composition", () => {
       const listed = await runtime.services["diagnostics.list"]({
         limit: 50,
         toolKeys: ["codex"],
-        codes: ["UNRESOLVED_SKILL_REFERENCE"],
+        codes: ["SKILL_UNSUPPORTED_NATIVE_FIELD"],
       });
       expect(listed.items).toHaveLength(1);
 

@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 
 import {
   ConversionResultSchema,
+  type Asset,
   type ConvertedOutput,
   ConvertedOutputSchema,
   type ConversionContext,
   type ConversionResult,
+  type FieldTransformation,
   type NormalizedResource,
   type SecretAwareString,
 } from "@ai-config-hub/core";
@@ -75,7 +77,24 @@ function frontmatter(attributes: Record<string, unknown>, body: string): string 
 }
 
 function output(relativePath: string, mediaType: string, text: string) {
-  return ConvertedOutputSchema.parse({ relativePath, mediaType, text, contentHash: hash(text) });
+  return ConvertedOutputSchema.parse({
+    deploymentType: "generated_file",
+    relativePath,
+    mediaType,
+    text,
+    contentHash: hash(text),
+  });
+}
+
+function sourceOutput(relativePath: string, source: Asset["sourceFiles"][number]): ConvertedOutput {
+  return ConvertedOutputSchema.parse({
+    deploymentType: "copy",
+    relativePath,
+    mediaType: source.mediaType,
+    sourcePath: source.path,
+    sourceHash: source.contentHash,
+    contentHash: source.contentHash,
+  });
 }
 
 function value(item: SecretAwareString): string {
@@ -111,7 +130,7 @@ function renderResource(target: ToolId, resource: NormalizedResource): Converted
     case "agent":
       return renderAgent(target, resource);
     case "skill":
-      return renderSkill(target, resource);
+      return renderSkill(target, resource).outputs[0]!;
     case "mcp":
       return renderMcp(target, resource);
   }
@@ -155,22 +174,87 @@ function renderAgent(target: ToolId, resource: AgentResource): ConvertedOutput {
   );
 }
 
-function renderSkill(target: ToolId, resource: SkillResource): ConvertedOutput {
+interface SkillRenderResult {
+  readonly outputs: readonly ConvertedOutput[];
+  readonly transformedFields: readonly FieldTransformation[];
+  readonly droppedFields: readonly JsonPointer[];
+  readonly warnings: readonly string[];
+}
+
+function renderSkill(target: ToolId, resource: SkillResource, asset?: Asset): SkillRenderResult {
+  const builtIn = builtInTarget(target);
+  const targetName = skillTargetName(builtIn, resource, asset);
+  const frontmatterName =
+    builtIn === "cursor" || builtIn === "opencode" ? targetName : resource.data.name;
+  const transformedFields: FieldTransformation[] = [];
+  const droppedFields: JsonPointer[] = [];
+  const warnings: string[] = [];
+
+  if (frontmatterName !== resource.data.name) {
+    transformedFields.push({
+      sourceField: "/data/name",
+      targetField: "/frontmatter/name",
+      reason: `${target} Skill names must be lower-hyphen and match the target directory`,
+    });
+    warnings.push(`${target} Skill name converted to target-required name: ${frontmatterName}`);
+  }
+
+  const description = resource.data.description ?? `Imported ${resource.data.name} skill`;
+  if (resource.data.description === undefined) {
+    droppedFields.push("/data/description");
+    warnings.push(`${target} Skill description was missing; used deterministic fallback`);
+  }
+
   const directory = skillDirectories[builtInTarget(target)];
-  return output(
-    `${directory}/${slug(resource.data.name)}/SKILL.md`,
-    "text/markdown",
-    frontmatter(
-      {
-        name: resource.data.name,
-        ...(resource.data.description === undefined
-          ? {}
-          : { description: resource.data.description }),
-        ...(resource.data.references.length === 0 ? {} : { references: resource.data.references }),
-      },
-      resource.data.instructions,
-    ),
+  const skillRoot = `${directory}/${targetName}`;
+  const skillText = frontmatter(
+    {
+      name: frontmatterName,
+      description,
+      ...(resource.data.references.length === 0 ? {} : { references: resource.data.references }),
+    },
+    resource.data.instructions,
   );
+  const outputs: ConvertedOutput[] = [output(`${skillRoot}/SKILL.md`, "text/markdown", skillText)];
+
+  if (asset !== undefined) {
+    const omittedBinary: string[] = [];
+    for (const source of [...asset.sourceFiles].sort((left, right) =>
+      left.relativePath.localeCompare(right.relativePath),
+    )) {
+      if (source.role === "primary") continue;
+      if (!source.isText) {
+        omittedBinary.push(source.relativePath);
+        continue;
+      }
+      outputs.push(sourceOutput(`${skillRoot}/${source.relativePath}`, source));
+    }
+    if (omittedBinary.length > 0) {
+      droppedFields.push("/sourceFiles");
+      warnings.push(
+        `Binary Skill package files are not copied by built-in conversion: ${omittedBinary.join(", ")}`,
+      );
+    }
+  }
+
+  return { outputs, transformedFields, droppedFields, warnings };
+}
+
+function skillTargetName(target: BuiltInToolId, resource: SkillResource, asset?: Asset): string {
+  switch (target) {
+    case "claude-code":
+      return (
+        asset?.nativeIdentity.invocationName ??
+        asset?.nativeIdentity.directoryName ??
+        slug(resource.data.name)
+      );
+    case "codex":
+      return asset?.nativeIdentity.directoryName ?? slug(resource.data.name);
+    case "cursor":
+      return slug(resource.data.name);
+    case "opencode":
+      return slug(resource.data.name).slice(0, 64).replace(/-+$/g, "");
+  }
 }
 
 function renderMcp(target: ToolId, resource: McpResource): ConvertedOutput {
@@ -182,7 +266,7 @@ function renderMcp(target: ToolId, resource: McpResource): ConvertedOutput {
 function renderCodexAgent(resource: AgentResource): ConvertedOutput {
   const lines = [
     `name = ${JSON.stringify(resource.data.name)}`,
-    `description = ${JSON.stringify(resource.data.name)}`,
+    `description = ${JSON.stringify(resource.data.description ?? `Imported ${resource.data.name} agent`)}`,
     `developer_instructions = ${JSON.stringify(resource.data.instructions)}`,
   ];
   if (resource.data.model !== undefined)
@@ -303,8 +387,7 @@ function renderCodexMcp(resource: McpResource): ConvertedOutput {
 }
 
 function droppedFields(target: ToolId, resource: NormalizedResource): JsonPointer[] {
-  const fields: JsonPointer[] = [];
-  if (Object.keys(resource.data.extensions).length > 0) fields.push("/data/extensions");
+  const fields: JsonPointer[] = extensionPointers(resource.data.extensions);
 
   if (resource.kind === "rule" && target !== "cursor" && resource.data.globs.length > 0) {
     fields.push("/data/globs");
@@ -312,8 +395,21 @@ function droppedFields(target: ToolId, resource: NormalizedResource): JsonPointe
   if (resource.kind === "agent" && target === "codex" && resource.data.allowedTools.length > 0) {
     fields.push("/data/allowedTools");
   }
+  if (resource.kind === "agent" && target === "codex" && resource.data.description === undefined) {
+    fields.push("/data/description");
+  }
 
   return fields;
+}
+
+function extensionPointers(extensions: Readonly<Record<string, unknown>>): JsonPointer[] {
+  return Object.keys(extensions)
+    .sort()
+    .map((key) => `/data/extensions/${escapeJsonPointerToken(key)}`);
+}
+
+function escapeJsonPointerToken(key: string): string {
+  return key.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
 function retainedFields(target: ToolId, resource: NormalizedResource): JsonPointer[] {
@@ -325,6 +421,7 @@ function retainedFields(target: ToolId, resource: NormalizedResource): JsonPoint
     case "agent":
       return [
         "/data/name",
+        ...(resource.data.description === undefined ? [] : ["/data/description"]),
         "/data/instructions",
         ...(resource.data.model === undefined ? [] : ["/data/model"]),
         ...(target === "codex" || resource.data.allowedTools.length === 0
@@ -388,9 +485,24 @@ export function convertAsset(
       reasons: ["The source contains redacted values that cannot be reproduced safely"],
     });
   }
-  let rendered;
+  let rendered:
+    | {
+        readonly outputs: readonly ConvertedOutput[];
+        readonly transformedFields: readonly FieldTransformation[];
+        readonly droppedFields: readonly JsonPointer[];
+        readonly warnings: readonly string[];
+      }
+    | undefined;
   try {
-    rendered = renderResource(targetToolId, context.asset.resource);
+    rendered =
+      context.asset.resource.kind === "skill"
+        ? renderSkill(targetToolId, context.asset.resource, context.asset)
+        : {
+            outputs: [renderResource(targetToolId, context.asset.resource)],
+            transformedFields: [],
+            droppedFields: [],
+            warnings: [],
+          };
   } catch {
     return ConversionResultSchema.parse({
       ...base,
@@ -398,18 +510,24 @@ export function convertAsset(
       reasons: ["The normalized resource cannot be rendered safely for the target"],
     });
   }
-  const losses = droppedFields(targetToolId, context.asset.resource);
+  const fieldLosses = droppedFields(targetToolId, context.asset.resource);
+  const losses = [...fieldLosses, ...rendered.droppedFields];
+  const transformedFields = [...rendered.transformedFields];
+  const warnings = [
+    ...(fieldLosses.length === 0 ? [] : [conversionWarning(fieldLosses)]),
+    ...rendered.warnings,
+  ];
   return ConversionResultSchema.parse(
-    losses.length === 0
-      ? { ...base, level: "full", outputs: [rendered] }
+    losses.length === 0 && transformedFields.length === 0 && warnings.length === 0
+      ? { ...base, level: "full", outputs: rendered.outputs }
       : {
           ...base,
           level: "partial",
-          outputs: [rendered],
+          outputs: rendered.outputs,
           retainedFields: retainedFields(targetToolId, context.asset.resource),
           droppedFields: losses,
-          transformedFields: [],
-          warnings: [conversionWarning(losses)],
+          transformedFields,
+          warnings,
         },
   );
 }

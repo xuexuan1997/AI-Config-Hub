@@ -34,7 +34,7 @@ const CreateOperationSchema = z
     ...generatedTargetMetadataShape,
     kind: z.literal("create"),
     targetPath: AbsolutePathSchema,
-    nextText: z.string(),
+    nextText: z.string().optional(),
     expectedTargetHash: z.literal("absent"),
   })
   .strict()
@@ -44,7 +44,7 @@ const ReplaceOperationSchema = z
     ...generatedTargetMetadataShape,
     kind: z.literal("replace"),
     targetPath: AbsolutePathSchema,
-    nextText: z.string(),
+    nextText: z.string().optional(),
     expectedTargetHash: ContentHashSchema,
   })
   .strict()
@@ -67,14 +67,27 @@ export const DeploymentOperationSchema = z
   ])
   .superRefine((operation, context) => {
     const deploymentType = operation.deploymentType ?? "generated_file";
-    if (deploymentType === "copy" || deploymentType === "symlink") {
-      if (operation.kind === "delete") {
+    const isSourceDeployment = deploymentType === "copy" || deploymentType === "symlink";
+
+    if (operation.kind === "delete") {
+      if (isSourceDeployment) {
         context.addIssue({
           code: "custom",
           message: "Copy and symlink deployment operations cannot delete targets",
           path: ["deploymentType"],
         });
       }
+      if (operation.sourcePath !== undefined || operation.sourceHash !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Delete deployment operations cannot carry source metadata",
+          path: ["sourcePath"],
+        });
+      }
+      return;
+    }
+
+    if (isSourceDeployment) {
       if (operation.sourcePath === undefined) {
         context.addIssue({
           code: "custom",
@@ -89,6 +102,29 @@ export const DeploymentOperationSchema = z
           path: ["sourceHash"],
         });
       }
+      if (operation.nextText !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Copy and symlink deployment operations cannot carry nextText",
+          path: ["nextText"],
+        });
+      }
+      return;
+    }
+
+    if (operation.nextText === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Generated deployment operations require nextText",
+        path: ["nextText"],
+      });
+    }
+    if (operation.sourcePath !== undefined || operation.sourceHash !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Generated deployment operations cannot carry source metadata",
+        path: ["sourcePath"],
+      });
     }
   });
 type ParsedDeploymentOperation = z.output<typeof DeploymentOperationSchema>;

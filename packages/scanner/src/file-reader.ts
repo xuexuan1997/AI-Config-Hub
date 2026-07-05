@@ -3,7 +3,13 @@ import type { BigIntStats } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { AdapterReadApi, FileSnapshot, FileSnapshotPort, FileStat } from "@ai-config-hub/core";
+import type {
+  AdapterFileSnapshot,
+  AdapterReadApi,
+  FileSnapshot,
+  FileSnapshotPort,
+  FileStat,
+} from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
   AppError,
@@ -78,10 +84,10 @@ export async function createNodeFileAccess(
     ).path;
   }
 
-  async function snapshot(
+  async function snapshotFile(
     path: AbsolutePath,
     allowedRoots: readonly AbsolutePath[] = options.allowedRoots,
-  ): Promise<FileSnapshot | undefined> {
+  ): Promise<AdapterFileSnapshot | undefined> {
     const canonicalPath = await canonical(path, allowedRoots);
     let before: BigIntStats;
     try {
@@ -118,26 +124,46 @@ export async function createNodeFileAccess(
       throw error;
     }
 
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch (cause) {
-      throw new AppError({
-        code: "VALIDATION_FAILED",
-        message: "Configuration file is not valid UTF-8",
-        retryable: false,
-        suggestedActions: ["Save the configuration file as UTF-8 and scan again"],
-        cause,
-      });
-    }
-    return {
+    const base = {
       canonicalPath,
-      text,
       contentHash: ContentHashSchema.parse(
         `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
       ),
       modifiedAt: IsoDateTimeSchema.parse(new Date(Number(before.mtimeMs)).toISOString()),
       size: bytes.byteLength,
+    } as const;
+
+    try {
+      return {
+        ...base,
+        isText: true,
+        text: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      };
+    } catch {
+      return { ...base, isText: false };
+    }
+  }
+
+  async function snapshot(
+    path: AbsolutePath,
+    allowedRoots: readonly AbsolutePath[] = options.allowedRoots,
+  ): Promise<FileSnapshot | undefined> {
+    const result = await snapshotFile(path, allowedRoots);
+    if (result === undefined) return undefined;
+    if (!result.isText || result.text === undefined) {
+      throw new AppError({
+        code: "VALIDATION_FAILED",
+        message: "Configuration file is not valid UTF-8",
+        retryable: false,
+        suggestedActions: ["Save the configuration file as UTF-8 and scan again"],
+      });
+    }
+    return {
+      canonicalPath: result.canonicalPath,
+      text: result.text,
+      contentHash: result.contentHash,
+      modifiedAt: result.modifiedAt,
+      size: result.size,
     };
   }
 
@@ -180,7 +206,7 @@ export async function createNodeFileAccess(
       );
     },
     async readText(path: AbsolutePath): Promise<string> {
-      const result = await snapshot(path);
+      const result = await snapshotFile(path);
       if (result === undefined) {
         throw new AppError({
           code: "NOT_FOUND",
@@ -189,8 +215,17 @@ export async function createNodeFileAccess(
           suggestedActions: ["Refresh the configuration index and try again"],
         });
       }
+      if (!result.isText || result.text === undefined) {
+        throw new AppError({
+          code: "VALIDATION_FAILED",
+          message: "Configuration file is not valid UTF-8",
+          retryable: false,
+          suggestedActions: ["Save the configuration file as UTF-8 and scan again"],
+        });
+      }
       return result.text;
     },
+    snapshotFile,
   });
 
   const snapshots: FileSnapshotPort = Object.freeze({

@@ -129,6 +129,7 @@ describe("declarative custom tool definitions", () => {
           tool: tool(),
           candidate,
           snapshot: await fixtureSnapshot(read, candidate.sourcePath),
+          read,
           signal: neverCancelled,
         }),
       ),

@@ -482,8 +482,8 @@ export class SqliteIndexRepository implements IndexRepository {
   listDiagnostics(
     query: Parameters<IndexRepository["listDiagnostics"]>[0],
   ): ReturnType<IndexRepository["listDiagnostics"]> {
-    const assetPath =
-      query.assetId === undefined ? undefined : sourcePathForAssetId(this.database, query.assetId);
+    const assetPaths =
+      query.assetId === undefined ? undefined : sourcePathsForAssetId(this.database, query.assetId);
     let diagnostics = (
       this.database.prepare("SELECT evidence_json FROM diagnostics").all() as {
         evidence_json: string;
@@ -492,7 +492,7 @@ export class SqliteIndexRepository implements IndexRepository {
       .map(({ evidence_json }) => parseJson(DiagnosticSchema, evidence_json))
       .filter(
         (item) =>
-          query.assetId === undefined || diagnosticBelongsToAsset(item, query.assetId, assetPath),
+          query.assetId === undefined || diagnosticBelongsToAsset(item, query.assetId, assetPaths),
       )
       .filter((item) => query.severity === undefined || query.severity.includes(item.severity))
       .sort((left, right) => left.diagnosticId.localeCompare(right.diagnosticId));
@@ -531,22 +531,32 @@ export class SqliteIndexRepository implements IndexRepository {
   }
 }
 
-function sourcePathForAssetId(database: DatabaseSync, assetId: string): string | undefined {
+function sourcePathsForAssetId(
+  database: DatabaseSync,
+  assetId: string,
+): readonly string[] | undefined {
   const row = database
-    .prepare("SELECT source_path_normalized FROM assets WHERE domain_id = ?")
-    .get(assetId) as { readonly source_path_normalized: string } | undefined;
-  return row?.source_path_normalized;
+    .prepare("SELECT source_path_normalized, normalized_json FROM assets WHERE domain_id = ?")
+    .get(assetId) as
+    | { readonly source_path_normalized: string; readonly normalized_json: string }
+    | undefined;
+  if (row === undefined) return undefined;
+  const asset = parseJson(AssetSchema, row.normalized_json);
+  return assetSourcePaths(asset);
 }
 
 function diagnosticBelongsToAsset(
   diagnostic: Diagnostic,
   assetId: string,
-  assetPath: string | undefined,
+  assetPaths: readonly string[] | undefined,
 ): boolean {
   if (diagnostic.subject.kind === "asset" && diagnostic.subject.id === assetId) return true;
-  if (assetPath === undefined) return false;
-  if (diagnostic.location?.path === assetPath) return true;
-  return diagnostic.evidence.sourcePath === assetPath;
+  if (assetPaths === undefined) return false;
+  const paths = new Set(assetPaths);
+  if (diagnostic.location?.path !== undefined && paths.has(diagnostic.location.path)) return true;
+  return (
+    typeof diagnostic.evidence.sourcePath === "string" && paths.has(diagnostic.evidence.sourcePath)
+  );
 }
 
 function prepareReplacement(replacement: DerivedIndexReplacement) {
@@ -739,13 +749,16 @@ function insertScopes(
 function deleteChangedPathRows(database: DatabaseSync, changedPaths: readonly string[]): void {
   if (changedPaths.length === 0) return;
   const changed = new Set(changedPaths);
-  for (const path of changed) {
-    const assets = database
-      .prepare("SELECT id FROM assets WHERE source_path_normalized = ?")
-      .all(path) as { id: string }[];
-    for (const asset of assets)
-      database.prepare("DELETE FROM diagnostics WHERE asset_id = ?").run(asset.id);
-    database.prepare("DELETE FROM assets WHERE source_path_normalized = ?").run(path);
+  const assets = database.prepare("SELECT id, normalized_json FROM assets").all() as {
+    id: string;
+    normalized_json: string;
+  }[];
+  for (const row of assets) {
+    const asset = parseJson(AssetSchema, row.normalized_json);
+    if (assetSourcePaths(asset).some((path) => changed.has(path))) {
+      database.prepare("DELETE FROM diagnostics WHERE asset_id = ?").run(row.id);
+      database.prepare("DELETE FROM assets WHERE id = ?").run(row.id);
+    }
   }
 
   const diagnostics = database.prepare("SELECT id, evidence_json FROM diagnostics").all() as {
@@ -765,6 +778,12 @@ function deleteChangedPathRows(database: DatabaseSync, changedPaths: readonly st
       database.prepare("DELETE FROM diagnostics WHERE id = ?").run(row.id);
     }
   }
+}
+
+function assetSourcePaths(asset: Asset): readonly string[] {
+  return asset.sourceFiles.length === 0
+    ? [asset.canonicalSourcePath]
+    : asset.sourceFiles.map((sourceFile) => sourceFile.path);
 }
 
 function bumpRevision(database: DatabaseSync): number {

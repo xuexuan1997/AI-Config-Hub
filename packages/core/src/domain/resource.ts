@@ -17,6 +17,7 @@ export const RuleResourceDataSchema = z
 export const AgentResourceDataSchema = z
   .object({
     name: z.string().trim().min(1),
+    description: z.string().min(1).optional(),
     instructions: z.string().min(1),
     model: z.string().trim().min(1).optional(),
     allowedTools: z.array(z.string().trim().min(1)).readonly(),

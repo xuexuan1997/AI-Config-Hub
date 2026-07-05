@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssetIdSchema, ContentHashSchema } from "@ai-config-hub/shared";
+import { AssetIdSchema, ContentHashSchema, DeploymentPlanIdSchema } from "@ai-config-hub/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import { initialState, type AppState } from "../model.js";
@@ -51,6 +51,52 @@ describe("MigrationView", () => {
     expect(html).toContain("rule:shared");
     expect(html).toContain("rule:target-only");
     expect(html).not.toContain("rule:codex-only");
+  });
+
+  it("renders deployment type labels and source paths for preview source operations", () => {
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [AssetIdSchema.parse("asset-source-skill")],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-skill", "skill:release", {
+          toolKey: "claude-code",
+        }),
+      ],
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("plan-1"),
+        planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [
+          {
+            operation: "create",
+            deploymentType: "copy",
+            pathDisplay: ".agents/skills/release/assets/logo.png",
+            sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
+            beforeHash: null,
+            afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            diff: "",
+          },
+        ],
+        requiredConfirmations: [],
+        warnings: [],
+        sourceHashes: {
+          [AssetIdSchema.parse("asset-source-skill")]: ContentHashSchema.parse(
+            `sha256:${"c".repeat(64)}`,
+          ),
+        },
+        targetHashes: { ".agents/skills/release/assets/logo.png": null },
+        expiresAt: "2026-06-28T08:10:00.000Z",
+      },
+    });
+
+    expect(html).toContain("Copy source file");
+    expect(html).toContain("/workspace/source/.claude/skills/release/assets/logo.png");
+    expect(html).toContain(".agents/skills/release/assets/logo.png");
   });
 });
 

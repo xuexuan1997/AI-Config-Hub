@@ -14,8 +14,12 @@ import type {
 } from "@ai-config-hub/shared";
 
 import type { Asset } from "../domain/asset.js";
-import type { AssetStatus } from "../domain/asset.js";
-import type { ConversionResult, DeployableConversionResult } from "../domain/conversion.js";
+import type { AssetNativeIdentity, AssetSourceFile, AssetStatus } from "../domain/asset.js";
+import type {
+  ConvertedOutput,
+  ConversionResult,
+  DeployableConversionResult,
+} from "../domain/conversion.js";
 import type { DeploymentOperation, DeploymentRecord } from "../domain/deployment.js";
 import type { NormalizedResource } from "../domain/resource.js";
 import type { ScopeCandidate } from "../domain/scope.js";
@@ -43,6 +47,16 @@ export interface AdapterReadApi {
   stat(path: AbsolutePath): Promise<FileStat>;
   list(path: AbsolutePath): Promise<readonly AbsolutePath[]>;
   readText(path: AbsolutePath): Promise<string>;
+  snapshotFile(path: AbsolutePath): Promise<AdapterFileSnapshot | undefined>;
+}
+
+export interface AdapterFileSnapshot {
+  readonly canonicalPath: AbsolutePath;
+  readonly contentHash: ContentHash;
+  readonly modifiedAt: IsoDateTime;
+  readonly size: number;
+  readonly isText: boolean;
+  readonly text?: string;
 }
 
 export interface AdapterSourceLocation {
@@ -86,6 +100,9 @@ export interface ParsedAsset {
   readonly scope: ScopeCandidate;
   readonly sourceFormat: string;
   readonly sourceContentHash: ContentHash;
+  readonly contentHash: ContentHash;
+  readonly sourceFiles: readonly AssetSourceFile[];
+  readonly nativeIdentity: AssetNativeIdentity;
   readonly resource: NormalizedResource;
   readonly references: readonly string[];
   readonly extensions: Readonly<Record<string, unknown>>;
@@ -155,6 +172,7 @@ export interface ParseContext {
   readonly tool: ToolInstallation;
   readonly candidate: DiscoveredResource;
   readonly snapshot: FileSnapshot;
+  readonly read: AdapterReadApi;
   readonly signal: CancellationSignal;
 }
 
@@ -184,8 +202,23 @@ export interface DeploymentPlanningContext {
   readonly conversion: DeployableConversionResult;
   readonly target: DeploymentTarget;
   readonly currentTargetSnapshots: ReadonlyMap<AbsolutePath, FileSnapshot>;
+  readonly resolvedOutputs: ReadonlyMap<ConvertedOutput["relativePath"], ResolvedConvertedOutput>;
   readonly signal: CancellationSignal;
 }
+
+export type ResolvedConvertedOutput =
+  | {
+      readonly deploymentType: "generated_file";
+      readonly contentHash: ContentHash;
+      readonly text: string;
+    }
+  | {
+      readonly deploymentType: "copy" | "symlink";
+      readonly contentHash: ContentHash;
+      readonly sourcePath: AbsolutePath;
+      readonly sourceHash: ContentHash;
+      readonly previewText: string;
+    };
 
 export interface VerificationContext {
   readonly deployment: DeploymentRecord;

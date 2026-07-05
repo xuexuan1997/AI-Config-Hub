@@ -255,7 +255,21 @@ describe("command schemas", () => {
           ],
           normalized: { kind: "rule", instructions: "redacted view" },
         },
-        source: { pathDisplay: "AGENTS.md", contentHash: hash, observedAt: now },
+        source: {
+          pathDisplay: "AGENTS.md",
+          contentHash: hash,
+          observedAt: now,
+          files: [
+            {
+              pathDisplay: "AGENTS.md",
+              relativePath: "AGENTS.md",
+              role: "primary",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: hash,
+            },
+          ],
+        },
         redactions: [],
       },
       "assets.openSource": { assetId: "asset-1", opened: true },
@@ -308,6 +322,7 @@ describe("command schemas", () => {
         changes: [
           {
             operation: "create",
+            deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
             beforeHash: null,
             afterHash: hash,
@@ -401,6 +416,7 @@ describe("command schemas", () => {
         changes: [
           {
             operation: "replace",
+            deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
             beforeHash: hash,
             afterHash: hash,
@@ -455,6 +471,7 @@ describe("command schemas", () => {
         changes: [
           {
             operation: "replace",
+            deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
             beforeHash: hash,
             afterHash: hash,
@@ -465,6 +482,33 @@ describe("command schemas", () => {
         warnings: [],
         sourceHashes: { "asset-1": hash },
         targetHashes: { ".cursor/rules/repository-policy.mdc": hash },
+        expiresAt: now,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts source deployment changes without generated text", () => {
+    expect(
+      CommandResponseSchemas["migration.preview"].safeParse({
+        planId: "plan-1",
+        planHash: hash,
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [
+          {
+            operation: "create",
+            deploymentType: "copy",
+            pathDisplay: ".agents/skills/release/assets/logo.png",
+            sourcePathDisplay: "/project/.claude/skills/release/assets/logo.png",
+            beforeHash: null,
+            afterHash: hash,
+            diff: "",
+          },
+        ],
+        requiredConfirmations: [],
+        warnings: [],
+        sourceHashes: { "asset-1": hash },
+        targetHashes: { ".agents/skills/release/assets/logo.png": null },
         expiresAt: now,
       }).success,
     ).toBe(true);

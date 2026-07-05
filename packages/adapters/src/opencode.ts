@@ -36,16 +36,19 @@ import {
   rejectedParse,
   stringList,
   stringValue,
+  unsupportedNativeFieldDiagnostics,
   withoutKeys,
 } from "./markdown-assets.js";
 import { redactStructuredValue, toSecretAwareString } from "./secrets.js";
 import { parseJsoncObject, requireObject } from "./structured-config.js";
+import { nativeIdentity, singleSourceFile } from "./source-files.js";
+import { parseSkillPackage } from "./skill-packages.js";
 
 const capabilities: AdapterCapabilities = {
   supportedToolVersions: SemVerRangeSchema.parse(">=1.0.0"),
   testedToolVersions: [SemVerSchema.parse("1.0.0")],
-  readableSchemaVersions: [SemVerRangeSchema.parse("^1.0.0")],
-  writtenSchemaVersion: SemVerSchema.parse("1.0.0"),
+  readableSchemaVersions: [SemVerRangeSchema.parse("^1.1.0")],
+  writtenSchemaVersion: SemVerSchema.parse("1.1.0"),
   resourceKinds: ["rule", "agent", "skill", "mcp"],
   scopeKinds: ["user", "project", "directory"],
   supportsNestedScopes: true,
@@ -65,6 +68,19 @@ function asset(
     scope: context.candidate.scope,
     sourceFormat: context.candidate.sourceFormat,
     sourceContentHash: context.snapshot.contentHash,
+    contentHash: context.snapshot.contentHash,
+    sourceFiles: [
+      singleSourceFile({
+        path: context.candidate.sourcePath,
+        relativePath: basename(context.candidate.sourcePath),
+        sourceFormat: context.candidate.sourceFormat,
+        contentHash: context.snapshot.contentHash,
+      }),
+    ],
+    nativeIdentity: nativeIdentity({
+      nativeId: locator,
+      displayName: locator.split(":").slice(1).join(":") || locator,
+    }),
     resource,
     references: [],
     extensions: {},
@@ -86,21 +102,37 @@ function parseConfigAgents(context: ParseContext): ParseResult {
         const config = requireObject(value, `agent ${name}`);
         const instructions = stringValue(config["prompt"]);
         if (instructions === undefined) throw new TypeError(`Agent ${name} requires prompt`);
+        const description = stringValue(config["description"]);
         const resource = NormalizedResourceSchema.parse({
           kind: "agent",
           data: {
             name,
+            ...(description === undefined ? {} : { description }),
             instructions,
             ...(stringValue(config["model"]) === undefined
               ? {}
               : { model: stringValue(config["model"]) }),
             allowedTools: stringList(config["tools"]),
-            extensions: redactStructuredValue(withoutKeys(config, ["prompt", "model", "tools"])),
+            extensions: redactStructuredValue(
+              withoutKeys(config, ["description", "prompt", "model", "tools"]),
+            ),
           },
         });
         return asset(context, `agent:${name}`, resource, assetStatusFromConfig(config));
       });
-    return { status: "parsed", assets, diagnostics: [] };
+    return {
+      status: "parsed",
+      assets,
+      diagnostics: assets.flatMap((item) =>
+        item.resource.kind === "agent"
+          ? unsupportedNativeFieldDiagnostics(
+              "agent",
+              item.canonicalSourcePath,
+              item.resource.data.extensions,
+            )
+          : [],
+      ),
+    };
   } catch (error) {
     return rejectedParse(context.candidate, error);
   }
@@ -120,7 +152,19 @@ function parseConfigMcp(context: ParseContext): ParseResult {
           command.length > 0 ? localMcp(name, config, command) : remoteMcp(name, config);
         return [asset(context, `mcp:${name}`, resource, assetStatusFromConfig(config))];
       });
-    return { status: "parsed", assets, diagnostics: [] };
+    return {
+      status: "parsed",
+      assets,
+      diagnostics: assets.flatMap((item) =>
+        item.resource.kind === "mcp"
+          ? unsupportedNativeFieldDiagnostics(
+              "mcp",
+              item.canonicalSourcePath,
+              item.resource.data.extensions,
+            )
+          : [],
+      ),
+    };
   } catch (error) {
     return rejectedParse(context.candidate, error);
   }
@@ -173,7 +217,7 @@ function remoteMcp(name: string, config: Record<string, unknown>) {
 
 class OpenCodeAdapter extends BaseToolAdapter {
   readonly adapterId = AdapterIdSchema.parse("builtin-opencode");
-  readonly adapterVersion = SemVerSchema.parse("0.1.0");
+  readonly adapterVersion = SemVerSchema.parse("0.2.0");
   readonly toolId = "opencode" as const;
   readonly capabilities = capabilities;
 
@@ -337,6 +381,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
 
   parse(context: ParseContext): Promise<ParseResult> {
     context.signal.throwIfAborted();
+    if (context.candidate.resourceKindHint === "skill") return parseSkillPackage(context);
     const isConfig = basename(context.candidate.sourcePath).startsWith("opencode.json");
     const result =
       isConfig && context.candidate.resourceKindHint === "agent"
@@ -453,7 +498,7 @@ async function existingUserRoots(
 export const opencodeRegistration: AdapterRegistration = {
   contractVersion: 1,
   adapterId: AdapterIdSchema.parse("builtin-opencode"),
-  adapterVersion: SemVerSchema.parse("0.1.0"),
+  adapterVersion: SemVerSchema.parse("0.2.0"),
   toolId: "opencode",
   capabilities,
   create: ({ logger }) => new OpenCodeAdapter(logger),

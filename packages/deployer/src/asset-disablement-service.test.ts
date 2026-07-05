@@ -58,14 +58,16 @@ class MemoryIndexRepository implements IndexRepository {
   }
 
   replaceDerivedIndex(
-    _replacement: DerivedIndexReplacement,
+    replacement: DerivedIndexReplacement,
   ): Promise<{ readonly revision: string }> {
+    void replacement;
     return Promise.resolve({ revision: "1" });
   }
 
   mergeIncrementalIndex(
-    _replacement: DerivedIndexIncrementalReplacement,
+    replacement: DerivedIndexIncrementalReplacement,
   ): Promise<{ readonly revision: string }> {
+    void replacement;
     return Promise.resolve({ revision: "1" });
   }
 
@@ -120,8 +122,9 @@ class MemoryIndexRepository implements IndexRepository {
   }
 
   getEffectiveConfig(
-    _id: EffectiveConfig["effectiveConfigId"],
+    id: EffectiveConfig["effectiveConfigId"],
   ): Promise<EffectiveConfig | undefined> {
+    void id;
     return Promise.resolve(undefined);
   }
 
@@ -129,16 +132,18 @@ class MemoryIndexRepository implements IndexRepository {
     return Promise.resolve([this.scope]);
   }
 
-  listDiagnostics(_query: {
+  listDiagnostics(query: {
     readonly assetId?: AssetId;
     readonly severity?: readonly Diagnostic["severity"][];
     readonly cursor?: PaginationCursor;
     readonly limit: number;
   }): Promise<Page<Diagnostic>> {
+    void query;
     return Promise.resolve({ items: [], snapshotRevision: "1" });
   }
 
-  getDiagnostic(_id: Diagnostic["diagnosticId"]): Promise<Diagnostic | undefined> {
+  getDiagnostic(id: Diagnostic["diagnosticId"]): Promise<Diagnostic | undefined> {
+    void id;
     return Promise.resolve(undefined);
   }
 
@@ -174,15 +179,31 @@ function asset(input: {
   readonly scope: Scope;
   readonly contentHash?: ContentHash;
 }): Asset {
+  const sourcePath = AbsolutePathSchema.parse(input.sourcePath);
+  const contentHash = input.contentHash ?? HASH;
   return AssetSchema.parse({
     assetId: AssetIdSchema.parse(input.id),
     toolId: input.toolId,
     resource: input.resource,
     scopeId: input.scope.scopeId,
-    canonicalSourcePath: AbsolutePathSchema.parse(input.sourcePath),
+    canonicalSourcePath: sourcePath,
     locator: input.locator,
     sourceFormat: input.sourceFormat,
-    contentHash: input.contentHash ?? HASH,
+    contentHash,
+    sourceFiles: [
+      {
+        path: sourcePath,
+        relativePath: input.sourcePath.split(/[\\/]/).at(-1) ?? "source",
+        role: "primary",
+        mediaType: input.sourceFormat === "json" ? "application/json" : "text/markdown",
+        isText: true,
+        contentHash,
+      },
+    ],
+    nativeIdentity: {
+      nativeId: input.locator,
+      displayName: input.locator,
+    },
     normalizedSchemaVersion: "1.0.0",
     adapterId: `builtin-${input.toolId}`,
     adapterVersion: "0.1.0",
@@ -192,16 +213,17 @@ function asset(input: {
   });
 }
 
-async function serviceFor(
-  indexRepository: IndexRepository,
-  root: string,
-): Promise<AssetDisablementService> {
+function serviceFor(indexRepository: IndexRepository, root: string): AssetDisablementService {
   const disabledAssetsRoot = AbsolutePathSchema.parse(join(root, "disabled-assets"));
   return new AssetDisablementService({
     indexRepository,
     disabledAssetsRoot,
     now: () => NOW,
   });
+}
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text) as T;
 }
 
 describe("AssetDisablementService", () => {
@@ -236,13 +258,16 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await service.disable({
       assetId: AssetIdSchema.parse("asset-opencode-agent"),
       method: "native",
     });
-    expect(JSON.parse(await readFile(configPath, "utf8")).agent.reviewer.disable).toBe(true);
+    const disabledConfig = parseJson<{
+      readonly agent: { readonly reviewer: { readonly disable?: boolean } };
+    }>(await readFile(configPath, "utf8"));
+    expect(disabledConfig.agent.reviewer.disable).toBe(true);
     expect(index.disablements.get("asset-opencode-agent")?.restore.originalText).toBeUndefined();
     expect(index.disablements.get("asset-opencode-agent")?.restore.nativeField).toBe("disable");
 
@@ -290,13 +315,18 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await service.disable({
       assetId: AssetIdSchema.parse("asset-cursor-mcp"),
       method: "remove_config_entry",
     });
-    const disabled = JSON.parse(await readFile(configPath, "utf8"));
+    const disabled = parseJson<{
+      readonly mcpServers: {
+        readonly docs?: unknown;
+        readonly search?: unknown;
+      };
+    }>(await readFile(configPath, "utf8"));
     expect(disabled.mcpServers.docs).toBeUndefined();
     expect(disabled.mcpServers.search).toBeDefined();
     expect(index.disablements.get("asset-cursor-mcp")?.restore.originalText).toBeUndefined();
@@ -345,11 +375,14 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await service.enable({ assetId: AssetIdSchema.parse("asset-opencode-mcp") });
 
-    expect(JSON.parse(await readFile(configPath, "utf8")).mcp.docs.enabled).toBe(true);
+    const enabledConfig = parseJson<{
+      readonly mcp: { readonly docs: { readonly enabled: boolean } };
+    }>(await readFile(configPath, "utf8"));
+    expect(enabledConfig.mcp.docs.enabled).toBe(true);
     expect(index.statuses.get("asset-opencode-mcp")).toBe("enabled");
   });
 
@@ -383,7 +416,7 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await expect(
       service.disable({
@@ -425,7 +458,7 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await service.disable({
       assetId: AssetIdSchema.parse("asset-codex-rule"),
@@ -472,7 +505,7 @@ describe("AssetDisablementService", () => {
       }),
       assetScope,
     );
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await expect(
       service.disable({
@@ -545,7 +578,7 @@ describe("AssetDisablementService", () => {
       assetScope,
     );
     index.failSave = true;
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await expect(
       service.disable({ assetId: AssetIdSchema.parse("asset-codex-rule"), method: "move_file" }),
@@ -584,7 +617,7 @@ describe("AssetDisablementService", () => {
     index.beforeFailSave = async () => {
       await writeFile(sourcePath, "Competing file.\n", "utf8");
     };
-    const service = await serviceFor(index, root);
+    const service = serviceFor(index, root);
 
     await expect(
       service.disable({ assetId: AssetIdSchema.parse("asset-codex-rule"), method: "move_file" }),

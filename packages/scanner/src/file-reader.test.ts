@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,27 +15,37 @@ describe("root-confined file access", () => {
   it("allows internal files and rejects outside paths and escaping symlinks", async () => {
     const sandbox = await mkdtemp(join(tmpdir(), "ai-config-hub-reader-"));
     const root = join(sandbox, "allowed");
+    const internal = join(root, "internal");
     const outside = join(sandbox, "outside");
     await mkdir(root);
+    await mkdir(internal);
     await mkdir(outside);
-    await writeFile(join(root, "inside.md"), "inside", "utf8");
+    await writeFile(join(internal, "inside.md"), "inside", "utf8");
     await writeFile(join(outside, "secret.md"), "outside", "utf8");
-    await symlink(join(root, "inside.md"), join(root, "inside-link.md"));
-    await symlink(join(outside, "secret.md"), join(root, "escape-link.md"));
+    await symlink(internal, join(root, "inside-link"), "junction");
+    await symlink(outside, join(root, "escape-link"), "junction");
 
     const { read } = await createNodeFileAccess({ allowedRoots: [absolute(root)] });
 
-    await expect(read.readText(absolute(join(root, "inside.md")))).resolves.toBe("inside");
-    await expect(read.realpath(absolute(join(root, "inside-link.md")))).resolves.toBe(
-      await canonicalAbsolute(join(root, "inside.md")),
+    await expect(read.readText(absolute(join(internal, "inside.md")))).resolves.toBe("inside");
+    await expect(read.realpath(absolute(join(root, "inside-link", "inside.md")))).resolves.toBe(
+      await canonicalAbsolute(join(internal, "inside.md")),
     );
     await expect(read.readText(absolute(join(outside, "secret.md")))).rejects.toMatchObject({
       code: "PATH_OUTSIDE_ALLOWED_ROOT",
     });
-    await expect(read.readText(absolute(join(root, "escape-link.md")))).rejects.toMatchObject({
+    await expect(
+      read.readText(absolute(join(root, "escape-link", "secret.md"))),
+    ).rejects.toMatchObject({
       code: "SYMLINK_ESCAPE",
     });
-    expect(Object.keys(read).sort()).toEqual(["list", "readText", "realpath", "stat"]);
+    expect(Object.keys(read).sort()).toEqual([
+      "list",
+      "readText",
+      "realpath",
+      "snapshotFile",
+      "stat",
+    ]);
   });
 
   it("returns sorted children, metadata and stable SHA-256 snapshots", async () => {
@@ -73,6 +84,32 @@ describe("root-confined file access", () => {
     });
   });
 
+  it("returns binary-aware read snapshots for UTF-8 and non-UTF-8 files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-binary-snapshot-"));
+    const textPath = join(root, "skill.md");
+    const binaryPath = join(root, "image.bin");
+    await writeFile(textPath, "alpha", "utf8");
+    await writeFile(binaryPath, Buffer.from([0xff, 0xfe, 0xfd]));
+    const { read } = await createNodeFileAccess({ allowedRoots: [absolute(root)] });
+
+    await expect(read.snapshotFile(absolute(textPath))).resolves.toMatchObject({
+      canonicalPath: await canonicalAbsolute(textPath),
+      isText: true,
+      text: "alpha",
+      contentHash: hash(Buffer.from("alpha", "utf8")),
+      size: 5,
+    });
+    const binary = await read.snapshotFile(absolute(binaryPath));
+
+    expect(binary).toMatchObject({
+      canonicalPath: await canonicalAbsolute(binaryPath),
+      isText: false,
+      contentHash: hash(Buffer.from([0xff, 0xfe, 0xfd])),
+      size: 3,
+    });
+    expect(binary).not.toHaveProperty("text");
+  });
+
   it("rejects a file that changes while its snapshot is being read", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-torn-"));
     const target = join(root, "changing.md");
@@ -85,6 +122,34 @@ describe("root-confined file access", () => {
     await expect(
       snapshots.snapshot({ path: absolute(target), allowedRoots: [absolute(root)] }),
     ).rejects.toMatchObject({ code: "STALE_INDEX" });
+  });
+
+  it("rejects a file that disappears while its snapshot is being read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-disappearing-"));
+    const target = join(root, "changing.md");
+    await writeFile(target, "before", "utf8");
+    const { read } = await createNodeFileAccess({
+      allowedRoots: [absolute(root)],
+      beforeFinalStat: async () => unlink(target),
+    });
+
+    await expect(read.snapshotFile(absolute(target))).rejects.toMatchObject({
+      code: "STALE_INDEX",
+    });
+  });
+
+  it("keeps FileSnapshotPort text-only and readText rejects non-text files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-text-only-"));
+    const binaryPath = join(root, "image.bin");
+    await writeFile(binaryPath, Buffer.from([0xff, 0xfe, 0xfd]));
+    const { read, snapshots } = await createNodeFileAccess({ allowedRoots: [absolute(root)] });
+
+    await expect(read.readText(absolute(binaryPath))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    await expect(
+      snapshots.snapshot({ path: absolute(binaryPath), allowedRoots: [absolute(root)] }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
   it("honors a narrower root supplied to an individual snapshot", async () => {
@@ -100,3 +165,7 @@ describe("root-confined file access", () => {
     ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
   });
 });
+
+function hash(bytes: Buffer): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}

@@ -1,4 +1,9 @@
-import { CORE_COMMAND_NAMES } from "@ai-config-hub/core";
+import {
+  AssetSourceFileRoleSchema,
+  AssetSourceRelativePathSchema,
+  CORE_COMMAND_NAMES,
+  DeploymentOperationTypeSchema,
+} from "@ai-config-hub/core";
 import {
   AssetIdSchema,
   ContentHashSchema,
@@ -337,6 +342,17 @@ const AssetDisablementOptionSchema = z
   })
   .strict()
   .readonly();
+const AssetSourceFileViewSchema = z
+  .object({
+    pathDisplay: z.string().min(1).max(1_000),
+    relativePath: AssetSourceRelativePathSchema,
+    role: AssetSourceFileRoleSchema,
+    mediaType: z.string().trim().min(1).max(200),
+    isText: z.boolean(),
+    contentHash: ContentHashSchema,
+  })
+  .strict()
+  .readonly();
 const AssetsGetResponseSchema = z
   .object({
     asset: z
@@ -359,6 +375,7 @@ const AssetsGetResponseSchema = z
         pathDisplay: z.string().min(1).max(1_000),
         contentHash: ContentHashSchema,
         observedAt: IsoDateTimeSchema,
+        files: z.array(AssetSourceFileViewSchema).min(1).max(1_000).readonly(),
       })
       .strict()
       .readonly(),
@@ -475,7 +492,9 @@ const DiagnosticsExportResponseSchema = z
 const PlannedChangeSchema = z
   .object({
     operation: z.enum(["create", "replace", "delete"]),
+    deploymentType: DeploymentOperationTypeSchema,
     pathDisplay: z.string().min(1).max(1_000),
+    sourcePathDisplay: z.string().min(1).max(1_000).optional(),
     beforeHash: ContentHashSchema.nullable(),
     afterHash: ContentHashSchema.nullable(),
     diff: z.string().max(1_000_000),

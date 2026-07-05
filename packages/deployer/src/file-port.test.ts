@@ -51,6 +51,33 @@ async function waitForPath(path: string): Promise<void> {
   throw new Error(`Timed out waiting for ${path}`);
 }
 
+async function supportsFileSymlink(): Promise<boolean> {
+  const base = await mkdtemp(join(tmpdir(), "ai-config-hub-symlink-check-"));
+  temporaryDirectories.push(base);
+  const source = join(base, "source.txt");
+  const link = join(base, "link.txt");
+  await writeFile(source, "source");
+  try {
+    await symlink(source, link);
+    return true;
+  } catch (error) {
+    if (
+      process.platform === "win32" &&
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error.code === "EPERM" || error.code === "EACCES")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function createDirectoryLink(target: string, link: string): Promise<void> {
+  await symlink(target, link, process.platform === "win32" ? "junction" : "dir");
+}
+
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), "ai-config-hub-deployer-"));
   temporaryDirectories.push(base);
@@ -134,7 +161,7 @@ describe("NodeDeploymentFilePort confinement", () => {
     const { allowedRoot, outsideRoot, port } = await fixture();
     const link = join(allowedRoot, "escape");
     const target = join(link, "created.txt");
-    await symlink(outsideRoot, link);
+    await createDirectoryLink(outsideRoot, link);
 
     await expect(
       port.atomicReplace({ target: absolute(target), text: "new", expectedHash: "absent" }),
@@ -143,6 +170,7 @@ describe("NodeDeploymentFilePort confinement", () => {
   });
 
   it("rejects replace and delete through symlinks escaping an allowed root", async () => {
+    if (!(await supportsFileSymlink())) return;
     const { allowedRoot, outsideRoot, port } = await fixture();
     const outsideFile = join(outsideRoot, "config.txt");
     const link = join(allowedRoot, "config.txt");
@@ -207,6 +235,7 @@ describe("NodeDeploymentFilePort confinement", () => {
   });
 
   it("creates a confined symlink and rejects escaping link sources", async () => {
+    if (!(await supportsFileSymlink())) return;
     const { allowedRoot, outsideRoot, port } = await fixture();
     const source = join(allowedRoot, "source.txt");
     const target = join(allowedRoot, "linked.txt");
@@ -554,7 +583,9 @@ describe("NodeDeploymentFilePort writes", () => {
       backupHash: hash("backup contents"),
     });
     await expect(readFile(destination, "utf8")).resolves.toBe("backup contents");
-    expect((await stat(destination)).mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32") {
+      expect((await stat(destination)).mode & 0o777).toBe(0o640);
+    }
   });
 
   it("atomically creates and replaces with mode 0600 and returns SHA-256", async () => {
@@ -564,7 +595,9 @@ describe("NodeDeploymentFilePort writes", () => {
     await expect(
       port.atomicReplace({ target: absolute(target), text: "first", expectedHash: "absent" }),
     ).resolves.toEqual({ resultingHash: hash("first") });
-    expect((await stat(target)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(target)).mode & 0o777).toBe(0o600);
+    }
 
     await expect(
       port.atomicReplace({ target: absolute(target), text: "second", expectedHash: hash("first") }),

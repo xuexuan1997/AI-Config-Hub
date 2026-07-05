@@ -7,8 +7,18 @@ import {
   type CoreUseCases,
   type UseCaseContractMap,
 } from "../use-cases/contracts.js";
-import type { AssetDisablementMethod } from "../domain/asset.js";
-import type { AdapterReadApi, ToolAdapter } from "./adapter.js";
+import type {
+  AssetDisablementMethod,
+  AssetNativeIdentity,
+  AssetSourceFile,
+} from "../domain/asset.js";
+import type {
+  AdapterReadApi,
+  DeploymentPlanningContext,
+  ParsedAsset,
+  ParseContext,
+  ToolAdapter,
+} from "./adapter.js";
 import type { AssetRepositoryGitPort, LocalGitPort } from "./git.js";
 
 describe("ToolAdapter contract", () => {
@@ -24,7 +34,21 @@ describe("ToolAdapter contract", () => {
   });
 
   it("gives adapters only a narrow read API", () => {
-    expectTypeOf<keyof AdapterReadApi>().toEqualTypeOf<"realpath" | "stat" | "list" | "readText">();
+    expectTypeOf<keyof AdapterReadApi>().toEqualTypeOf<
+      "realpath" | "stat" | "list" | "readText" | "snapshotFile"
+    >();
+  });
+
+  it("passes read access through parse and deployment planning contracts", () => {
+    expectTypeOf<ParseContext>().toHaveProperty("read").toEqualTypeOf<AdapterReadApi>();
+    expectTypeOf<ParsedAsset>().toHaveProperty("contentHash");
+    expectTypeOf<ParsedAsset>()
+      .toHaveProperty("sourceFiles")
+      .toEqualTypeOf<readonly AssetSourceFile[]>();
+    expectTypeOf<ParsedAsset>()
+      .toHaveProperty("nativeIdentity")
+      .toEqualTypeOf<AssetNativeIdentity>();
+    expectTypeOf<DeploymentPlanningContext>().toHaveProperty("resolvedOutputs");
   });
 });
 

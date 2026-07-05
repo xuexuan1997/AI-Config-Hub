@@ -7,12 +7,15 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
 import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
 import type {
+  AdapterLogger,
   AdapterEffectiveConfigDraft,
   AdapterReadApi,
   AdapterRegistration,
   Asset,
   ConversionResult,
   DeploymentFilePort,
+  DeploymentOperation,
+  DeploymentOperationType,
   DeploymentPlan,
   DeploymentRecord,
   Diagnostic,
@@ -74,6 +77,13 @@ import {
 import { TaskEventSchema, type TaskEvent, type TaskPhase } from "@ai-config-hub/api";
 import { LocalHistoryService, SystemLocalGitPort } from "@ai-config-hub/git";
 import { createStorageRepositories, openDatabase } from "@ai-config-hub/storage";
+
+const NOOP_ADAPTER_LOGGER = { debug() {}, warn() {} } satisfies AdapterLogger;
+const SOURCE_FILE_ROLE_ORDER = new Map([
+  ["primary", 0],
+  ["metadata", 1],
+  ["support", 2],
+] as const);
 
 export interface DesktopCommandServiceOptions {
   readonly userDataPath: string;
@@ -445,6 +455,7 @@ function createServices(
           pathDisplay: asset.canonicalSourcePath,
           contentHash: asset.contentHash,
           observedAt: asset.discoveredAt,
+          files: sourceFileViews(asset),
         },
         redactions: [],
       };
@@ -457,7 +468,7 @@ function createServices(
         throw unsupported("External editor integration is unavailable in this runtime");
       }
       try {
-        await runtime.sourceFileOpener.openPath(asset.canonicalSourcePath);
+        await runtime.sourceFileOpener.openPath(primarySourcePath(asset));
       } catch (error) {
         throw new AppError({
           code: "INTERNAL_ERROR",
@@ -589,9 +600,11 @@ function createServices(
         });
       }
       const targetRoot = AbsolutePathSchema.parse(resolve(request.targetScopeId));
-      const allowedRoots = [
-        ...new Set([targetRoot, ...assets.map((asset) => dirname(asset.canonicalSourcePath))]),
-      ].map((root) => AbsolutePathSchema.parse(root));
+      const targetToolId = ToolIdSchema.parse(request.targetToolKey);
+      const targetAdapter = registry.create(targetToolId, NOOP_ADAPTER_LOGGER);
+      const allowedRoots = [...new Set([targetRoot, ...sourcePackageRoots(assets)])].map((root) =>
+        AbsolutePathSchema.parse(root),
+      );
       const access = await createNodeFileAccess({ allowedRoots, platform: platform() });
       const service = new DeploymentPreviewService({
         registry,
@@ -602,9 +615,9 @@ function createServices(
       const preview = await service.preview({
         assets,
         target: {
-          toolId: ToolIdSchema.parse(request.targetToolKey),
+          toolId: targetToolId,
           resourceKind: ResourceKindSchema.parse(first.resource.kind),
-          targetSchemaVersion: SemVerSchema.parse("1.0.0"),
+          targetSchemaVersion: targetAdapter.capabilities.writtenSchemaVersion,
         },
         targetRoot,
         backupRoot: runtime.backupRoot,
@@ -1365,6 +1378,10 @@ function instrumentDeploymentRead(
       beginVerify();
       return read.readText(path);
     },
+    async snapshotFile(path) {
+      beginVerify();
+      return read.snapshotFile(path);
+    },
   };
 }
 
@@ -1632,6 +1649,46 @@ function latestEffectiveConfigs(runtime: DesktopRuntime) {
 
 function assetLoadStateFields(state: AssetListLoadState | undefined): AssetListLoadState {
   return state ?? { loadState: "loaded" };
+}
+
+function sourceFileViews(asset: Asset) {
+  return [...asset.sourceFiles].sort(compareSourceFiles).map((sourceFile) => ({
+    pathDisplay: sourceFile.path,
+    relativePath: sourceFile.relativePath,
+    role: sourceFile.role,
+    mediaType: sourceFile.mediaType,
+    isText: sourceFile.isText,
+    contentHash: sourceFile.contentHash,
+  }));
+}
+
+function compareSourceFiles(
+  left: Asset["sourceFiles"][number],
+  right: Asset["sourceFiles"][number],
+): number {
+  const leftRole = SOURCE_FILE_ROLE_ORDER.get(left.role) ?? SOURCE_FILE_ROLE_ORDER.size;
+  const rightRole = SOURCE_FILE_ROLE_ORDER.get(right.role) ?? SOURCE_FILE_ROLE_ORDER.size;
+  return leftRole === rightRole
+    ? left.relativePath.localeCompare(right.relativePath)
+    : leftRole - rightRole;
+}
+
+function primarySourcePath(asset: Asset): AbsolutePath {
+  return AbsolutePathSchema.parse(
+    asset.sourceFiles.find((sourceFile) => sourceFile.role === "primary")?.path ??
+      asset.canonicalSourcePath,
+  );
+}
+
+function sourcePackageRoots(assets: readonly Asset[]): readonly AbsolutePath[] {
+  return [
+    ...new Set(
+      assets.map((asset) => {
+        const primary = asset.sourceFiles.find((sourceFile) => sourceFile.role === "primary");
+        return dirname(primary?.path ?? asset.canonicalSourcePath);
+      }),
+    ),
+  ].map((root) => AbsolutePathSchema.parse(root));
 }
 
 function scanRegistrations(
@@ -2145,13 +2202,7 @@ function migrationPreviewResponse(
     requiredConfirmations: plan.requiredConfirmations,
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return {
-        operation: operation.kind,
-        pathDisplay: operation.targetPath,
-        beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
-        afterHash: operation.kind === "delete" ? null : contentHash(operation.nextText),
-        diff: diff?.unifiedText ?? "",
-      };
+      return plannedChangeView(operation, diff?.unifiedText ?? "");
     }),
     warnings: plan.warnings.map((warning, index) => ({
       id: DiagnosticIdSchema.parse(`diagnostic:migration:${index}`),
@@ -2301,15 +2352,45 @@ function historyDetail(
     },
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return {
-        operation: operation.kind,
-        pathDisplay: operation.targetPath,
-        beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
-        afterHash: operation.kind === "delete" ? null : contentHash(operation.nextText),
-        diff: diff?.unifiedText ?? "",
-      };
+      return plannedChangeView(operation, diff?.unifiedText ?? "");
     }),
   };
+}
+
+function plannedChangeView(operation: DeploymentOperation, diff: string) {
+  const deploymentType = operation.deploymentType ?? "generated_file";
+  return {
+    operation: operation.kind,
+    deploymentType,
+    pathDisplay: operation.targetPath,
+    ...(isSourceDeployment(deploymentType) && operation.sourcePath !== undefined
+      ? { sourcePathDisplay: operation.sourcePath }
+      : {}),
+    beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
+    afterHash: operationAfterHash(operation, deploymentType),
+    diff,
+  };
+}
+
+function operationAfterHash(
+  operation: DeploymentOperation,
+  deploymentType: DeploymentOperationType,
+): ContentHash | null {
+  if (operation.kind === "delete") return null;
+  if (isSourceDeployment(deploymentType)) {
+    if (operation.sourceHash === undefined) {
+      throw new Error("Source deployment operation is missing sourceHash");
+    }
+    return operation.sourceHash;
+  }
+  if (operation.nextText === undefined) {
+    throw new Error("Generated deployment operation is missing nextText");
+  }
+  return contentHash(operation.nextText);
+}
+
+function isSourceDeployment(deploymentType: DeploymentOperationType): boolean {
+  return deploymentType === "copy" || deploymentType === "symlink";
 }
 
 function deploymentRecordForPlan(

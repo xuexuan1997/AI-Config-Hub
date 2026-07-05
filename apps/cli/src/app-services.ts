@@ -7,10 +7,13 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
 import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
 import type {
+  AdapterLogger,
   AdapterRegistration,
   AdapterEffectiveConfigDraft,
   Asset,
   ConversionResult,
+  DeploymentOperation,
+  DeploymentOperationType,
   DeploymentPlan,
   DeploymentRecord,
   Diagnostic,
@@ -68,7 +71,13 @@ import {
   type DiagnosticReportPathRoot,
 } from "@ai-config-hub/api";
 
-const APP_VERSION = "0.2.4";
+const APP_VERSION = "0.2.11";
+const NOOP_ADAPTER_LOGGER = { debug() {}, warn() {} } satisfies AdapterLogger;
+const SOURCE_FILE_ROLE_ORDER = new Map([
+  ["primary", 0],
+  ["metadata", 1],
+  ["support", 2],
+] as const);
 
 export interface CliServiceOptions {
   readonly cwd?: string;
@@ -349,6 +358,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           pathDisplay: asset.canonicalSourcePath,
           contentHash: asset.contentHash,
           observedAt: asset.discoveredAt,
+          files: sourceFileViews(asset),
         },
         redactions: [],
       };
@@ -478,9 +488,11 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
         });
       }
       const targetRoot = AbsolutePathSchema.parse(resolve(request.targetScopeId));
-      const allowedRoots = [
-        ...new Set([targetRoot, ...assets.map((asset) => dirname(asset.canonicalSourcePath))]),
-      ].map((root) => AbsolutePathSchema.parse(root));
+      const targetToolId = ToolIdSchema.parse(request.targetToolKey);
+      const targetAdapter = registry.create(targetToolId, NOOP_ADAPTER_LOGGER);
+      const allowedRoots = [...new Set([targetRoot, ...sourcePackageRoots(assets)])].map((root) =>
+        AbsolutePathSchema.parse(root),
+      );
       const access = await createNodeFileAccess({ allowedRoots, platform: platform() });
       const service = new DeploymentPreviewService({
         registry,
@@ -491,9 +503,9 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
       const preview = await service.preview({
         assets,
         target: {
-          toolId: ToolIdSchema.parse(request.targetToolKey),
+          toolId: targetToolId,
           resourceKind: ResourceKindSchema.parse(first.resource.kind),
-          targetSchemaVersion: SemVerSchema.parse("1.0.0"),
+          targetSchemaVersion: targetAdapter.capabilities.writtenSchemaVersion,
         },
         targetRoot,
         backupRoot: runtime.backupRoot,
@@ -1383,6 +1395,39 @@ function assetLoadStateFields(state: AssetListLoadState | undefined): AssetListL
   return state ?? { loadState: "loaded" };
 }
 
+function sourceFileViews(asset: Asset) {
+  return [...asset.sourceFiles].sort(compareSourceFiles).map((sourceFile) => ({
+    pathDisplay: sourceFile.path,
+    relativePath: sourceFile.relativePath,
+    role: sourceFile.role,
+    mediaType: sourceFile.mediaType,
+    isText: sourceFile.isText,
+    contentHash: sourceFile.contentHash,
+  }));
+}
+
+function compareSourceFiles(
+  left: Asset["sourceFiles"][number],
+  right: Asset["sourceFiles"][number],
+): number {
+  const leftRole = SOURCE_FILE_ROLE_ORDER.get(left.role) ?? SOURCE_FILE_ROLE_ORDER.size;
+  const rightRole = SOURCE_FILE_ROLE_ORDER.get(right.role) ?? SOURCE_FILE_ROLE_ORDER.size;
+  return leftRole === rightRole
+    ? left.relativePath.localeCompare(right.relativePath)
+    : leftRole - rightRole;
+}
+
+function sourcePackageRoots(assets: readonly Asset[]): readonly AbsolutePath[] {
+  return [
+    ...new Set(
+      assets.map((asset) => {
+        const primary = asset.sourceFiles.find((sourceFile) => sourceFile.role === "primary");
+        return dirname(primary?.path ?? asset.canonicalSourcePath);
+      }),
+    ),
+  ].map((root) => AbsolutePathSchema.parse(root));
+}
+
 function reasonCode(reason: string): string {
   return reason
     .toUpperCase()
@@ -1417,13 +1462,7 @@ function migrationPreviewResponse(
     requiredConfirmations: plan.requiredConfirmations,
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return {
-        operation: operation.kind,
-        pathDisplay: operation.targetPath,
-        beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
-        afterHash: operation.kind === "delete" ? null : contentHash(operation.nextText),
-        diff: diff?.unifiedText ?? "",
-      };
+      return plannedChangeView(operation, diff?.unifiedText ?? "");
     }),
     warnings: plan.warnings.map((warning, index) => ({
       id: DiagnosticIdSchema.parse(`diagnostic:migration:${index}`),
@@ -1570,15 +1609,45 @@ function historyDetail(
     },
     changes: plan.operations.map((operation) => {
       const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return {
-        operation: operation.kind,
-        pathDisplay: operation.targetPath,
-        beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
-        afterHash: operation.kind === "delete" ? null : contentHash(operation.nextText),
-        diff: diff?.unifiedText ?? "",
-      };
+      return plannedChangeView(operation, diff?.unifiedText ?? "");
     }),
   };
+}
+
+function plannedChangeView(operation: DeploymentOperation, diff: string) {
+  const deploymentType = operation.deploymentType ?? "generated_file";
+  return {
+    operation: operation.kind,
+    deploymentType,
+    pathDisplay: operation.targetPath,
+    ...(isSourceDeployment(deploymentType) && operation.sourcePath !== undefined
+      ? { sourcePathDisplay: operation.sourcePath }
+      : {}),
+    beforeHash: operation.expectedTargetHash === "absent" ? null : operation.expectedTargetHash,
+    afterHash: operationAfterHash(operation, deploymentType),
+    diff,
+  };
+}
+
+function operationAfterHash(
+  operation: DeploymentOperation,
+  deploymentType: DeploymentOperationType,
+): ContentHash | null {
+  if (operation.kind === "delete") return null;
+  if (isSourceDeployment(deploymentType)) {
+    if (operation.sourceHash === undefined) {
+      throw new Error("Source deployment operation is missing sourceHash");
+    }
+    return operation.sourceHash;
+  }
+  if (operation.nextText === undefined) {
+    throw new Error("Generated deployment operation is missing nextText");
+  }
+  return contentHash(operation.nextText);
+}
+
+function isSourceDeployment(deploymentType: DeploymentOperationType): boolean {
+  return deploymentType === "copy" || deploymentType === "symlink";
 }
 
 function deploymentRecordForPlan(

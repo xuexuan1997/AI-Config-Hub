@@ -46,6 +46,22 @@ const disablementOptionsFixture = [
   },
 ] as const satisfies NonNullable<AppState["assetDetail"]>["asset"]["disablementOptions"];
 
+const assetDetailSourceFixture = {
+  pathDisplay: "/workspace/AGENTS.md",
+  contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+  observedAt: "2026-06-28T08:00:00.000Z",
+  files: [
+    {
+      pathDisplay: "/workspace/AGENTS.md",
+      relativePath: "AGENTS.md",
+      role: "primary",
+      mediaType: "text/markdown",
+      isText: true,
+      contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+    },
+  ],
+} as const satisfies NonNullable<AppState["assetDetail"]>["source"];
+
 describe("renderer project selection state", () => {
   it("builds asset disable requests with the selected disablement method", () => {
     expect(
@@ -553,6 +569,16 @@ describe("renderer project selection state", () => {
           pathDisplay: "/home/user/workspace/AGENTS.md",
           contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
           observedAt: "2026-06-28T08:00:00.000Z",
+          files: [
+            {
+              pathDisplay: "/home/user/workspace/AGENTS.md",
+              relativePath: "AGENTS.md",
+              role: "primary",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+            },
+          ],
         },
         redactions: [],
       },
@@ -786,11 +812,7 @@ describe("renderer project selection state", () => {
         references: ["README.md"],
         diagnosticIds: [DiagnosticIdSchema.parse("diagnostic-1")],
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const diagnostics = [
@@ -828,11 +850,7 @@ describe("renderer project selection state", () => {
         status: "enabled" as const,
         disablementOptions: disablementOptionsFixture,
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const effective = {
@@ -872,11 +890,7 @@ describe("renderer project selection state", () => {
         status: "enabled" as const,
         disablementOptions: disablementOptionsFixture,
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const withDetail = reducer(initialState, { type: "assetDetail", detail });
@@ -896,11 +910,7 @@ describe("renderer project selection state", () => {
         status: "enabled" as const,
         disablementOptions: disablementOptionsFixture,
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const effective = {
@@ -929,11 +939,7 @@ describe("renderer project selection state", () => {
         status: "enabled" as const,
         disablementOptions: disablementOptionsFixture,
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const effective = {
@@ -964,11 +970,7 @@ describe("renderer project selection state", () => {
         status: "enabled" as const,
         disablementOptions: disablementOptionsFixture,
       },
-      source: {
-        pathDisplay: "/workspace/AGENTS.md",
-        contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        observedAt: "2026-06-28T08:00:00.000Z",
-      },
+      source: assetDetailSourceFixture,
       redactions: [],
     };
     const effective = {
@@ -996,6 +998,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "create" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: null,
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1027,6 +1030,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "replace" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1084,6 +1088,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "replace" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1141,6 +1146,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "create" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: null,
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1191,6 +1197,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "create" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: null,
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1240,6 +1247,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "replace" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
           afterHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
@@ -1302,6 +1310,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "create" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/new.mdc",
           beforeHash: null,
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
@@ -1309,6 +1318,7 @@ describe("renderer project selection state", () => {
         },
         {
           operation: "replace" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/existing.mdc",
           beforeHash: ContentHashSchema.parse(`sha256:${"e".repeat(64)}`),
           afterHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
@@ -1466,6 +1476,7 @@ describe("renderer project selection state", () => {
       changes: [
         {
           operation: "create" as const,
+          deploymentType: "generated_file" as const,
           pathDisplay: "/workspace/.cursor/rules/generated.mdc",
           beforeHash: null,
           afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),

@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { AbsolutePathSchema } from "@ai-config-hub/shared";
 import { describe, expect, it } from "vitest";
 
@@ -113,15 +115,18 @@ describe("WatchService", () => {
     });
 
     await watcher.start();
+    const changedPath = AbsolutePathSchema.parse(
+      resolve("/project", "AGENTS.md").replaceAll("\\", "/"),
+    );
     listeners[0]?.("change", "AGENTS.md");
     expect(watcher.drain()).toBeUndefined();
     observedAtMs = 30;
 
     expect(watcher.drain()).toEqual({
       kind: "changes",
-      changedPaths: ["/project/AGENTS.md"],
+      changedPaths: [changedPath],
     });
-    expect(batches).toEqual([{ kind: "changes", changedPaths: ["/project/AGENTS.md"] }]);
+    expect(batches).toEqual([{ kind: "changes", changedPaths: [changedPath] }]);
     expect(options).toEqual([{ recursive: true }]);
     watcher.close();
   });
@@ -163,10 +168,13 @@ describe("WatchService", () => {
     });
 
     await watcher.start();
+    const reviewerPath = AbsolutePathSchema.parse(
+      resolve("/project/.codex/agents", "reviewer.toml").replaceAll("\\", "/"),
+    );
     listeners[2]?.("change", "reviewer.toml");
     expect(watcher.drain()).toEqual({
       kind: "changes",
-      changedPaths: ["/project/.codex/agents/reviewer.toml"],
+      changedPaths: [reviewerPath],
     });
 
     errorListener?.(new Error("watch failed"));
@@ -177,7 +185,7 @@ describe("WatchService", () => {
       suggestedAction: "Run a full scan or manual refresh",
     });
     expect(batches).toEqual([
-      { kind: "changes", changedPaths: ["/project/.codex/agents/reviewer.toml"] },
+      { kind: "changes", changedPaths: [reviewerPath] },
       {
         kind: "refresh_required",
         reason: "unstable",

@@ -23,7 +23,21 @@ const validAsset = {
   canonicalSourcePath: "/workspace/.codex/config.toml",
   locator: "/mcp/docs",
   sourceFormat: "toml",
-  contentHash: `sha256:${"a".repeat(64)}`,
+  contentHash: `sha256:${"b".repeat(64)}`,
+  sourceFiles: [
+    {
+      path: "/workspace/.codex/config.toml",
+      relativePath: ".codex/config.toml",
+      role: "primary",
+      mediaType: "application/toml",
+      isText: true,
+      contentHash: `sha256:${"a".repeat(64)}`,
+    },
+  ],
+  nativeIdentity: {
+    nativeId: "mcp:docs",
+    displayName: "docs",
+  },
   normalizedSchemaVersion: "1.0.0",
   adapterId: "codex.builtin",
   adapterVersion: "1.0.0",
@@ -50,6 +64,57 @@ describe("AssetSchema", () => {
 
   it("rejects undeclared top-level fields", () => {
     expect(AssetSchema.safeParse({ ...validAsset, rawSecret: "do-not-index" }).success).toBe(false);
+  });
+
+  it("requires exactly one primary source file", () => {
+    expect(AssetSchema.safeParse({ ...validAsset, sourceFiles: [] }).success).toBe(false);
+    expect(
+      AssetSchema.safeParse({
+        ...validAsset,
+        sourceFiles: [
+          ...validAsset.sourceFiles,
+          {
+            ...validAsset.sourceFiles[0],
+            path: "/workspace/.codex/agents/reviewer.toml",
+            relativePath: ".codex/agents/reviewer.toml",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires canonicalSourcePath to match the primary source file path", () => {
+    expect(
+      AssetSchema.safeParse({
+        ...validAsset,
+        canonicalSourcePath: "/workspace/.codex/other.toml",
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    "/absolute.md",
+    "C:/absolute.md",
+    "folder//file.md",
+    "folder/./file.md",
+    "folder/../file.md",
+    "../outside.md",
+  ])("rejects unsafe source relative path %s", (relativePath) => {
+    expect(
+      AssetSchema.safeParse({
+        ...validAsset,
+        sourceFiles: [{ ...validAsset.sourceFiles[0], relativePath }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("allows the package content hash to differ from the primary bytes hash", () => {
+    const result = AssetSchema.safeParse(validAsset);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.contentHash).not.toBe(result.data.sourceFiles[0]?.contentHash);
+    }
   });
 
   it("uses the locator to distinguish multiple resources in one file", () => {

@@ -151,9 +151,49 @@ describe("AssetsView", () => {
     expect(html).toContain("Also disables it in the AI tool");
     expect(html).toContain("Choose how far this disable action should go.");
     expect(html).toContain("Recommended");
-    expect(html).toContain('<button class="disable-asset-primary" type="button">Disable asset</button>');
+    expect(html).toContain(
+      '<button class="disable-asset-primary" type="button">Disable asset</button>',
+    );
     expect(html).toContain(">Close</button>");
     expect(html).not.toContain('<section class="detail-panel" aria-label="Asset detail">');
+  });
+
+  it("renders package member source files for multi-file assets", () => {
+    const detail = assetDetailFixture("asset-1", "skill:release");
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "skill:release", { resourceType: "skill" })],
+      assetDetail: {
+        ...detail,
+        asset: { ...detail.asset, resourceType: "skill" },
+        source: {
+          ...detail.source,
+          files: [
+            {
+              pathDisplay: "/workspace/.codex/skills/release/SKILL.md",
+              relativePath: "SKILL.md",
+              role: "primary",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            },
+            {
+              pathDisplay: "/workspace/.codex/skills/release/assets/logo.png",
+              relativePath: "assets/logo.png",
+              role: "support",
+              mediaType: "image/png",
+              isText: false,
+              contentHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+            },
+          ],
+        },
+      },
+    });
+
+    expect(html).toContain("Source package files");
+    expect(html).toContain("SKILL.md");
+    expect(html).toContain("assets/logo.png");
+    expect(html).toContain("support");
+    expect(html).toContain("image/png / binary");
   });
 
   it("renders disablement options as an accessible radio group defaulting to the recommended method", () => {
@@ -171,7 +211,9 @@ describe("AssetsView", () => {
     expect(html).toContain("Only hide it in AI Config Hub");
     expect(html).toContain("Also disables it in the AI tool");
     expect(html).toContain("Recommended");
-    expect(html).toContain('<button class="disable-asset-primary" type="button">Disable asset</button>');
+    expect(html).toContain(
+      '<button class="disable-asset-primary" type="button">Disable asset</button>',
+    );
   });
 
   it("localizes disablement option guidance in Simplified Chinese", () => {
@@ -397,6 +439,16 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       pathDisplay: "/workspace/AGENTS.md",
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
       observedAt: "2026-06-28T08:00:00.000Z",
+      files: [
+        {
+          pathDisplay: "/workspace/AGENTS.md",
+          relativePath: "AGENTS.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        },
+      ],
     },
     redactions: [],
   };

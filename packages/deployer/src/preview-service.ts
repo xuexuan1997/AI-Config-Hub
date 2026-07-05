@@ -18,6 +18,7 @@ import {
   type FileSnapshotPort,
   type NormalizedResource,
   type PathPolicyPort,
+  type ResolvedConvertedOutput,
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
@@ -58,7 +59,8 @@ export interface DeploymentPreviewServiceOptions {
 interface PlannedOutput {
   readonly conversionResultId: ConversionResult["conversionResultId"];
   readonly targetPath: AbsolutePath;
-  readonly text: string;
+  readonly relativePath: string;
+  readonly resolved: ResolvedConvertedOutput;
   readonly contentHash: ContentHash;
 }
 
@@ -163,6 +165,10 @@ export class DeploymentPreviewService {
       ConversionResult["conversionResultId"],
       Map<AbsolutePath, PlannedOutput>
     >();
+    const resolvedOutputsByConversion = new Map<
+      ConversionResult["conversionResultId"],
+      Map<string, ResolvedConvertedOutput>
+    >();
     const targetKeys = new Set<string>();
 
     for (const asset of assets) {
@@ -201,8 +207,42 @@ export class DeploymentPreviewService {
       for (const output of [...conversion.outputs].sort((left, right) =>
         compareText(left.relativePath, right.relativePath),
       )) {
-        if (outputHash(output.text) !== output.contentHash) {
-          throw error("VALIDATION_FAILED", "Converted output hash does not match its text");
+        let resolvedOutput: ResolvedConvertedOutput;
+        if (output.deploymentType === "generated_file") {
+          if (outputHash(output.text) !== output.contentHash) {
+            throw error("VALIDATION_FAILED", "Converted output hash does not match its text");
+          }
+          resolvedOutput = {
+            deploymentType: "generated_file",
+            contentHash: output.contentHash,
+            text: output.text,
+          };
+        } else {
+          const canonicalSource = await this.options.pathPolicy.canonicalize({
+            path: output.sourcePath,
+            allowedRoots: request.allowedRoots,
+            intent: "read",
+          });
+          if (canonicalSource.path !== output.sourcePath) {
+            throw error("VALIDATION_FAILED", "Converted output source path is not canonical");
+          }
+          const sourceSnapshot = await this.options.snapshots.snapshot({
+            path: output.sourcePath,
+            allowedRoots: request.allowedRoots,
+          });
+          if (sourceSnapshot === undefined || sourceSnapshot.contentHash !== output.sourceHash) {
+            throw error(
+              "VALIDATION_FAILED",
+              `Converted source output hash does not match current source bytes: ${output.relativePath}`,
+            );
+          }
+          resolvedOutput = {
+            deploymentType: output.deploymentType,
+            contentHash: output.contentHash,
+            sourcePath: output.sourcePath,
+            sourceHash: output.sourceHash,
+            previewText: sourceSnapshot.text,
+          };
         }
         const candidate = AbsolutePathSchema.parse(
           resolve(canonicalRoot.path, output.relativePath),
@@ -219,7 +259,8 @@ export class DeploymentPreviewService {
         const plannedOutput = {
           conversionResultId: conversion.conversionResultId,
           targetPath: canonicalTarget.path,
-          text: output.text,
+          relativePath: output.relativePath,
+          resolved: resolvedOutput,
           contentHash: output.contentHash,
         };
         outputs.push(plannedOutput);
@@ -228,6 +269,11 @@ export class DeploymentPreviewService {
           new Map<AbsolutePath, PlannedOutput>();
         conversionOutputs.set(canonicalTarget.path, plannedOutput);
         outputsByConversion.set(conversion.conversionResultId, conversionOutputs);
+        const resolvedOutputs =
+          resolvedOutputsByConversion.get(conversion.conversionResultId) ??
+          new Map<string, ResolvedConvertedOutput>();
+        resolvedOutputs.set(output.relativePath, resolvedOutput);
+        resolvedOutputsByConversion.set(conversion.conversionResultId, resolvedOutputs);
       }
     }
 
@@ -272,6 +318,9 @@ export class DeploymentPreviewService {
           canonicalRootPath: canonicalRoot.path,
         },
         currentTargetSnapshots,
+        resolvedOutputs:
+          resolvedOutputsByConversion.get(conversion.conversionResultId) ??
+          new Map<string, ResolvedConvertedOutput>(),
         signal: request.signal,
       });
       if (
@@ -340,6 +389,22 @@ export class DeploymentPreviewService {
               "Adapter deployment planning returned source operation without source metadata",
             );
           }
+          if (
+            convertedOutput.resolved.deploymentType !== deploymentType ||
+            convertedOutput.resolved.sourcePath !== operation.sourcePath ||
+            convertedOutput.resolved.sourceHash !== operation.sourceHash
+          ) {
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned source metadata that does not match conversion output",
+            );
+          }
+          if ("nextText" in operation && operation.nextText !== undefined) {
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned source operation with generated text",
+            );
+          }
           try {
             const canonicalSource = await this.options.pathPolicy.canonicalize({
               path: operation.sourcePath,
@@ -359,12 +424,25 @@ export class DeploymentPreviewService {
               "Adapter deployment planning returned a source outside allowed roots",
             );
           }
-        }
-        if (outputHash(operation.nextText) !== convertedOutput.contentHash) {
+        } else if (convertedOutput.resolved.deploymentType !== "generated_file") {
           throw error(
             "VALIDATION_FAILED",
-            "Adapter deployment planning returned content that does not match conversion output",
+            "Adapter deployment planning returned generated operation for a source output",
           );
+        }
+        if (deploymentType === "generated_file") {
+          if (operation.nextText === undefined) {
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned generated operation without text",
+            );
+          }
+          if (outputHash(operation.nextText) !== convertedOutput.contentHash) {
+            throw error(
+              "VALIDATION_FAILED",
+              "Adapter deployment planning returned content that does not match conversion output",
+            );
+          }
         }
         if (operation.expectedTargetHash !== expectedTargetHashes[operation.targetPath]) {
           throw error(
