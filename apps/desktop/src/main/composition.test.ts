@@ -351,13 +351,18 @@ describe("desktop command service composition", () => {
         "rule:AGENTS",
       );
 
-      const canonicalTargetProject = await realpath(targetProject);
-      const targetProjectId = deterministicProjectId(canonicalTargetProject);
+      const requestedTargetProjectId = deterministicProjectId(await realpath(targetProject));
       await runtime.services["scan.start"]({
         mode: "full",
         roots: [targetProject],
-        projectId: targetProjectId,
+        projectId: requestedTargetProjectId,
       });
+      const canonicalTargetProject = await realpath(targetProject);
+      const databaseAfterTarget = new DatabaseSync(join(userData, "ai-config-hub.sqlite"));
+      const targetProjectId =
+        projectIdForIndexedRoot(databaseAfterTarget, canonicalTargetProject) ??
+        expect.fail(`Expected indexed project: ${canonicalTargetProject}`);
+      databaseAfterTarget.close();
 
       const sourceAssetsAfterTargetScan = await runtime.services["assets.list"]({
         projectId: sourceProjectId,
