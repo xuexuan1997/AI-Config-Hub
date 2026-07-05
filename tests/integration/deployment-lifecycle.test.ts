@@ -233,6 +233,17 @@ describe("deployment lifecycle", () => {
       locator: "rule:lifecycle",
       sourceFormat: "markdown",
       contentHash: hash("source-lifecycle"),
+      sourceFiles: [
+        {
+          path: "/virtual/lifecycle.md",
+          relativePath: "lifecycle.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: hash("source-lifecycle"),
+        },
+      ],
+      nativeIdentity: { nativeId: "rule:lifecycle", displayName: "lifecycle" },
       normalizedSchemaVersion: "1.0.0",
       adapterId: "source-adapter",
       adapterVersion: "1.0.0",

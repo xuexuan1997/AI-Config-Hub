@@ -60,6 +60,17 @@ describe("deployment preview with real node file access", () => {
       locator: "rule:integration",
       sourceFormat: "markdown",
       contentHash: `sha256:${"a".repeat(64)}`,
+      sourceFiles: [
+        {
+          path: "/virtual/source.md",
+          relativePath: "source.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+      nativeIdentity: { nativeId: "rule:integration", displayName: "integration" },
       normalizedSchemaVersion: "1.0.0",
       adapterId: "integration-source-adapter",
       adapterVersion: "1.0.0",
