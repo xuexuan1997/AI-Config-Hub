@@ -112,6 +112,12 @@ function parseDisablementRecord(text: string): AssetDisablementRecord {
       ...(restoreRecord["movedPath"] === undefined
         ? {}
         : { movedPath: AbsolutePathSchema.parse(restoreRecord["movedPath"]) }),
+      ...(restoreRecord["sourceDirectoryPath"] === undefined
+        ? {}
+        : { sourceDirectoryPath: AbsolutePathSchema.parse(restoreRecord["sourceDirectoryPath"]) }),
+      ...(restoreRecord["movedDirectoryPath"] === undefined
+        ? {}
+        : { movedDirectoryPath: AbsolutePathSchema.parse(restoreRecord["movedDirectoryPath"]) }),
       ...(typeof restoreRecord["originalText"] === "string"
         ? { originalText: restoreRecord["originalText"] }
         : {}),
@@ -370,6 +376,12 @@ export class SqliteIndexRepository implements IndexRepository {
         ...(record.restore.movedPath === undefined
           ? {}
           : { movedPath: AbsolutePathSchema.parse(record.restore.movedPath) }),
+        ...(record.restore.sourceDirectoryPath === undefined
+          ? {}
+          : { sourceDirectoryPath: AbsolutePathSchema.parse(record.restore.sourceDirectoryPath) }),
+        ...(record.restore.movedDirectoryPath === undefined
+          ? {}
+          : { movedDirectoryPath: AbsolutePathSchema.parse(record.restore.movedDirectoryPath) }),
         ...(record.restore.originalText === undefined
           ? {}
           : { originalText: record.restore.originalText }),

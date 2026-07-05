@@ -184,7 +184,7 @@ describe("desktop command service composition", () => {
     }
   });
 
-  it("maps source copy operations in migration previews without reading generated text", async () => {
+  it("executes source copy operations from source package roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-copy-preview-"));
     temporaryDirectories.push(root);
     const sourceProject = join(root, "source");
@@ -253,6 +253,17 @@ describe("desktop command service composition", () => {
         sourcePathDisplay: supportFile.pathDisplay,
         afterHash: supportFile.contentHash,
       });
+
+      const deployment = await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: [],
+      });
+
+      expect(deployment.deploymentId).toBe(planned.id);
+      await expect(
+        readFile(join(targetProject, ".cursor", "skills", "release", "assets", "notes.md"), "utf8"),
+      ).resolves.toBe("Release notes template\n");
     } finally {
       runtime.close();
     }

@@ -48,6 +48,8 @@ export interface AssetDisablementRecord {
   readonly restore: {
     readonly sourcePath: AbsolutePath;
     readonly movedPath?: AbsolutePath;
+    readonly sourceDirectoryPath?: AbsolutePath;
+    readonly movedDirectoryPath?: AbsolutePath;
     readonly originalText?: string;
     readonly originalEntry?: unknown;
     readonly sectionKey?: string;

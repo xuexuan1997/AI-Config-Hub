@@ -134,7 +134,7 @@ describe("SystemAssetRepositoryGitPort", () => {
   it("requires explicit safe commit paths and rejects symlink escapes", async () => {
     const root = await mkdtemp(join(tmpdir(), "aich-asset-commit-"));
     const outsideRoot = await mkdtemp(join(tmpdir(), "aich-asset-outside-"));
-    await symlink(outsideRoot, join(root, "outside-link"));
+    await symlink(outsideRoot, join(root, "outside-link"), directoryLinkType());
     const git = new SystemAssetRepositoryGitPort(() =>
       Promise.resolve({ stdout: `abc123\0${authoredAt}\0asset update\0\n`, stderr: "" }),
     );
@@ -204,6 +204,10 @@ describe("SystemAssetRepositoryGitPort", () => {
     expect((await lstat(join(verify, "asset.json"))).isFile()).toBe(true);
   });
 });
+
+function directoryLinkType(): "dir" | "junction" {
+  return process.platform === "win32" ? "junction" : "dir";
+}
 
 async function git(args: readonly string[], cwd: string): Promise<void> {
   await execFileAsync("git", [...args], {

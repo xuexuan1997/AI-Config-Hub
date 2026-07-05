@@ -11,6 +11,7 @@ import type {
   DeploymentPlanningContext,
   DeploymentPlanningResult,
   DiagnosticContext,
+  ResolvedConvertedOutput,
   DiagnosticResult,
   ResolutionContext,
   ResolutionResult,
@@ -213,7 +214,7 @@ export abstract class BaseToolAdapter implements ToolAdapter {
       const nextPreviewText =
         resolvedOutput.deploymentType === "generated_file"
           ? resolvedOutput.text
-          : resolvedOutput.previewText;
+          : (resolvedOutput.previewText ?? sourcePreviewText(resolvedOutput));
       const operationMetadata =
         resolvedOutput.deploymentType === "generated_file"
           ? {
@@ -430,6 +431,12 @@ export abstract class BaseToolAdapter implements ToolAdapter {
       diagnostics,
     };
   }
+}
+
+function sourcePreviewText(
+  output: Extract<ResolvedConvertedOutput, { readonly deploymentType: "copy" | "symlink" }>,
+): string {
+  return `Binary source ${output.sourceHash} from ${output.sourcePath}\n`;
 }
 
 interface DiffLineGroup {

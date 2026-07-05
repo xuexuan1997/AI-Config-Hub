@@ -221,6 +221,37 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("persists directory restore metadata for moved package disablement records", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const source = asset("asset-a", "A");
+    await repositories.index.replaceDerivedIndex(replacement("scan-full", [source]));
+
+    await repositories.index.saveAssetDisablement({
+      assetId: AssetIdSchema.parse("asset-a"),
+      method: "move_file",
+      disabledAt: "2026-07-05T08:00:00.000Z",
+      asset: source,
+      scope,
+      tool,
+      restore: {
+        sourcePath: source.canonicalSourcePath,
+        sourceDirectoryPath: AbsolutePathSchema.parse("/project/.agents/skills/release"),
+        movedDirectoryPath: AbsolutePathSchema.parse("/user-data/disabled-assets/asset-a/release"),
+      },
+    });
+
+    const restored = await repositories.index.getAssetDisablement(AssetIdSchema.parse("asset-a"));
+
+    expect(restored?.restore).toMatchObject({
+      sourcePath: "/project/asset-a.md",
+      sourceDirectoryPath: "/project/.agents/skills/release",
+      movedDirectoryPath: "/user-data/disabled-assets/asset-a/release",
+    });
+    opened.database.close();
+  });
+
   it("can explicitly enable an adapter-reported disabled asset before the next scan", async () => {
     const databasePath = path();
     const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });

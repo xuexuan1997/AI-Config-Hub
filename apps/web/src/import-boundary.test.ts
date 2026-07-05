@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -19,7 +20,7 @@ const forbiddenImports = [
 
 describe("web app import boundary", () => {
   it("does not import privileged implementation packages", async () => {
-    const sourceFiles = await listSourceFiles(new URL(".", import.meta.url).pathname);
+    const sourceFiles = await listSourceFiles(fileURLToPath(new URL(".", import.meta.url)));
     const violations: string[] = [];
 
     for (const file of sourceFiles) {

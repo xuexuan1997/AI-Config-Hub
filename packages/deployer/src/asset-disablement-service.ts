@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import type {
@@ -274,6 +274,15 @@ async function copyThenRemove(input: {
   }
 }
 
+async function moveDirectory(input: {
+  readonly source: AbsolutePath;
+  readonly target: AbsolutePath;
+}): Promise<void> {
+  await assertMissing(input.target, "Cannot move asset package because the disabled copy exists");
+  await mkdir(dirname(input.target), { recursive: true, mode: 0o700 });
+  await rename(input.source, input.target);
+}
+
 function tomlTablePattern(tableName: string): RegExp {
   const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(String.raw`^\[mcp_servers\.("?${escaped}"?)\]\r?\n[\s\S]*?(?=^\[|\s*$)`, "m");
@@ -320,6 +329,8 @@ function restoreRecord(input: {
   readonly method: AssetDisablementMethod;
   readonly disabledAt: IsoDateTime;
   readonly movedPath?: AbsolutePath;
+  readonly sourceDirectoryPath?: AbsolutePath;
+  readonly movedDirectoryPath?: AbsolutePath;
   readonly originalText?: string;
   readonly originalEntry?: unknown;
   readonly sectionKey?: string;
@@ -337,6 +348,12 @@ function restoreRecord(input: {
     restore: {
       sourcePath: input.asset.canonicalSourcePath,
       ...(input.movedPath === undefined ? {} : { movedPath: input.movedPath }),
+      ...(input.sourceDirectoryPath === undefined
+        ? {}
+        : { sourceDirectoryPath: input.sourceDirectoryPath }),
+      ...(input.movedDirectoryPath === undefined
+        ? {}
+        : { movedDirectoryPath: input.movedDirectoryPath }),
       ...(input.originalText === undefined ? {} : { originalText: input.originalText }),
       ...(input.originalEntry === undefined ? {} : { originalEntry: input.originalEntry }),
       ...(input.sectionKey === undefined ? {} : { sectionKey: input.sectionKey }),
@@ -466,6 +483,25 @@ export class AssetDisablementService {
     if (isOpenCodeConfigAsset(asset)) {
       throw appError("VALIDATION_FAILED", "OpenCode config assets use native disablement");
     }
+    const skillPackageRoot = skillPackageSourceRoot(asset);
+    if (skillPackageRoot !== undefined) {
+      const movedDirectoryPath = AbsolutePathSchema.parse(
+        join(
+          this.options.disabledAssetsRoot,
+          safeSegment(asset.assetId),
+          basename(skillPackageRoot),
+        ),
+      );
+      await moveDirectory({ source: skillPackageRoot, target: movedDirectoryPath });
+      return restoreRecord({
+        asset,
+        scope,
+        method: "move_file",
+        disabledAt,
+        sourceDirectoryPath: skillPackageRoot,
+        movedDirectoryPath,
+      });
+    }
     const directory = join(this.options.disabledAssetsRoot, safeSegment(asset.assetId));
     const movedPath = AbsolutePathSchema.parse(
       join(directory, basename(asset.canonicalSourcePath)),
@@ -569,6 +605,21 @@ export class AssetDisablementService {
   private async restore(record: AssetDisablementRecord): Promise<void> {
     if (record.method === "hub_ignore") return;
     if (record.method === "move_file") {
+      if (record.restore.movedDirectoryPath !== undefined) {
+        const sourceDirectoryPath = record.restore.sourceDirectoryPath;
+        if (sourceDirectoryPath === undefined) {
+          throw appError("INTERNAL_ERROR", "Moved asset package restore path is missing");
+        }
+        await assertMissing(
+          sourceDirectoryPath,
+          "Cannot restore disabled asset package because a directory already exists at the original path",
+        );
+        await moveDirectory({
+          source: record.restore.movedDirectoryPath,
+          target: sourceDirectoryPath,
+        });
+        return;
+      }
       if (record.restore.movedPath === undefined) {
         throw appError("INTERNAL_ERROR", "Moved asset restore path is missing");
       }
@@ -657,4 +708,11 @@ export class AssetDisablementService {
     section[entryName] = record.restore.originalEntry;
     await writeFile(record.restore.sourcePath, renderJsonConfig(document), "utf8");
   }
+}
+
+function skillPackageSourceRoot(asset: Asset): AbsolutePath | undefined {
+  if (asset.resource.kind !== "skill") return undefined;
+  const primary = asset.sourceFiles.find((sourceFile) => sourceFile.role === "primary");
+  if (primary?.relativePath !== "SKILL.md") return undefined;
+  return AbsolutePathSchema.parse(dirname(primary.path));
 }

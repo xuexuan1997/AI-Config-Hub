@@ -9,6 +9,7 @@ import {
 } from "@ai-config-hub/adapters";
 import {
   AssetSchema,
+  type AdapterFileSnapshot,
   type ConvertedOutput,
   type ConversionResult,
   type DeploymentPlan,
@@ -26,6 +27,7 @@ import {
   ConversionResultIdSchema,
   CorrelationIdSchema,
   IsoDateTimeSchema,
+  type AbsolutePath,
   type ContentHash,
 } from "@ai-config-hub/shared";
 import { describe, expect, it, vi } from "vitest";
@@ -38,6 +40,10 @@ const BACKUP_ROOT = AbsolutePathSchema.parse("/backups");
 
 function hash(text: string): ContentHash {
   return ContentHashSchema.parse(`sha256:${createHash("sha256").update(text).digest("hex")}`);
+}
+
+function hashBytes(bytes: Uint8Array): ContentHash {
+  return ContentHashSchema.parse(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
 }
 
 function expectGeneratedOutput(
@@ -114,24 +120,59 @@ class MemoryDeploymentRepository implements DeploymentRepository {
 }
 
 function fixture(
-  current: Readonly<Record<string, string>> = {},
+  current: Readonly<Record<string, string | Uint8Array>> = {},
   options: {
     readonly registry?: AdapterRegistry;
     readonly snapshot?: FileSnapshotPort["snapshot"];
+    readonly snapshotFile?: (input: {
+      readonly path: AbsolutePath;
+      readonly allowedRoots: readonly AbsolutePath[];
+    }) => Promise<AdapterFileSnapshot | undefined>;
   } = {},
 ) {
   const repository = new MemoryDeploymentRepository();
   const snapshot = vi.fn<FileSnapshotPort["snapshot"]>(
     options.snapshot ??
       (({ path }) => {
-        const text = current[path];
-        if (text === undefined) return Promise.resolve(undefined);
+        const content = current[path];
+        if (content === undefined) return Promise.resolve(undefined);
+        if (content instanceof Uint8Array) {
+          return Promise.reject(
+            Object.assign(new Error("Configuration file is not valid UTF-8"), {
+              code: "VALIDATION_FAILED",
+            }),
+          );
+        }
         return Promise.resolve({
           canonicalPath: path,
-          text,
-          contentHash: hash(text),
+          text: content,
+          contentHash: hash(content),
           modifiedAt: NOW,
-          size: Buffer.byteLength(text),
+          size: Buffer.byteLength(content),
+        });
+      }),
+  );
+  const snapshotFile = vi.fn(
+    options.snapshotFile ??
+      (({ path }) => {
+        const content = current[path];
+        if (content === undefined) return Promise.resolve(undefined);
+        if (content instanceof Uint8Array) {
+          return Promise.resolve({
+            canonicalPath: path,
+            contentHash: hashBytes(content),
+            modifiedAt: NOW,
+            size: content.byteLength,
+            isText: false,
+          });
+        }
+        return Promise.resolve({
+          canonicalPath: path,
+          contentHash: hash(content),
+          modifiedAt: NOW,
+          size: Buffer.byteLength(content),
+          isText: true,
+          text: content,
         });
       }),
   );
@@ -148,7 +189,7 @@ function fixture(
   });
   const service = new DeploymentPreviewService({
     registry: options.registry ?? createAdapterRegistry([codexRegistration, cursorRegistration]),
-    snapshots: { snapshot },
+    snapshots: { snapshot, snapshotFile },
     pathPolicy: { canonicalize },
     deploymentRepository: repository,
   });
@@ -258,6 +299,23 @@ function sourceOutput(input: {
     deploymentType: input.deploymentType,
     relativePath: input.relativePath,
     mediaType: "text/markdown",
+    sourcePath: AbsolutePathSchema.parse(input.sourcePath),
+    sourceHash,
+    contentHash: sourceHash,
+  };
+}
+
+function binarySourceOutput(input: {
+  readonly deploymentType: "copy" | "symlink";
+  readonly relativePath: string;
+  readonly sourcePath: string;
+  readonly sourceBytes: Uint8Array;
+}): ConvertedOutput {
+  const sourceHash = hashBytes(input.sourceBytes);
+  return {
+    deploymentType: input.deploymentType,
+    relativePath: input.relativePath,
+    mediaType: "application/octet-stream",
     sourcePath: AbsolutePathSchema.parse(input.sourcePath),
     sourceHash,
     contentHash: sourceHash,
@@ -493,6 +551,81 @@ describe("DeploymentPreviewService", () => {
       expect(planDeployment).toHaveBeenCalledTimes(1);
       expect(context.repository.savePlanAndRecord).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("plans binary source copy outputs using byte snapshots instead of UTF-8 snapshots", async () => {
+    const sourcePath = AbsolutePathSchema.parse("/source/logo.png");
+    const sourceBytes = new Uint8Array([137, 80, 78, 71, 0, 1, 2, 3]);
+    const sourceHash = hashBytes(sourceBytes);
+    const context = fixture(
+      { [sourcePath]: sourceBytes },
+      {
+        registry: registryWithConvertedOutputs([
+          binarySourceOutput({
+            deploymentType: "copy",
+            relativePath: ".agents/skills/release/assets/logo.png",
+            sourcePath,
+            sourceBytes,
+          }),
+        ]),
+      },
+    );
+
+    const result = await context.service.preview({
+      ...request([asset("binary-copy")]),
+      allowedRoots: [ROOT, AbsolutePathSchema.parse("/source")],
+    });
+
+    expect(result.plan.operations).toEqual([
+      expect.objectContaining({
+        kind: "create",
+        deploymentType: "copy",
+        sourcePath,
+        sourceHash,
+        targetPath: "/target/.agents/skills/release/assets/logo.png",
+      }),
+    ]);
+    expect(result.plan.diffs[0]?.unifiedText).toContain("+Binary source");
+    expect(context.snapshot).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: sourcePath }),
+    );
+  });
+
+  it("plans binary source copy replacements over existing binary targets", async () => {
+    const sourcePath = AbsolutePathSchema.parse("/source/logo.png");
+    const targetPath = AbsolutePathSchema.parse("/target/.agents/skills/release/assets/logo.png");
+    const sourceBytes = new Uint8Array([137, 80, 78, 71, 1]);
+    const targetBytes = new Uint8Array([137, 80, 78, 71, 0]);
+    const context = fixture(
+      { [sourcePath]: sourceBytes, [targetPath]: targetBytes },
+      {
+        registry: registryWithConvertedOutputs([
+          binarySourceOutput({
+            deploymentType: "copy",
+            relativePath: ".agents/skills/release/assets/logo.png",
+            sourcePath,
+            sourceBytes,
+          }),
+        ]),
+      },
+    );
+
+    const result = await context.service.preview({
+      ...request([asset("binary-replace")]),
+      allowedRoots: [ROOT, AbsolutePathSchema.parse("/source")],
+    });
+
+    expect(result.plan.operations).toEqual([
+      expect.objectContaining({
+        kind: "replace",
+        deploymentType: "copy",
+        targetPath,
+        sourcePath,
+        expectedTargetHash: hashBytes(targetBytes),
+      }),
+    ]);
+    expect(result.plan.diffs[0]?.unifiedText).toContain("-Binary target");
+    expect(result.plan.diffs[0]?.unifiedText).toContain("+Binary source");
   });
 
   it("rejects adapter-planned copy and symlink operations outside allowed source roots", async () => {

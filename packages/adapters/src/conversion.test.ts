@@ -373,7 +373,7 @@ describe("built-in conversion matrix", () => {
     expect(support).not.toHaveProperty("text");
   });
 
-  it("omits binary Skill package files from built-in conversion and reports a partial warning", async () => {
+  it("copies binary Skill package files as part of full package conversion", async () => {
     const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
 
     const result = await adapter.convert({
@@ -382,12 +382,20 @@ describe("built-in conversion matrix", () => {
       signal: neverCancelled,
     });
 
-    expect(result.level).toBe("partial");
-    if (result.level !== "partial") throw new Error("expected partial conversion");
-    expect(result.outputs.map(({ relativePath }) => relativePath)).not.toContain(
-      ".agents/skills/release/assets/logo.png",
+    expect(result.level).toBe("full");
+    if (result.level === "unsupported") throw new Error("unexpected unsupported conversion");
+    expect(result.outputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          deploymentType: "copy",
+          relativePath: ".agents/skills/release/assets/logo.png",
+          mediaType: "image/png",
+          sourcePath: "/project/.agents/skills/release/assets/logo.png",
+          sourceHash: hash("png bytes"),
+          contentHash: hash("png bytes"),
+        }),
+      ]),
     );
-    expect(result.warnings.join("\n")).toContain("assets/logo.png");
   });
 
   it("uses target Skill naming rules for Cursor and OpenCode frontmatter and directories", async () => {

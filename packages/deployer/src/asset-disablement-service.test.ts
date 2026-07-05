@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -213,6 +213,68 @@ function asset(input: {
   });
 }
 
+function skillPackageAsset(input: {
+  readonly id: string;
+  readonly toolId: Asset["toolId"];
+  readonly skillRoot: string;
+  readonly scope: Scope;
+}): Asset {
+  const primaryPath = AbsolutePathSchema.parse(join(input.skillRoot, "SKILL.md"));
+  return AssetSchema.parse({
+    ...asset({
+      id: input.id,
+      toolId: input.toolId,
+      sourcePath: primaryPath,
+      locator: "skill:release",
+      sourceFormat: "skill-package",
+      scope: input.scope,
+      resource: {
+        kind: "skill",
+        data: {
+          name: "release",
+          description: "Release safely",
+          instructions: "Run release checks.",
+          references: [],
+          extensions: {},
+        },
+      },
+    }),
+    contentHash: HASH,
+    sourceFiles: [
+      {
+        path: primaryPath,
+        relativePath: "SKILL.md",
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash: HASH,
+      },
+      {
+        path: AbsolutePathSchema.parse(join(input.skillRoot, "references", "checklist.md")),
+        relativePath: "references/checklist.md",
+        role: "support",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash: HASH,
+      },
+      {
+        path: AbsolutePathSchema.parse(join(input.skillRoot, "scripts", "ship.js")),
+        relativePath: "scripts/ship.js",
+        role: "support",
+        mediaType: "text/javascript",
+        isText: true,
+        contentHash: HASH,
+      },
+    ],
+    nativeIdentity: {
+      nativeId: "skill:.agents/skills/release",
+      displayName: "release",
+      directoryName: "release",
+      invocationName: "release",
+    },
+  });
+}
+
 function serviceFor(indexRepository: IndexRepository, root: string): AssetDisablementService {
   const disabledAssetsRoot = AbsolutePathSchema.parse(join(root, "disabled-assets"));
   return new AssetDisablementService({
@@ -227,6 +289,54 @@ function parseJson<T>(text: string): T {
 }
 
 describe("AssetDisablementService", () => {
+  it("moves and restores an entire Skill package directory when disabling by file movement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-disable-skill-package-"));
+    temporaryDirectories.push(root);
+    const skillRoot = join(root, ".agents", "skills", "release");
+    await mkdir(join(skillRoot, "references"), { recursive: true });
+    await mkdir(join(skillRoot, "scripts"), { recursive: true });
+    await writeFile(
+      join(skillRoot, "SKILL.md"),
+      "---\nname: release\ndescription: Release safely\n---\nRun release checks.\n",
+      "utf8",
+    );
+    await writeFile(join(skillRoot, "references", "checklist.md"), "Check version.\n", "utf8");
+    await writeFile(join(skillRoot, "scripts", "ship.js"), "console.log('ship');\n", "utf8");
+    const assetScope = scope("codex");
+    const index = new MemoryIndexRepository(
+      skillPackageAsset({
+        id: "asset-codex-skill",
+        toolId: "codex",
+        skillRoot,
+        scope: assetScope,
+      }),
+      assetScope,
+    );
+    const service = serviceFor(index, root);
+
+    await service.disable({
+      assetId: AssetIdSchema.parse("asset-codex-skill"),
+      method: "move_file",
+    });
+
+    await expect(readFile(join(skillRoot, "SKILL.md"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(join(skillRoot, "references", "checklist.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    await service.enable({ assetId: AssetIdSchema.parse("asset-codex-skill") });
+
+    expect(await readFile(join(skillRoot, "SKILL.md"), "utf8")).toContain("Run release checks.");
+    expect(await readFile(join(skillRoot, "references", "checklist.md"), "utf8")).toBe(
+      "Check version.\n",
+    );
+    expect(await readFile(join(skillRoot, "scripts", "ship.js"), "utf8")).toBe(
+      "console.log('ship');\n",
+    );
+  });
+
   it("sets and restores OpenCode native disable fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-disable-native-"));
     temporaryDirectories.push(root);

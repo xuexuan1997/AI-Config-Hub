@@ -14,6 +14,15 @@ export interface FileSnapshot {
   readonly size: number;
 }
 
+export interface FileContentSnapshot {
+  readonly canonicalPath: AbsolutePath;
+  readonly contentHash: ContentHash;
+  readonly modifiedAt: IsoDateTime;
+  readonly size: number;
+  readonly isText: boolean;
+  readonly text?: string;
+}
+
 export interface PathPolicyPort {
   canonicalize(input: {
     readonly path: string;
@@ -32,6 +41,14 @@ export interface FileSnapshotPort {
     readonly path: AbsolutePath;
     readonly allowedRoots: readonly AbsolutePath[];
   }): Promise<FileSnapshot | undefined>;
+  /**
+   * Binary-aware snapshot for source files that are copied or symlinked rather
+   * than parsed as text configuration.
+   */
+  snapshotFile?(input: {
+    readonly path: AbsolutePath;
+    readonly allowedRoots: readonly AbsolutePath[];
+  }): Promise<FileContentSnapshot | undefined>;
 }
 
 export interface DeploymentFilePort {

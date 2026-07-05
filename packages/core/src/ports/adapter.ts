@@ -217,7 +217,7 @@ export type ResolvedConvertedOutput =
       readonly contentHash: ContentHash;
       readonly sourcePath: AbsolutePath;
       readonly sourceHash: ContentHash;
-      readonly previewText: string;
+      readonly previewText?: string;
     };
 
 export interface VerificationContext {

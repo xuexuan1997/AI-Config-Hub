@@ -87,7 +87,7 @@ describe("SystemLocalGitPort", () => {
     ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
 
     await mkdir(join(root, "links"));
-    await symlink(outside, join(root, "links", "outside"));
+    await symlink(outside, join(root, "links", "outside"), directoryLinkType());
     await expect(
       git.snapshot({ root, paths: ["links/outside"], message: "bad", authoredAt }),
     ).rejects.toMatchObject({ code: "SYMLINK_ESCAPE" });
@@ -97,3 +97,7 @@ describe("SystemLocalGitPort", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 });
+
+function directoryLinkType(): "dir" | "junction" {
+  return process.platform === "win32" ? "junction" : "dir";
+}

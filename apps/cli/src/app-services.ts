@@ -1288,8 +1288,16 @@ function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOpti
   } else if (isFileDisablementAsset(asset)) {
     options.push({
       method: "move_file",
-      label: "Move file out of the tool load path",
-      description: "Move the source file into the AI Config Hub disabled-assets area.",
+      ...(asset.resource.kind === "skill"
+        ? {
+            label: "Move package out of the tool load path",
+            description:
+              "Move the skill package directory into the AI Config Hub disabled-assets area.",
+          }
+        : {
+            label: "Move file out of the tool load path",
+            description: "Move the source file into the AI Config Hub disabled-assets area.",
+          }),
     });
   }
 
@@ -1682,9 +1690,12 @@ function rollbackRoots(runtime: CliRuntime, deploymentRecordId: string): readonl
 }
 
 function deploymentRoots(record: DeploymentRecord): readonly AbsolutePath[] {
-  const roots = record.operations.map((operation) =>
+  const roots = record.operations.flatMap((operation) => [
     existingAncestor(dirname(operation.targetPath)),
-  );
+    ...(operation.sourcePath === undefined
+      ? []
+      : [existingAncestor(dirname(operation.sourcePath))]),
+  ]);
   return [...new Set(roots)];
 }
 

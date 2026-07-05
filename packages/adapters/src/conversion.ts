@@ -218,22 +218,11 @@ function renderSkill(target: ToolId, resource: SkillResource, asset?: Asset): Sk
   const outputs: ConvertedOutput[] = [output(`${skillRoot}/SKILL.md`, "text/markdown", skillText)];
 
   if (asset !== undefined) {
-    const omittedBinary: string[] = [];
     for (const source of [...asset.sourceFiles].sort((left, right) =>
       left.relativePath.localeCompare(right.relativePath),
     )) {
       if (source.role === "primary") continue;
-      if (!source.isText) {
-        omittedBinary.push(source.relativePath);
-        continue;
-      }
       outputs.push(sourceOutput(`${skillRoot}/${source.relativePath}`, source));
-    }
-    if (omittedBinary.length > 0) {
-      droppedFields.push("/sourceFiles");
-      warnings.push(
-        `Binary Skill package files are not copied by built-in conversion: ${omittedBinary.join(", ")}`,
-      );
     }
   }
 

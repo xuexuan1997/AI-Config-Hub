@@ -233,6 +233,10 @@ export async function createNodeFileAccess(
       readonly path: AbsolutePath;
       readonly allowedRoots: readonly AbsolutePath[];
     }) => snapshot(input.path, input.allowedRoots),
+    snapshotFile: async (input: {
+      readonly path: AbsolutePath;
+      readonly allowedRoots: readonly AbsolutePath[];
+    }) => snapshotFile(input.path, input.allowedRoots),
   });
   return Object.freeze({ read, snapshots, pathPolicy });
 }

@@ -26,15 +26,29 @@ function asset(
     data: { name: id, instructions: `Instruction for ${id}.`, globs: [], extensions: {} },
   },
 ) {
+  const canonicalSourcePath = `/source/${id}.md`;
+  const contentHash = hash(`content:${id}`);
+  const locator = `${resource.kind}:${id}`;
   return AssetSchema.parse({
     assetId: id,
     toolId: "codex",
     resource,
     scopeId: "scope-user",
-    canonicalSourcePath: `/source/${id}.md`,
-    locator: `${resource.kind}:${id}`,
+    canonicalSourcePath,
+    locator,
     sourceFormat: "markdown",
-    contentHash: hash(`content:${id}`),
+    contentHash,
+    sourceFiles: [
+      {
+        path: canonicalSourcePath,
+        relativePath: `${id}.md`,
+        role: "primary",
+        mediaType: "text/markdown",
+        isText: true,
+        contentHash,
+      },
+    ],
+    nativeIdentity: { nativeId: locator, displayName: id },
     normalizedSchemaVersion: "1.0.0",
     adapterId: "fixture-adapter",
     adapterVersion: "1.0.0",

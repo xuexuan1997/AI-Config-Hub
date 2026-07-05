@@ -14,6 +14,7 @@ import {
   type DeploymentPlan,
   type DeploymentRecord,
   type DeploymentRepository,
+  type FileContentSnapshot,
   type FileSnapshot,
   type FileSnapshotPort,
   type NormalizedResource,
@@ -226,10 +227,7 @@ export class DeploymentPreviewService {
           if (canonicalSource.path !== output.sourcePath) {
             throw error("VALIDATION_FAILED", "Converted output source path is not canonical");
           }
-          const sourceSnapshot = await this.options.snapshots.snapshot({
-            path: output.sourcePath,
-            allowedRoots: request.allowedRoots,
-          });
+          const sourceSnapshot = await this.sourceSnapshot(output.sourcePath, request.allowedRoots);
           if (sourceSnapshot === undefined || sourceSnapshot.contentHash !== output.sourceHash) {
             throw error(
               "VALIDATION_FAILED",
@@ -241,7 +239,7 @@ export class DeploymentPreviewService {
             contentHash: output.contentHash,
             sourcePath: output.sourcePath,
             sourceHash: output.sourceHash,
-            previewText: sourceSnapshot.text,
+            ...(sourceSnapshot.text === undefined ? {} : { previewText: sourceSnapshot.text }),
           };
         }
         const candidate = AbsolutePathSchema.parse(
@@ -282,10 +280,9 @@ export class DeploymentPreviewService {
     const expectedTargetHashes: Record<AbsolutePath, ContentHash | "absent"> = {};
     for (const output of outputs) {
       request.signal.throwIfAborted();
-      const current: FileSnapshot | undefined = await this.options.snapshots.snapshot({
-        path: output.targetPath,
-        allowedRoots: [canonicalRoot.path],
-      });
+      const current: FileSnapshot | undefined = await this.targetSnapshot(output.targetPath, [
+        canonicalRoot.path,
+      ]);
       request.signal.throwIfAborted();
       expectedTargetHashes[output.targetPath] = current?.contentHash ?? "absent";
       if (current !== undefined) currentTargetSnapshots.set(output.targetPath, current);
@@ -582,6 +579,54 @@ export class DeploymentPreviewService {
     await this.options.deploymentRepository.savePlanAndRecord({ plan, record });
     return Object.freeze({ plan, record, conversions: Object.freeze(conversions) });
   }
+
+  private async sourceSnapshot(
+    path: AbsolutePath,
+    allowedRoots: readonly AbsolutePath[],
+  ): Promise<FileContentSnapshot | undefined> {
+    if (this.options.snapshots.snapshotFile !== undefined) {
+      return this.options.snapshots.snapshotFile({ path, allowedRoots });
+    }
+    const snapshot = await this.options.snapshots.snapshot({ path, allowedRoots });
+    if (snapshot === undefined) return undefined;
+    return { ...snapshot, isText: true };
+  }
+
+  private async targetSnapshot(
+    path: AbsolutePath,
+    allowedRoots: readonly AbsolutePath[],
+  ): Promise<FileSnapshot | undefined> {
+    try {
+      return await this.options.snapshots.snapshot({ path, allowedRoots });
+    } catch (cause) {
+      if (
+        !isTextSnapshotValidationError(cause) ||
+        this.options.snapshots.snapshotFile === undefined
+      )
+        throw cause;
+    }
+
+    const snapshot = await this.options.snapshots.snapshotFile({ path, allowedRoots });
+    if (snapshot === undefined) return undefined;
+    return {
+      canonicalPath: snapshot.canonicalPath,
+      contentHash: snapshot.contentHash,
+      modifiedAt: snapshot.modifiedAt,
+      size: snapshot.size,
+      text:
+        snapshot.text ??
+        `Binary target ${snapshot.contentHash} at ${path} (${String(snapshot.size)} bytes)\n`,
+    };
+  }
+}
+
+function isTextSnapshotValidationError(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    cause.code === "VALIDATION_FAILED"
+  );
 }
 
 function planningWarnings(diagnostics: readonly AdapterDiagnostic[]): readonly string[] {

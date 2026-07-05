@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -397,7 +397,7 @@ describe("CLI command service composition", () => {
     }
   });
 
-  it("maps source copy operations in migration previews without reading generated text", async () => {
+  it("executes source copy operations from source package roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-source-copy-preview-"));
     temporaryDirectories.push(root);
     const sourceProject = join(root, "source");
@@ -465,6 +465,17 @@ describe("CLI command service composition", () => {
         sourcePathDisplay: supportFile.pathDisplay,
         afterHash: supportFile.contentHash,
       });
+
+      const deployment = await runtime.services["deployment.execute"]({
+        planId: preview.planId,
+        confirmedPlanHash: preview.planHash,
+        confirmations: [],
+      });
+
+      expect(deployment.deploymentId).toBe(planned.id);
+      await expect(
+        readFile(join(targetProject, ".cursor", "skills", "release", "assets", "notes.md"), "utf8"),
+      ).resolves.toBe("Release notes template\n");
     } finally {
       runtime.close();
     }

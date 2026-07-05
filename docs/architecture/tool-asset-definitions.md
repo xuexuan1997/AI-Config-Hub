@@ -460,11 +460,11 @@ above:
 - Skill package parsing is implemented for the built-in adapters. `SKILL.md` is
   the primary source file, package members are stored in `Asset.sourceFiles`,
   and tool-native identity is stored in `Asset.nativeIdentity`.
-- Binary support files are included in package hashes and incremental
-  invalidation. They are not deployed by built-in conversion in phase 1; their
-  omission makes conversion `partial` with an explicit warning.
-- Text support files are emitted as `copy` source outputs during Skill
-  migration. Generated `SKILL.md` outputs remain semantic text outputs.
+- Binary and text support files are included in package hashes and incremental
+  invalidation. Built-in Skill conversion emits them as `copy` source outputs
+  during migration. Generated `SKILL.md` outputs remain semantic text outputs.
+- Skill package disablement moves and restores the package directory for
+  directory-shaped skills rather than only moving the primary `SKILL.md` file.
 - Incremental scans reparse the owning Skill when a support or metadata file
   changes, and diagnostics located on support files roll up to the owning Skill
   asset.
@@ -473,7 +473,7 @@ above:
   missing target-required descriptions, Cursor rule activation metadata, and
   MCP fields that cannot be represented in the target format.
 
-Remaining phase 1 limits are intentional: binary support-file migration is not
-implemented, rule hierarchy and MCP scope migration remain narrower than native
-tools, and cross-resource package dependencies such as Skill-to-agent/MCP
-relationships still require future package-level planning.
+Remaining phase 1 limits are intentional: rule hierarchy and MCP scope
+migration remain narrower than native tools, and cross-resource package
+dependencies such as Skill-to-agent/MCP relationships still require future
+package-level planning.
