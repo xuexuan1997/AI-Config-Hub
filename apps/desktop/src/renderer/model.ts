@@ -19,6 +19,7 @@ export type AssetStatus = NonNullable<CommandResponse<"assets.list">["items"][nu
 export type DeploymentConfirmation = CommandRequest<"deployment.execute">["confirmations"][number];
 export type ThemeSetting = NonNullable<CommandResponse<"settings.get">["values"]["theme"]>;
 export type LanguageSetting = NonNullable<CommandResponse<"settings.get">["values"]["language"]>;
+export type LocalDataCategory = CommandRequest<"settings.clearLocalData">["categories"][number];
 export type AssetStatusChangeRequest =
   | {
       readonly command: "assets.disable";
@@ -50,10 +51,22 @@ export const LANGUAGE_SETTING_OPTIONS = [
   "en",
   "zh-CN",
 ] as const satisfies readonly LanguageSetting[];
+export const LOCAL_DATA_CATEGORY_OPTIONS = [
+  "scan_cache",
+  "deployment_history",
+  "settings",
+] as const satisfies readonly LocalDataCategory[];
 
 export interface AppSettingsValues {
   readonly theme: ThemeSetting;
   readonly language: LanguageSetting;
+}
+
+export interface ClearLocalDataState {
+  readonly selectedCategories: readonly LocalDataCategory[];
+  readonly confirmed: boolean;
+  readonly status: "idle" | "clearing" | "cleared" | "error";
+  readonly result?: CommandResponse<"settings.clearLocalData">;
 }
 
 export interface AppSettingsState {
@@ -62,6 +75,7 @@ export interface AppSettingsState {
   readonly status: "idle" | "loading" | "ready" | "saving" | "error";
   readonly readOnlyRecovery: boolean;
   readonly requiresRestart: boolean;
+  readonly clearLocalData: ClearLocalDataState;
 }
 
 export interface MigrationFormState {
@@ -188,11 +202,28 @@ export type AppAction =
   | { readonly type: "settingsSaving" }
   | { readonly type: "settingsFailed" }
   | { readonly type: "settingsLoaded"; readonly settings: CommandResponse<"settings.get"> }
-  | { readonly type: "settingsUpdated"; readonly settings: CommandResponse<"settings.update"> };
+  | { readonly type: "settingsUpdated"; readonly settings: CommandResponse<"settings.update"> }
+  | {
+      readonly type: "settingsClearLocalDataCategory";
+      readonly category: LocalDataCategory;
+      readonly selected: boolean;
+    }
+  | { readonly type: "settingsClearLocalDataConfirmation"; readonly confirmed: boolean }
+  | { readonly type: "settingsClearLocalDataStarted" }
+  | { readonly type: "settingsClearLocalDataFailed" }
+  | {
+      readonly type: "settingsClearLocalDataCompleted";
+      readonly result: CommandResponse<"settings.clearLocalData">;
+    };
 
 const DEFAULT_SETTINGS_VALUES: AppSettingsValues = {
   theme: "system",
   language: "system",
+};
+const DEFAULT_CLEAR_LOCAL_DATA_STATE: ClearLocalDataState = {
+  selectedCategories: ["scan_cache"],
+  confirmed: false,
+  status: "idle",
 };
 
 export const initialState: AppState = {
@@ -212,6 +243,7 @@ export const initialState: AppState = {
     status: "idle",
     readOnlyRecovery: false,
     requiresRestart: false,
+    clearLocalData: DEFAULT_CLEAR_LOCAL_DATA_STATE,
   },
 };
 
@@ -255,6 +287,30 @@ function clearAssetDetail(state: AppState): AppState {
   void discardedAssetDetail;
   void discardedEffective;
   return withoutAsset;
+}
+
+function clearScanCacheState(state: AppState): AppState {
+  const {
+    assetDetail: discardedAssetDetail,
+    effective: discardedEffective,
+    preview: discardedPreview,
+    ...withoutScanDetails
+  } = state;
+  void discardedAssetDetail;
+  void discardedEffective;
+  void discardedPreview;
+  return {
+    ...withoutScanDetails,
+    scanStatus: "idle",
+    assets: [],
+    migrationSourceAssets: [],
+    migrationTargetAssets: [],
+    diagnostics: [],
+    diagnosticCounts: { info: 0, warning: 0, error: 0 },
+    migration: { ...state.migration, sourceAssetIds: [] },
+    deploymentConfirmed: false,
+    deploymentConfirmationGrants: [],
+  };
 }
 
 type MigrationAssetSummary = AppState["assets"][number];
@@ -559,6 +615,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
           status: "ready",
           readOnlyRecovery: action.settings.readOnlyRecovery,
           requiresRestart: false,
+          clearLocalData: state.settings.clearLocalData,
         },
       };
     case "settingsUpdated":
@@ -570,8 +627,75 @@ export function reducer(state: AppState, action: AppAction): AppState {
           revision: action.settings.revision,
           status: "ready",
           requiresRestart: action.settings.requiresRestart,
+          clearLocalData: state.settings.clearLocalData,
         },
       };
+    case "settingsClearLocalDataCategory": {
+      const selected = new Set(state.settings.clearLocalData.selectedCategories);
+      if (action.selected) selected.add(action.category);
+      else selected.delete(action.category);
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          clearLocalData: {
+            ...state.settings.clearLocalData,
+            selectedCategories: LOCAL_DATA_CATEGORY_OPTIONS.filter((category) =>
+              selected.has(category),
+            ),
+            confirmed: false,
+            status: "idle",
+          },
+        },
+      };
+    }
+    case "settingsClearLocalDataConfirmation":
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          clearLocalData: {
+            ...state.settings.clearLocalData,
+            confirmed: action.confirmed,
+            status: "idle",
+          },
+        },
+      };
+    case "settingsClearLocalDataStarted":
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          clearLocalData: { ...state.settings.clearLocalData, status: "clearing" },
+        },
+      };
+    case "settingsClearLocalDataFailed":
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          clearLocalData: { ...state.settings.clearLocalData, status: "error" },
+        },
+      };
+    case "settingsClearLocalDataCompleted": {
+      const clearLocalData = {
+        selectedCategories: ["scan_cache"] as const,
+        confirmed: false,
+        status: "cleared" as const,
+        result: action.result,
+      };
+      const settings = {
+        ...state.settings,
+        ...(action.result.categories.includes("settings")
+          ? { values: DEFAULT_SETTINGS_VALUES, revision: 0, requiresRestart: false }
+          : {}),
+        clearLocalData,
+      };
+      const updated = { ...state, settings };
+      return action.result.categories.includes("scan_cache")
+        ? clearScanCacheState(updated)
+        : updated;
+    }
   }
 }
 
@@ -592,6 +716,16 @@ export function settingsUpdateRequestForState(
     expectedRevision: state.settings.revision,
     patch,
   };
+}
+
+export function settingsClearLocalDataRequestForState(
+  state: AppState,
+): CommandRequest<"settings.clearLocalData"> | undefined {
+  const categories = LOCAL_DATA_CATEGORY_OPTIONS.filter((category) =>
+    state.settings.clearLocalData.selectedCategories.includes(category),
+  );
+  if (categories.length === 0 || !state.settings.clearLocalData.confirmed) return undefined;
+  return { categories, confirmation: "clear-local-data" };
 }
 
 function shouldRetireDeploymentPreview(activeTask: ActiveTaskState): boolean {

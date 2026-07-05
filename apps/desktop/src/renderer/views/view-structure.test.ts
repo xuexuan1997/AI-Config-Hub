@@ -120,6 +120,7 @@ describe("desktop renderer view structure", () => {
         state: {
           ...initialState,
           settings: {
+            ...initialState.settings,
             values: { theme: "dark", language: "en" },
             revision: 2,
             status: "ready",
@@ -130,6 +131,9 @@ describe("desktop renderer view structure", () => {
         onThemeChange: vi.fn(),
         onLanguageChange: vi.fn(),
         onReload: vi.fn(),
+        onLocalDataCategoryChange: vi.fn(),
+        onLocalDataConfirmationChange: vi.fn(),
+        onClearLocalData: vi.fn(),
       }),
     );
 
@@ -141,6 +145,16 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('id="settings-language"');
     expect(html).toContain('value="zh-CN">Simplified Chinese</option>');
     expect(html).toContain("Revision 2");
+    expect(html).toContain('class="settings-local-data"');
+    expect(html).toContain('id="settings-clear-scan_cache"');
+    expect(html).toContain('id="settings-clear-deployment_history"');
+    expect(html).toContain('id="settings-clear-settings"');
+    expect(html).toContain("Scan cache");
+    expect(html).toContain("Deployment history");
+    expect(html).toContain("Settings preferences");
+    expect(html).toContain('id="settings-clear-confirmation"');
+    expect(html).toContain("Clear selected data");
+    expect(html).toContain("Database migration backups");
   });
 
   it("renders core desktop chrome and settings in Simplified Chinese", () => {
@@ -167,6 +181,9 @@ describe("desktop renderer view structure", () => {
         onThemeChange: vi.fn(),
         onLanguageChange: vi.fn(),
         onReload: vi.fn(),
+        onLocalDataCategoryChange: vi.fn(),
+        onLocalDataConfirmationChange: vi.fn(),
+        onClearLocalData: vi.fn(),
       }),
     );
 

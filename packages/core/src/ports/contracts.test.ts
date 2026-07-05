@@ -97,6 +97,7 @@ describe("core use cases", () => {
       "history.list",
       "history.get",
       "settings.get",
+      "settings.clearLocalData",
       "settings.update",
     ]);
     expectTypeOf<keyof CoreUseCases>().toEqualTypeOf<(typeof CORE_COMMAND_NAMES)[number]>();

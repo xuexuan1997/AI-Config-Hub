@@ -1,18 +1,29 @@
 import { localeForState, t } from "../i18n.js";
-import type { AppState, LanguageSetting, ThemeSetting } from "../model.js";
-import { LANGUAGE_SETTING_OPTIONS, THEME_SETTING_OPTIONS } from "../model.js";
+import type { AppState, LanguageSetting, LocalDataCategory, ThemeSetting } from "../model.js";
+import {
+  LANGUAGE_SETTING_OPTIONS,
+  LOCAL_DATA_CATEGORY_OPTIONS,
+  THEME_SETTING_OPTIONS,
+} from "../model.js";
 
 export function SettingsView(props: {
   readonly state: AppState;
   readonly onThemeChange: (theme: ThemeSetting) => void;
   readonly onLanguageChange: (language: LanguageSetting) => void;
   readonly onReload: () => void;
+  readonly onLocalDataCategoryChange: (category: LocalDataCategory, selected: boolean) => void;
+  readonly onLocalDataConfirmationChange: (confirmed: boolean) => void;
+  readonly onClearLocalData: () => void;
 }) {
   const locale = localeForState(props.state);
+  const clearLocalData = props.state.settings.clearLocalData;
   const disabled =
     props.state.settings.status === "loading" ||
     props.state.settings.status === "saving" ||
+    clearLocalData.status === "clearing" ||
     props.state.settings.readOnlyRecovery;
+  const canClear =
+    !disabled && clearLocalData.confirmed && clearLocalData.selectedCategories.length > 0;
 
   return (
     <section className="settings-panel">
@@ -65,6 +76,78 @@ export function SettingsView(props: {
         {props.state.settings.requiresRestart ? <span>{t(locale, "Restart required")}</span> : null}
         {props.state.settings.readOnlyRecovery ? <span>{t(locale, "Recovery mode")}</span> : null}
       </div>
+      <section className="settings-local-data" aria-labelledby="settings-local-data-title">
+        <div className="settings-section-heading">
+          <p className="eyebrow">{t(locale, "Local data")}</p>
+          <h2 id="settings-local-data-title">{t(locale, "Cache and persisted data")}</h2>
+        </div>
+        <p className="settings-note">
+          {t(
+            locale,
+            "Clear local copies stored by AI Config Hub. Project configuration files are not deleted.",
+          )}
+        </p>
+        <div className="settings-clear-options">
+          {LOCAL_DATA_CATEGORY_OPTIONS.map((category) => (
+            <label
+              className="settings-check-row"
+              htmlFor={`settings-clear-${category}`}
+              key={category}
+            >
+              <input
+                checked={clearLocalData.selectedCategories.includes(category)}
+                disabled={disabled}
+                id={`settings-clear-${category}`}
+                type="checkbox"
+                onChange={(event) =>
+                  props.onLocalDataCategoryChange(category, event.currentTarget.checked)
+                }
+              />
+              <span>
+                <strong>{localDataCategoryLabel(locale, category)}</strong>
+                <small>{localDataCategoryDescription(locale, category)}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+        <label className="settings-check-row confirm" htmlFor="settings-clear-confirmation">
+          <input
+            checked={clearLocalData.confirmed}
+            disabled={disabled || clearLocalData.selectedCategories.length === 0}
+            id="settings-clear-confirmation"
+            type="checkbox"
+            onChange={(event) => props.onLocalDataConfirmationChange(event.currentTarget.checked)}
+          />
+          <span>
+            <strong>{t(locale, "I understand this clears selected local data.")}</strong>
+            <small>
+              {t(
+                locale,
+                "Database migration backups, deployment backups, and disabled asset recovery files are retained.",
+              )}
+            </small>
+          </span>
+        </label>
+        <div className="settings-local-data-actions">
+          <button
+            className="danger-button"
+            disabled={!canClear}
+            type="button"
+            onClick={props.onClearLocalData}
+          >
+            {clearLocalData.status === "clearing"
+              ? t(locale, "Clearing")
+              : t(locale, "Clear selected data")}
+          </button>
+          {clearLocalData.result === undefined ? null : (
+            <span>
+              {t(locale, "Last cleared {count} records", {
+                count: localDataCount(clearLocalData.result),
+              })}
+            </span>
+          )}
+        </div>
+      </section>
     </section>
   );
 }
@@ -110,4 +193,37 @@ function settingsStatusLabel(
     case "error":
       return t(locale, "Error");
   }
+}
+
+function localDataCategoryLabel(
+  locale: ReturnType<typeof localeForState>,
+  category: LocalDataCategory,
+): string {
+  switch (category) {
+    case "scan_cache":
+      return t(locale, "Scan cache");
+    case "deployment_history":
+      return t(locale, "Deployment history");
+    case "settings":
+      return t(locale, "Settings preferences");
+  }
+}
+
+function localDataCategoryDescription(
+  locale: ReturnType<typeof localeForState>,
+  category: LocalDataCategory,
+): string {
+  switch (category) {
+    case "scan_cache":
+      return t(locale, "Rebuildable asset index, diagnostics, and scan task records.");
+    case "deployment_history":
+      return t(locale, "Deployment records and local Git history snapshots when safe.");
+    case "settings":
+      return t(locale, "Theme and language preferences stored in this app.");
+  }
+}
+
+function localDataCount(result: AppState["settings"]["clearLocalData"]["result"]): number {
+  if (result === undefined) return 0;
+  return Object.values(result.counts).reduce((total, item) => total + item, 0);
 }

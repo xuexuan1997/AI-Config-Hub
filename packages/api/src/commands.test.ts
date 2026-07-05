@@ -30,6 +30,7 @@ describe("command schemas", () => {
       "scan.cancel",
       "scan.start",
       "scan.status",
+      "settings.clearLocalData",
       "settings.get",
       "settings.update",
     ]);
@@ -156,6 +157,38 @@ describe("command schemas", () => {
     ).toBe(true);
   });
 
+  it("requires explicit confirmation and unique categories before clearing local data", () => {
+    const schema =
+      CommandRequestSchemas["settings.clearLocalData" as keyof typeof CommandRequestSchemas];
+    expect(
+      schema.safeParse({
+        categories: ["scan_cache", "settings"],
+        confirmation: "clear-local-data",
+      }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ categories: [], confirmation: "clear-local-data" }).success).toBe(
+      false,
+    );
+    expect(
+      schema.safeParse({
+        categories: ["scan_cache", "scan_cache"],
+        confirmation: "clear-local-data",
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        categories: ["scan_cache"],
+        confirmation: "delete-everything",
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        categories: ["source_configs"],
+        confirmation: "clear-local-data",
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates a request and response fixture for every command", () => {
     const requests: Record<string, unknown> = {
       "scan.start": { mode: "full" },
@@ -195,6 +228,10 @@ describe("command schemas", () => {
       "history.list": {},
       "history.get": { id: "deployment-1" },
       "settings.get": {},
+      "settings.clearLocalData": {
+        categories: ["scan_cache", "deployment_history", "settings"],
+        confirmation: "clear-local-data",
+      },
       "settings.update": { patch: { theme: "dark", language: "zh-CN" }, expectedRevision: 1 },
     };
     const progress = { phase: "queued", completed: 0, total: null, unit: "items" };
@@ -428,6 +465,27 @@ describe("command schemas", () => {
         values: { theme: "system", language: "system" },
         revision: 1,
         readOnlyRecovery: false,
+      },
+      "settings.clearLocalData": {
+        clearedAt: now,
+        categories: ["scan_cache", "deployment_history", "settings"],
+        counts: {
+          scanRuns: 1,
+          projects: 1,
+          scopes: 1,
+          assets: 1,
+          diagnostics: 1,
+          deploymentRecords: 1,
+          deploymentOperations: 1,
+          settings: 1,
+          localHistoryDirectories: 1,
+        },
+        retained: {
+          databaseBackups: true,
+          deploymentBackups: true,
+          disabledAssets: true,
+        },
+        requiresRestart: false,
       },
       "settings.update": {
         values: { theme: "dark", language: "zh-CN" },

@@ -10,6 +10,10 @@ import type {
 import type { OpenDatabaseResult } from "./database.js";
 import { SqliteDeploymentRepository } from "./deployment-repository.js";
 import { SqliteIndexRepository } from "./index-repository.js";
+import {
+  SqliteMaintenanceRepository,
+  type StorageMaintenanceRepository,
+} from "./maintenance-repository.js";
 import { SqliteSettingsRepository } from "./settings-repository.js";
 import { SqliteTaskRepository } from "./task-repository.js";
 
@@ -19,6 +23,7 @@ export interface StorageRepositories {
   readonly settings: SettingsRepository;
   readonly tasks: TaskRepository;
   readonly deployments: DeploymentRepository;
+  readonly maintenance: StorageMaintenanceRepository;
 }
 
 export function createStorageRepositories(opened: OpenDatabaseResult): StorageRepositories {
@@ -29,5 +34,6 @@ export function createStorageRepositories(opened: OpenDatabaseResult): StorageRe
     settings: new SqliteSettingsRepository(opened.database, readOnly),
     tasks: new SqliteTaskRepository(opened.database, readOnly),
     deployments: new SqliteDeploymentRepository(opened.database, readOnly),
+    maintenance: new SqliteMaintenanceRepository(opened.database, readOnly),
   });
 }

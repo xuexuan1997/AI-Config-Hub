@@ -39,6 +39,7 @@ export interface HistoryUseCase {
 
 export interface SettingsUseCase {
   readonly get: CoreUseCases["settings.get"];
+  readonly clearLocalData: CoreUseCases["settings.clearLocalData"];
   readonly update: CoreUseCases["settings.update"];
 }
 
@@ -72,6 +73,7 @@ export function createCoreUseCases(services: ApplicationServices): CoreUseCases 
     "history.list": services.history.list,
     "history.get": services.history.get,
     "settings.get": services.settings.get,
+    "settings.clearLocalData": services.settings.clearLocalData,
     "settings.update": services.settings.update,
   });
 }

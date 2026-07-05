@@ -20,6 +20,7 @@ import {
   refreshAssets,
   refreshDiagnostics,
   scanActionForTaskEvent,
+  settingsClearLocalDataRequestForState,
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
   type AssetDisablementMethod,
@@ -108,6 +109,39 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "message",
         message: formatLocalizedUiError(locale, error, "Update settings"),
+      });
+    }
+  }
+
+  async function clearLocalData() {
+    const request = settingsClearLocalDataRequestForState(state);
+    if (request === undefined) {
+      dispatch({
+        type: "message",
+        message: t(locale, "Select local data and confirm clearing before continuing."),
+      });
+      return;
+    }
+
+    dispatch({ type: "settingsClearLocalDataStarted" });
+    try {
+      const response = await props.api.invoke("settings.clearLocalData", request);
+      if (response.ok) {
+        dispatch({ type: "settingsClearLocalDataCompleted", result: response.data });
+        dispatch({
+          type: "message",
+          message: localDataClearedMessage(locale, response.data),
+        });
+        if (response.data.categories.includes("settings")) await loadSettings();
+      } else {
+        dispatch({ type: "settingsClearLocalDataFailed" });
+        dispatch({ type: "message", message: localizeUiMessage(locale, response.error.message) });
+      }
+    } catch (error) {
+      dispatch({ type: "settingsClearLocalDataFailed" });
+      dispatch({
+        type: "message",
+        message: formatLocalizedUiError(locale, error, "Clear local data"),
       });
     }
   }
@@ -416,8 +450,23 @@ export function App(props: { readonly api: DesktopApi }) {
           onThemeChange={(theme) => void updateSettings({ theme })}
           onLanguageChange={(language) => void updateSettings({ language })}
           onReload={() => void loadSettings()}
+          onLocalDataCategoryChange={(category, selected) =>
+            dispatch({ type: "settingsClearLocalDataCategory", category, selected })
+          }
+          onLocalDataConfirmationChange={(confirmed) =>
+            dispatch({ type: "settingsClearLocalDataConfirmation", confirmed })
+          }
+          onClearLocalData={() => void clearLocalData()}
         />
       ) : null}
     </AppShell>
   );
+}
+
+function localDataClearedMessage(
+  locale: ReturnType<typeof localeForState>,
+  result: CommandResponse<"settings.clearLocalData">,
+): string {
+  const count = Object.values(result.counts).reduce((total, item) => total + item, 0);
+  return t(locale, "Cleared selected local data ({count} records).", { count });
 }

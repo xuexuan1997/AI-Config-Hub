@@ -427,6 +427,187 @@ describe("storage repositories", () => {
     second.database.close();
   });
 
+  it("clears scan cache and public settings while retaining protected recovery data", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    await repositories.index.replaceDerivedIndex(
+      replacement(
+        "scan-full",
+        [asset("asset-a", "A")],
+        [
+          diagnosticForAssetPath({
+            diagnosticId: "diagnostic-a",
+            scanRunId: "scan-full",
+            sourcePath: "/project/asset-a.md",
+          }),
+        ],
+      ),
+    );
+    await repositories.settings.updatePublic({
+      expectedRevision: "0",
+      settings: {
+        readOnlyMode: false,
+        customScanRoots: [AbsolutePathSchema.parse("/project")],
+        theme: "dark",
+        language: "zh-CN",
+        scanHints: true,
+        fileWatching: true,
+        pathDisplay: "full",
+      },
+    });
+    opened.database
+      .prepare(
+        `INSERT INTO database_backups(
+          id, domain_id, reason, state, backup_path_normalized, manifest_version, manifest_hash,
+          database_file_hash, database_schema_version, source_database_id, size_bytes, created_at,
+          verified_at
+        ) VALUES('database-backup-row', 'database-backup-1', 'migration', 'verified',
+          '/backups/before-v1.sqlite', 1, 'sha256:${"b".repeat(64)}', 'sha256:${"c".repeat(64)}',
+          1, 'source-db', 10, 1, 1)`,
+      )
+      .run();
+    opened.database
+      .prepare(
+        `INSERT INTO asset_disablement_records(
+          asset_domain_id, method, record_json, created_at, updated_at
+        ) VALUES('asset-a', 'hub_ignore', '{}', 1, 1)`,
+      )
+      .run();
+    const databaseBackupsBefore = rowCount(opened.database, "database_backups");
+    const revisionBefore = userVersion(opened.database);
+
+    const result = await repositories.maintenance.clearLocalData({
+      categories: ["scan_cache", "settings"],
+      now: "2026-07-04T08:00:00.000Z",
+    });
+
+    expect(result.counts).toMatchObject({
+      scanRuns: 1,
+      projects: 1,
+      scopes: 1,
+      assets: 1,
+      diagnostics: 1,
+      settings: 1,
+    });
+    expect(result.retained).toEqual({
+      databaseBackups: true,
+      deploymentBackups: true,
+      disabledAssets: true,
+    });
+    expect(rowCount(opened.database, "scan_runs")).toBe(0);
+    expect(rowCount(opened.database, "projects")).toBe(0);
+    expect(rowCount(opened.database, "scopes")).toBe(0);
+    expect(rowCount(opened.database, "assets")).toBe(0);
+    expect(rowCount(opened.database, "diagnostics")).toBe(0);
+    expect(rowCount(opened.database, "settings")).toBe(0);
+    expect(rowCount(opened.database, "tools")).toBeGreaterThan(0);
+    expect(rowCount(opened.database, "database_backups")).toBe(databaseBackupsBefore);
+    expect(rowCount(opened.database, "schema_migrations")).toBeGreaterThan(0);
+    expect(rowCount(opened.database, "asset_disablement_records")).toBe(1);
+    expect(userVersion(opened.database)).toBeGreaterThan(revisionBefore);
+    expect(await repositories.settings.getPublic()).toMatchObject({
+      revision: "0",
+      settings: { theme: "system", language: "system" },
+    });
+    opened.database.close();
+  });
+
+  it("does not clear deployment history while backup or recovery records still need it", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const deployment = deploymentFixture({
+      deploymentRecordId: "deployment-protected",
+      deploymentPlanId: "plan-protected",
+      createdAt: "2026-06-21T08:00:00.000Z",
+      hashSeed: "d",
+    });
+    await repositories.deployments.savePlanAndRecord(deployment);
+    const deploymentRow = opened.database
+      .prepare("SELECT id FROM deployments WHERE domain_id = 'deployment-protected'")
+      .get() as { readonly id: string };
+    opened.database
+      .prepare(
+        `INSERT INTO recovery_locks(
+          canonical_target_key, deployment_id, reason, created_at, recovery_fence_token
+        ) VALUES('/project/AGENTS.md', ?, 'failed_deployment', 1, 1)`,
+      )
+      .run(deploymentRow.id);
+    await expect(
+      repositories.maintenance.clearLocalData({
+        categories: ["deployment_history"],
+        now: "2026-07-04T08:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("Resolve recovery or rollback state"),
+    });
+    expect(rowCount(opened.database, "deployments")).toBe(1);
+    expect(rowCount(opened.database, "recovery_locks")).toBe(1);
+    opened.database.close();
+  });
+
+  it("clears deployment history when recovery locks are already resolved", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const deployment = deploymentFixture({
+      deploymentRecordId: "deployment-resolved",
+      deploymentPlanId: "plan-resolved",
+      createdAt: "2026-06-21T08:00:00.000Z",
+      hashSeed: "e",
+    });
+    await repositories.deployments.savePlanAndRecord(deployment);
+    const deploymentRow = opened.database
+      .prepare("SELECT id FROM deployments WHERE domain_id = 'deployment-resolved'")
+      .get() as { readonly id: string };
+    opened.database
+      .prepare(
+        `INSERT INTO recovery_locks(
+          canonical_target_key, deployment_id, reason, created_at, resolved_at,
+          resolution_evidence_json, recovery_fence_token
+        ) VALUES('/project/resolved.md', ?, 'failed_deployment', 1, 2, '{}', 1)`,
+      )
+      .run(deploymentRow.id);
+
+    const result = await repositories.maintenance.clearLocalData({
+      categories: ["deployment_history"],
+      now: "2026-07-04T08:00:00.000Z",
+    });
+
+    expect(result.counts.deploymentRecords).toBe(1);
+    expect(rowCount(opened.database, "deployments")).toBe(0);
+    expect(rowCount(opened.database, "recovery_locks")).toBe(0);
+    opened.database.close();
+  });
+
+  it("rejects maintenance cleanup preflight and mutation in read-only recovery mode", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    opened.database.close();
+
+    const recovery = await openDatabase({
+      path: databasePath,
+      appVersion: "0.1.0",
+      migrations: [{ ...initialMigrationForDrift(), checksum: `sha256:${"f".repeat(64)}` }],
+    });
+    const repositories = createStorageRepositories(recovery);
+
+    await expect(
+      repositories.maintenance.assertCanClearLocalData({
+        categories: ["deployment_history"],
+      }),
+    ).rejects.toMatchObject({ code: "READ_ONLY_RECOVERY" });
+    await expect(
+      repositories.maintenance.clearLocalData({
+        categories: ["deployment_history"],
+        now: "2026-07-04T08:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "READ_ONLY_RECOVERY" });
+    recovery.database.close();
+  });
+
   it("round-trips deployment plans and records and blocks recovery-mode mutations", async () => {
     const databasePath = path();
     const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
@@ -566,6 +747,18 @@ describe("storage repositories", () => {
 function initialMigrationForDrift() {
   // Loaded lazily to keep the test fixture focused on repository behavior.
   return { version: 1, name: "initial", sql: "" } as const;
+}
+
+function rowCount(database: { prepare(sql: string): { get(): unknown } }, table: string): number {
+  const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
+    readonly count: number;
+  };
+  return row.count;
+}
+
+function userVersion(database: { prepare(sql: string): { get(): unknown } }): number {
+  return (database.prepare("PRAGMA user_version").get() as { readonly user_version: number })
+    .user_version;
 }
 
 function deploymentFixture(input: {

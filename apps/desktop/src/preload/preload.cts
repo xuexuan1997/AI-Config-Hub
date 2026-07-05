@@ -28,6 +28,7 @@ const API_COMMAND_NAMES = [
   "history.list",
   "history.get",
   "settings.get",
+  "settings.clearLocalData",
   "settings.update",
 ] as const;
 const supportedCommandNames = new Set<string>(API_COMMAND_NAMES);

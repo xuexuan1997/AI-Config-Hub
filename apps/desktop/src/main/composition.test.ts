@@ -16,10 +16,14 @@ import { DatabaseSync } from "node:sqlite";
 
 import { createTaskEventCursor, type TaskEvent } from "@ai-config-hub/api";
 import { WatchService } from "@ai-config-hub/scanner";
-import { ContentHashSchema } from "@ai-config-hub/shared";
+import { AbsolutePathSchema, ContentHashSchema } from "@ai-config-hub/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createDesktopCommandServices, DesktopTaskEvents } from "./composition.js";
+import {
+  createDesktopCommandServices,
+  DesktopTaskEvents,
+  resetLocalHistory,
+} from "./composition.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -98,6 +102,117 @@ describe("desktop command service composition", () => {
     } finally {
       runtime.close();
     }
+  });
+
+  it("clears selected local data and recreates local Git history privately", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-clear-local-data-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    const historyRoot = join(userData, "history", "local-git");
+    const deploymentBackups = join(userData, "backups", "deployments");
+    await mkdir(project);
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-07-04T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await writeFile(join(historyRoot, "stale-history.txt"), "remove me\n", "utf8");
+      await writeFile(join(deploymentBackups, "retained.backup"), "keep me\n", "utf8");
+      await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const initial = await runtime.services["settings.get"]({});
+      await runtime.services["settings.update"]({
+        expectedRevision: initial.revision,
+        patch: { theme: "dark", language: "zh-CN" },
+      });
+      expect((await runtime.services["assets.list"]({ limit: 50 })).items).not.toHaveLength(0);
+
+      const result = await runtime.services["settings.clearLocalData"]({
+        categories: ["scan_cache", "settings", "deployment_history"],
+        confirmation: "clear-local-data",
+      });
+
+      expect(result).toMatchObject({
+        clearedAt: "2026-07-04T08:00:00.000Z",
+        categories: ["scan_cache", "settings", "deployment_history"],
+        retained: {
+          databaseBackups: true,
+          deploymentBackups: true,
+          disabledAssets: true,
+        },
+        requiresRestart: false,
+      });
+      expect(result.counts.assets).toBeGreaterThan(0);
+      expect(result.counts.settings).toBe(1);
+      expect(result.counts.localHistoryDirectories).toBe(1);
+      expect((await runtime.services["assets.list"]({ limit: 50 })).items).toHaveLength(0);
+      expect((await runtime.services["settings.get"]({})).values).toMatchObject({
+        theme: "system",
+        language: "system",
+      });
+      await expect(readFile(join(project, "AGENTS.md"), "utf8")).resolves.toBe(
+        "Use local TypeScript conventions.\n",
+      );
+      await expect(readFile(join(deploymentBackups, "retained.backup"), "utf8")).resolves.toBe(
+        "keep me\n",
+      );
+      await expect(access(join(historyRoot, "stale-history.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(readdir(historyRoot)).resolves.toEqual([]);
+      if (platform() !== "win32") expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("reports zero local history directories when deployment history is already empty", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-empty-history-clear-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    const historyRoot = join(userData, "history", "local-git");
+    await mkdir(project);
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-07-04T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      const result = await runtime.services["settings.clearLocalData"]({
+        categories: ["deployment_history"],
+        confirmation: "clear-local-data",
+      });
+
+      expect(result.counts.localHistoryDirectories).toBe(0);
+      await expect(readdir(historyRoot)).resolves.toEqual([]);
+      if (platform() !== "win32") expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("rejects local history reset when the target is outside the controlled app data path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-history-guard-"));
+    temporaryDirectories.push(root);
+    const appData = join(root, "user-data");
+    const outside = join(root, "outside", "history", "local-git");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "sentinel.txt"), "keep\n", "utf8");
+
+    await expect(
+      resetLocalHistory({
+        appDataRoot: AbsolutePathSchema.parse(appData),
+        historyRoot: AbsolutePathSchema.parse(outside),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(readFile(join(outside, "sentinel.txt"), "utf8")).resolves.toBe("keep\n");
   });
 
   it("opens asset source files through the injected opener", async () => {

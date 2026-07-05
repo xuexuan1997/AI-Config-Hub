@@ -233,6 +233,28 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         revision: 1,
         readOnlyRecovery: false,
       }),
+    "settings.clearLocalData": () =>
+      Promise.resolve({
+        clearedAt: now,
+        categories: ["scan_cache"],
+        counts: {
+          scanRuns: 0,
+          projects: 0,
+          scopes: 0,
+          assets: 0,
+          diagnostics: 0,
+          deploymentRecords: 0,
+          deploymentOperations: 0,
+          settings: 0,
+          localHistoryDirectories: 0,
+        },
+        retained: {
+          databaseBackups: true,
+          deploymentBackups: true,
+          disabledAssets: true,
+        },
+        requiresRestart: false,
+      }),
     "settings.update": () =>
       Promise.resolve({
         values: { pathDisplay: "full" },

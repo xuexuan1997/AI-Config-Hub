@@ -25,6 +25,7 @@ import {
   reducer,
   refreshAssets,
   settingsUpdateRequestForState,
+  settingsClearLocalDataRequestForState,
   taskActionForTaskEvent,
   scanActionForTaskEvent,
   type AppState,
@@ -675,6 +676,128 @@ describe("renderer project selection state", () => {
       revision: 4,
       status: "ready",
     });
+  });
+
+  it("builds confirmed local data cleanup requests and resets confirmation on category edits", () => {
+    const withDeploymentHistory = reducer(initialState, {
+      type: "settingsClearLocalDataCategory",
+      category: "deployment_history",
+      selected: true,
+    });
+    const confirmed = reducer(withDeploymentHistory, {
+      type: "settingsClearLocalDataConfirmation",
+      confirmed: true,
+    });
+    const changedAfterConfirming = reducer(confirmed, {
+      type: "settingsClearLocalDataCategory",
+      category: "settings",
+      selected: true,
+    });
+
+    expect(settingsClearLocalDataRequestForState(withDeploymentHistory)).toBeUndefined();
+    expect(settingsClearLocalDataRequestForState(confirmed)).toEqual({
+      categories: ["scan_cache", "deployment_history"],
+      confirmation: "clear-local-data",
+    });
+    expect(changedAfterConfirming.settings.clearLocalData.confirmed).toBe(false);
+    expect(settingsClearLocalDataRequestForState(changedAfterConfirming)).toBeUndefined();
+  });
+
+  it("clears stale renderer scan state after local scan cache cleanup succeeds", () => {
+    const withData: AppState = {
+      ...initialState,
+      projectRoot: "/workspace",
+      scanStatus: "complete",
+      assets: [
+        {
+          id: AssetIdSchema.parse("asset-1"),
+          toolKey: "codex",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "rule:AGENTS",
+          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 1, error: 0 },
+        },
+      ],
+      migrationSourceAssets: [
+        {
+          id: AssetIdSchema.parse("asset-2"),
+          toolKey: "cursor",
+          resourceType: "rule",
+          scopeKind: "project",
+          logicalKey: "rule:.cursor/rules/local.mdc",
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+          status: "enabled",
+          diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        },
+      ],
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-1"),
+          code: "PARTIAL_CONVERSION",
+          severity: "warning",
+          message: "Review conversion",
+          suggestedAction: "Inspect the converted output",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("deployment-plan:clear-cache"),
+        planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        sourceHashes: {
+          [AssetIdSchema.parse("asset-1")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        },
+        targetHashes: {},
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [],
+        requiredConfirmations: [],
+        warnings: [],
+        expiresAt: "2026-07-04T08:10:00.000Z",
+      },
+      deploymentConfirmed: true,
+      deploymentConfirmationGrants: ["overwrite"],
+    };
+
+    const cleared = reducer(withData, {
+      type: "settingsClearLocalDataCompleted",
+      result: {
+        clearedAt: "2026-07-04T08:00:00.000Z",
+        categories: ["scan_cache", "settings"],
+        counts: {
+          scanRuns: 1,
+          projects: 1,
+          scopes: 2,
+          assets: 2,
+          diagnostics: 1,
+          deploymentRecords: 0,
+          deploymentOperations: 0,
+          settings: 1,
+          localHistoryDirectories: 0,
+        },
+        retained: {
+          databaseBackups: true,
+          deploymentBackups: true,
+          disabledAssets: true,
+        },
+        requiresRestart: false,
+      },
+    });
+
+    expect(cleared.projectRoot).toBe("/workspace");
+    expect(cleared.scanStatus).toBe("idle");
+    expect(cleared.assets).toEqual([]);
+    expect(cleared.migrationSourceAssets).toEqual([]);
+    expect(cleared.diagnostics).toEqual([]);
+    expect(cleared.diagnosticCounts).toEqual({ info: 0, warning: 0, error: 0 });
+    expect(cleared.preview).toBeUndefined();
+    expect(cleared.deploymentConfirmed).toBe(false);
+    expect(cleared.settings.values).toEqual({ theme: "system", language: "system" });
+    expect(cleared.settings.revision).toBe(0);
+    expect(cleared.settings.clearLocalData.status).toBe("cleared");
+    expect(cleared.settings.clearLocalData.confirmed).toBe(false);
   });
 
   it("maps deployment task events to active task progress and recovery state", () => {
