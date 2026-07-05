@@ -97,6 +97,40 @@ async function writeUserConfigFixtures(home: string): Promise<void> {
 }
 
 describe("CLI command service composition", () => {
+  it("clears local Git history through the settings clear command", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-clear-local-data-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    const historyRoot = join(userData, "history", "local-git");
+    await mkdir(project);
+    const runtime = await createCliCommandServices({
+      cwd: project,
+      env: { AI_CONFIG_HUB_USER_DATA: userData },
+      now: () => "2026-07-04T08:00:00.000Z",
+    });
+
+    try {
+      const empty = await runtime.services["settings.clearLocalData"]({
+        categories: ["deployment_history"],
+        confirmation: "clear-local-data",
+      });
+      expect(empty.counts.localHistoryDirectories).toBe(0);
+
+      await writeFile(join(historyRoot, "stale-history.txt"), "remove me\n", "utf8");
+      const cleared = await runtime.services["settings.clearLocalData"]({
+        categories: ["deployment_history"],
+        confirmation: "clear-local-data",
+      });
+
+      expect(cleared.counts.localHistoryDirectories).toBe(1);
+      await expect(readdir(historyRoot)).resolves.toEqual([]);
+      if (platform() !== "win32") expect((await stat(historyRoot)).mode & 0o777).toBe(0o700);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("defaults scans to project plus standard user-level tool configuration roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-cli-home-scan-"));
     temporaryDirectories.push(root);

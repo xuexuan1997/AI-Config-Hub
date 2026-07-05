@@ -42,6 +42,7 @@ export const CORE_COMMAND_NAMES = [
   "history.list",
   "history.get",
   "settings.get",
+  "settings.clearLocalData",
   "settings.update",
 ] as const;
 export type CoreCommandName = (typeof CORE_COMMAND_NAMES)[number];
@@ -224,6 +225,37 @@ export interface SettingsUpdateRequest {
   readonly patch: Partial<PublicSettings>;
 }
 
+export type LocalDataCategory = "scan_cache" | "deployment_history" | "settings";
+
+export interface ClearLocalDataRequest {
+  readonly categories: readonly LocalDataCategory[];
+  readonly confirmation: "clear-local-data";
+}
+
+export interface ClearLocalDataCounts {
+  readonly scanRuns: number;
+  readonly projects: number;
+  readonly scopes: number;
+  readonly assets: number;
+  readonly diagnostics: number;
+  readonly deploymentRecords: number;
+  readonly deploymentOperations: number;
+  readonly settings: number;
+  readonly localHistoryDirectories: number;
+}
+
+export interface ClearLocalDataResult {
+  readonly clearedAt: IsoDateTime;
+  readonly categories: readonly LocalDataCategory[];
+  readonly counts: ClearLocalDataCounts;
+  readonly retained: {
+    readonly databaseBackups: true;
+    readonly deploymentBackups: true;
+    readonly disabledAssets: true;
+  };
+  readonly requiresRestart: false;
+}
+
 export interface UseCaseContractMap {
   readonly "scan.start": { readonly input: StartScanRequest; readonly output: StartScanResult };
   readonly "scan.status": { readonly input: ScanStatusRequest; readonly output: ScanStatusResult };
@@ -277,6 +309,10 @@ export interface UseCaseContractMap {
   readonly "settings.get": {
     readonly input: Readonly<Record<never, never>>;
     readonly output: { readonly revision: string; readonly settings: PublicSettings };
+  };
+  readonly "settings.clearLocalData": {
+    readonly input: ClearLocalDataRequest;
+    readonly output: ClearLocalDataResult;
   };
   readonly "settings.update": {
     readonly input: SettingsUpdateRequest;

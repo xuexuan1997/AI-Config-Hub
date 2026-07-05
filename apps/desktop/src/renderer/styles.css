@@ -1064,6 +1064,86 @@ pre {
   gap: 0.4rem 0.85rem;
 }
 
+.settings-local-data {
+  border-top: 1px solid var(--top-border);
+  display: grid;
+  gap: 0.85rem;
+  padding-top: 1rem;
+}
+
+.settings-section-heading {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settings-section-heading h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.settings-note {
+  color: var(--subtle-text);
+  margin: 0;
+}
+
+.settings-clear-options {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.settings-check-row {
+  align-items: flex-start;
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: min-content 1fr;
+  padding: 0.7rem;
+}
+
+.settings-check-row input {
+  margin-top: 0.25rem;
+  min-width: auto;
+}
+
+.settings-check-row span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settings-check-row small {
+  color: var(--subtle-text);
+  line-height: 1.35;
+}
+
+.settings-check-row.confirm {
+  border-color: var(--warning-border);
+}
+
+.settings-local-data-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.settings-local-data-actions span {
+  color: var(--subtle-text);
+}
+
+.danger-button {
+  background: var(--panel-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.danger-button:not(:disabled):hover {
+  background: var(--danger-text);
+  border-color: var(--danger-text);
+  color: var(--panel-bg);
+}
+
 .app-shell {
   grid-template-columns: 210px minmax(0, 1fr);
 }

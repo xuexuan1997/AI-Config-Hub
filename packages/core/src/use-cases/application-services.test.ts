@@ -29,7 +29,7 @@ describe("ApplicationServices", () => {
       migration: { preview: vi.fn() },
       deployments: { execute: vi.fn(), rollback: vi.fn() },
       history: { list: vi.fn(), get: getHistory },
-      settings: { get: vi.fn(), update: vi.fn() },
+      settings: { get: vi.fn(), clearLocalData: vi.fn(), update: vi.fn() },
     } as unknown as ApplicationServices;
 
     const useCases = createCoreUseCases(services);
@@ -73,6 +73,7 @@ describe("ApplicationServices", () => {
       "history.list",
       "history.get",
       "settings.get",
+      "settings.clearLocalData",
       "settings.update",
     ]);
   });

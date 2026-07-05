@@ -219,6 +219,7 @@ function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceM
     "history.list": vi.fn(),
     "history.get": vi.fn(),
     "settings.get": vi.fn(),
+    "settings.clearLocalData": vi.fn(),
     "settings.update": vi.fn(),
   };
   return { ...base, ...overrides } as CommandServiceMap;

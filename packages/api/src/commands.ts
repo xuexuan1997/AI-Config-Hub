@@ -223,6 +223,32 @@ const SettingsUpdateRequestSchema = z
   .object({ patch: PublicSettingsPatchSchema, expectedRevision: z.number().int().nonnegative() })
   .strict()
   .readonly();
+const LocalDataCategorySchema = z.enum(["scan_cache", "deployment_history", "settings"]);
+const ClearLocalDataCategoriesSchema = z
+  .array(LocalDataCategorySchema)
+  .min(1)
+  .max(3)
+  .superRefine((categories, context) => {
+    const seen = new Set<string>();
+    categories.forEach((category, index) => {
+      if (seen.has(category)) {
+        context.addIssue({
+          code: "custom",
+          message: "Local data categories must be unique",
+          path: [index],
+        });
+      }
+      seen.add(category);
+    });
+  })
+  .readonly();
+const SettingsClearLocalDataRequestSchema = z
+  .object({
+    categories: ClearLocalDataCategoriesSchema,
+    confirmation: z.literal("clear-local-data"),
+  })
+  .strict()
+  .readonly();
 
 export const CommandRequestSchemas = {
   "scan.start": ScanStartRequestSchema,
@@ -242,6 +268,7 @@ export const CommandRequestSchemas = {
   "history.list": HistoryListRequestSchema,
   "history.get": HistoryGetRequestSchema,
   "settings.get": SettingsGetRequestSchema,
+  "settings.clearLocalData": SettingsClearLocalDataRequestSchema,
   "settings.update": SettingsUpdateRequestSchema,
 } as const satisfies Record<ApiCommandName, z.ZodType>;
 
@@ -632,6 +659,36 @@ const SettingsUpdateResponseSchema = z
   })
   .strict()
   .readonly();
+const SettingsClearLocalDataResponseSchema = z
+  .object({
+    clearedAt: IsoDateTimeSchema,
+    categories: ClearLocalDataCategoriesSchema,
+    counts: z
+      .object({
+        scanRuns: z.number().int().nonnegative(),
+        projects: z.number().int().nonnegative(),
+        scopes: z.number().int().nonnegative(),
+        assets: z.number().int().nonnegative(),
+        diagnostics: z.number().int().nonnegative(),
+        deploymentRecords: z.number().int().nonnegative(),
+        deploymentOperations: z.number().int().nonnegative(),
+        settings: z.number().int().nonnegative(),
+        localHistoryDirectories: z.number().int().nonnegative(),
+      })
+      .strict()
+      .readonly(),
+    retained: z
+      .object({
+        databaseBackups: z.literal(true),
+        deploymentBackups: z.literal(true),
+        disabledAssets: z.literal(true),
+      })
+      .strict()
+      .readonly(),
+    requiresRestart: z.literal(false),
+  })
+  .strict()
+  .readonly();
 
 export const CommandResponseSchemas = {
   "scan.start": AcceptedTaskSchema,
@@ -651,6 +708,7 @@ export const CommandResponseSchemas = {
   "history.list": HistoryListResponseSchema,
   "history.get": HistoryGetResponseSchema,
   "settings.get": SettingsGetResponseSchema,
+  "settings.clearLocalData": SettingsClearLocalDataResponseSchema,
   "settings.update": SettingsUpdateResponseSchema,
 } as const satisfies Record<ApiCommandName, z.ZodType>;
 

@@ -339,6 +339,27 @@ const ZH_CN: Partial<Record<string, string>> = {
   "No, disabled": "否，已禁用",
   "No, covered": "否，已被覆盖",
   "No, covered by {asset}": "否，已被 {asset} 覆盖",
+  "Scan cache": "扫描缓存",
+  "Settings preferences": "设置偏好",
+  "Cache and persisted data": "缓存和持久化数据",
+  "Local data": "本地数据",
+  "Clear local data": "清理本地数据",
+  "Clear selected data": "清理所选数据",
+  Clearing: "正在清理",
+  "Cleared selected local data ({count} records).": "已清理所选本地数据（{count} 条记录）。",
+  "Last cleared {count} records": "上次清理 {count} 条记录",
+  "Clear local copies stored by AI Config Hub. Project configuration files are not deleted.":
+    "清理 AI Config Hub 保存的本地副本，不会删除项目配置文件。",
+  "Rebuildable asset index, diagnostics, and scan task records.":
+    "可重新生成的资产索引、诊断和扫描任务记录。",
+  "Deployment history": "部署历史",
+  "Deployment records and local Git history snapshots when safe.":
+    "在安全时清理部署记录和本地 Git 历史快照。",
+  "Theme and language preferences stored in this app.": "保存在此应用中的主题和语言偏好。",
+  "I understand this clears selected local data.": "我理解这会清理所选本地数据。",
+  "Database migration backups, deployment backups, and disabled asset recovery files are retained.":
+    "数据库迁移备份、部署备份和已禁用资产恢复文件会被保留。",
+  "Select local data and confirm clearing before continuing.": "请选择本地数据并确认后再继续清理。",
   "{action} failed: {detail}": "{action}失败：{detail}",
   "{action} failed: the system file chooser is unavailable; check desktop file picker permissions and try again. ({detail})":
     "{action}失败：系统文件选择器不可用；请检查桌面文件选择权限后重试。（{detail}）",

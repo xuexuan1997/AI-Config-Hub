@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -861,6 +861,23 @@ function createServices(
         readOnlyRecovery: runtime.databaseRecovery,
       };
     },
+    "settings.clearLocalData": async (payload) => {
+      const request = payload as CommandRequest<"settings.clearLocalData">;
+      const localHistoryDirectories = request.categories.includes("deployment_history")
+        ? await clearLocalHistoryBeforeDatabaseCleanup(runtime, request.categories)
+        : 0;
+      const result = await runtime.repositories.maintenance.clearLocalData({
+        categories: request.categories,
+        now: now(runtime),
+      });
+      return {
+        ...result,
+        counts: {
+          ...result.counts,
+          localHistoryDirectories,
+        },
+      };
+    },
     "settings.update": async (payload) => {
       const request = payload as {
         readonly expectedRevision: number;
@@ -896,6 +913,61 @@ function createServices(
     },
   };
   return services as unknown as CommandServiceMap;
+}
+
+async function clearLocalHistoryBeforeDatabaseCleanup(
+  runtime: DesktopRuntime,
+  categories: readonly CommandRequest<"settings.clearLocalData">["categories"][number][],
+): Promise<number> {
+  await runtime.repositories.maintenance.assertCanClearLocalData({ categories });
+  return resetLocalHistory({
+    appDataRoot: runtime.appDataRoot,
+    historyRoot: runtime.historyRoot,
+  });
+}
+
+export async function resetLocalHistory(input: {
+  readonly appDataRoot: AbsolutePath;
+  readonly historyRoot: AbsolutePath;
+}): Promise<number> {
+  assertControlledLocalHistoryRoot(input);
+  const hadEntries = await directoryHasEntries(input.historyRoot);
+  await rm(input.historyRoot, { recursive: true, force: true });
+  await ensurePrivateDirectory(input.historyRoot);
+  return hadEntries ? 1 : 0;
+}
+
+function assertControlledLocalHistoryRoot(input: {
+  readonly appDataRoot: AbsolutePath;
+  readonly historyRoot: AbsolutePath;
+}): void {
+  const appDataRoot = resolve(input.appDataRoot);
+  const historyRoot = resolve(input.historyRoot);
+  const pathFromAppData = relative(appDataRoot, historyRoot);
+  if (
+    pathFromAppData !== join("history", "local-git") ||
+    pathFromAppData.startsWith("..") ||
+    isAbsolute(pathFromAppData)
+  ) {
+    throw new AppError({
+      code: "VALIDATION_FAILED",
+      message: "Local Git history path is outside the controlled app data directory",
+      retryable: false,
+      suggestedActions: ["Restart the app and retry clearing deployment history"],
+      safeContext: { historyPath: historyRoot },
+    });
+  }
+}
+
+async function directoryHasEntries(path: AbsolutePath): Promise<boolean> {
+  try {
+    return (await readdir(path)).length > 0;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export class DesktopTaskEvents implements DesktopTaskEventPort {

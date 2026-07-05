@@ -3,6 +3,7 @@ export * from "./migrations.js";
 export * from "./schema.js";
 export * from "./deployment-repository.js";
 export * from "./index-repository.js";
+export * from "./maintenance-repository.js";
 export * from "./repositories.js";
 export * from "./serialization.js";
 export * from "./settings-repository.js";
