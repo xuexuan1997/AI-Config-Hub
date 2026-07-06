@@ -365,7 +365,8 @@ describe("AssetsView", () => {
 
     expect(html).toContain('class="asset-detail-diagnostics"');
     expect(html).toContain("<h3>Diagnostics</h3>");
-    expect(html).toContain("<strong>Warning: Partial conversion</strong>");
+    expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
+    expect(html).toContain("<strong>Partial conversion</strong>");
     expect(html).toContain("One field cannot be represented by the target tool.");
     expect(html).not.toContain(
       '<section class="detail-panel" aria-label="Diagnostics for rule:AGENTS">',
@@ -417,12 +418,138 @@ describe("AssetsView", () => {
     expect(html).not.toContain("The configuration file could not be read safely");
     expect(html).not.toContain("Check file permissions and retry the scan");
   });
+
+  it("renders workspace diagnostic filters by severity and diagnostic code", () => {
+    const html = renderAssets({
+      diagnostics: [
+        diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning"),
+        diagnosticFixture("diagnostic-error", "MCP_LITERAL_SECRET_RISK", "error"),
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 1 },
+    });
+
+    expect(html).toContain('class="diagnostic-filter-bar diagnostic-filter-surface"');
+    expect(html).toContain('aria-label="Diagnostic severity filters"');
+    expect(html).toContain(">All diagnostics</button>");
+    expect(html).toContain(">Errors 1</button>");
+    expect(html).toContain(">Warnings 1</button>");
+    expect(html).toContain('aria-label="Diagnostic code filter"');
+    expect(html).toContain('<option value="__all__" selected="">All diagnostic codes</option>');
+    expect(html).toContain(
+      '<option value="MCP_LITERAL_SECRET_RISK">MCP_LITERAL_SECRET_RISK</option>',
+    );
+    expect(html).toContain('<option value="SCAN_READ_FAILED">SCAN_READ_FAILED</option>');
+  });
+
+  it("renders workspace diagnostics as a compact review panel", () => {
+    const html = renderAssets({
+      diagnostics: [
+        diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning"),
+        diagnosticFixture("diagnostic-error", "MCP_LITERAL_SECRET_RISK", "error"),
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 1 },
+    });
+
+    expect(html).toContain('class="diagnostic-panel-header"');
+    expect(html).toContain('class="diagnostic-result-summary"');
+    expect(html).toContain("2 shown of 2");
+    expect(html).toContain('class="diagnostic-filter-bar diagnostic-filter-surface"');
+    expect(html).toContain('class="diagnostic-row warning"');
+    expect(html).toContain('class="diagnostic-row error"');
+    expect(html).toContain('class="diagnostic-severity-pill warning"');
+    expect(html).toContain('class="diagnostic-severity-pill error"');
+    expect(html).toContain('class="diagnostic-row-action"');
+  });
+
+  it("filters workspace diagnostics by warning severity", () => {
+    const html = renderAssets(
+      {
+        diagnostics: [
+          diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning"),
+          diagnosticFixture("diagnostic-error", "MCP_LITERAL_SECRET_RISK", "error"),
+        ],
+        diagnosticCounts: { info: 0, warning: 1, error: 1 },
+      },
+      { initialDiagnosticSeverity: "warning" },
+    );
+
+    expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
+    expect(html).toContain("<strong>Scan read failed</strong>");
+    expect(html).not.toContain('<span class="diagnostic-severity-pill error">Error</span>');
+    expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
+  });
+
+  it("filters workspace diagnostics by diagnostic code", () => {
+    const html = renderAssets(
+      {
+        diagnostics: [
+          diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning"),
+          diagnosticFixture("diagnostic-error", "MCP_LITERAL_SECRET_RISK", "error"),
+        ],
+        diagnosticCounts: { info: 0, warning: 1, error: 1 },
+      },
+      { initialDiagnosticCode: "MCP_LITERAL_SECRET_RISK" },
+    );
+
+    expect(html).toContain('<span class="diagnostic-severity-pill error">Error</span>');
+    expect(html).toContain("<strong>Mcp literal secret risk</strong>");
+    expect(html).not.toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
+    expect(html).not.toContain("<strong>Scan read failed</strong>");
+  });
+
+  it("resets a stale diagnostic code when the selected severity excludes it", () => {
+    const html = renderAssets(
+      {
+        diagnostics: [
+          diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning"),
+          diagnosticFixture("diagnostic-error", "MCP_LITERAL_SECRET_RISK", "error"),
+        ],
+        diagnosticCounts: { info: 0, warning: 1, error: 1 },
+      },
+      { initialDiagnosticSeverity: "warning", initialDiagnosticCode: "MCP_LITERAL_SECRET_RISK" },
+    );
+
+    expect(html).toContain('<option value="__all__" selected="">All diagnostic codes</option>');
+    expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
+    expect(html).toContain("<strong>Scan read failed</strong>");
+    expect(html).not.toContain('<span class="diagnostic-severity-pill error">Error</span>');
+    expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
+  });
+
+  it("shows a localized empty state when workspace diagnostic filters have no matches", () => {
+    const html = renderAssets(
+      {
+        settings: {
+          ...initialState.settings,
+          values: { ...initialState.settings.values, language: "zh-CN" },
+        },
+        diagnostics: [diagnosticFixture("diagnostic-warning", "SCAN_READ_FAILED", "warning")],
+        diagnosticCounts: { info: 0, warning: 1, error: 0 },
+      },
+      { initialDiagnosticSeverity: "error" },
+    );
+
+    expect(html).toContain("没有匹配当前筛选的诊断。");
+    expect(html).not.toContain("扫描读取失败");
+  });
 });
 
-function renderAssets(statePatch: Partial<AppState>): string {
+function renderAssets(
+  statePatch: Partial<AppState>,
+  propsPatch: Pick<
+    Parameters<typeof AssetsView>[0],
+    "initialDiagnosticSeverity" | "initialDiagnosticCode"
+  > = {},
+): string {
   return renderToStaticMarkup(
     createElement(AssetsView, {
       state: { ...initialState, ...statePatch },
+      ...(propsPatch.initialDiagnosticSeverity === undefined
+        ? {}
+        : { initialDiagnosticSeverity: propsPatch.initialDiagnosticSeverity }),
+      ...(propsPatch.initialDiagnosticCode === undefined
+        ? {}
+        : { initialDiagnosticCode: propsPatch.initialDiagnosticCode }),
       onRefresh: vi.fn(),
       onInspect: vi.fn(),
       onLoadEffective: vi.fn(),
@@ -433,6 +560,28 @@ function renderAssets(statePatch: Partial<AppState>): string {
       onLocateDiagnostic: vi.fn(),
     }),
   );
+}
+
+function diagnosticFixture(
+  id: string,
+  code: string,
+  severity: AppState["diagnostics"][number]["severity"],
+): AppState["diagnostics"][number] {
+  return {
+    id: DiagnosticIdSchema.parse(id),
+    code,
+    severity,
+    assetId: AssetIdSchema.parse("asset-1"),
+    message:
+      code === "SCAN_READ_FAILED"
+        ? "The configuration file could not be read safely"
+        : "MCP configuration appears to contain a literal secret; prefer an environment reference",
+    suggestedAction:
+      code === "SCAN_READ_FAILED"
+        ? "Check file permissions and retry the scan"
+        : "Review the source configuration and scan again",
+    blocking: severity === "error",
+  };
 }
 
 function assetSummaryFixture(

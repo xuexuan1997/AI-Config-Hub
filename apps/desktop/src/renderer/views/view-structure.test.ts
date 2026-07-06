@@ -432,7 +432,10 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain("<dd>Rule</dd>");
     expect(selectedAssetHtml).toContain("Load result</dt>");
     expect(selectedAssetHtml).toContain("<dd>2026-06-28 08:00 UTC</dd>");
-    expect(selectedAssetHtml).toContain("<strong>Warning: Partial conversion</strong>");
+    expect(selectedAssetHtml).toContain(
+      '<span class="diagnostic-severity-pill warning">Warning</span>',
+    );
+    expect(selectedAssetHtml).toContain("<strong>Partial conversion</strong>");
     expect(selectedAssetHtml).toContain('class="diagnostic-action"');
     expect(selectedAssetHtml).toContain("<strong>rule:AGENTS</strong>");
     expect(selectedAssetHtml).not.toContain("Effective configuration");
