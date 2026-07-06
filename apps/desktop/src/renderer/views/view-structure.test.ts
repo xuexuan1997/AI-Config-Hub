@@ -79,6 +79,19 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('<section class="workspace" data-route="migration">');
   });
 
+  it("does not render global status banners above workspace content", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: { ...initialState, message: "Scan complete: 2 succeeded, 1 skipped." },
+        onRoute: vi.fn(),
+        children: createElement("span", null, "Workspace"),
+      }),
+    );
+
+    expect(html).not.toContain('class="status-banner"');
+    expect(html).not.toContain("Scan complete: 2 succeeded, 1 skipped.");
+  });
+
   it("adds settings to desktop navigation", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {
@@ -578,6 +591,47 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("<th>Type</th>");
   });
 
+  it("shows scan progress and detailed failures inside asset review", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:scan:asset-review",
+            taskKind: "scan",
+            phase: "reading",
+            status: "running",
+            progress: { phase: "reading", completed: 42, total: 120, unit: "files" },
+            message: "scan reading: 42/120 files",
+            recoveryLock: false,
+            failure: {
+              itemRef: "/workspace/.cursor/rules/broken.mdc",
+              errorCode: "SCAN_READ_FAILED",
+              retryable: true,
+            },
+          },
+        },
+        onRefresh: vi.fn(),
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onRescanAfterEdit: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="scan-task-panel"');
+    expect(html).toContain('aria-label="Scan status"');
+    expect(html).toContain("Scanning assets");
+    expect(html).toContain("Reading");
+    expect(html).toContain("42/120 files");
+    expect(html).toContain("/workspace/.cursor/rules/broken.mdc");
+    expect(html).toContain("SCAN_READ_FAILED");
+    expect(html).toContain("Retryable");
+  });
+
   it("renders inspected asset detail as a modal dialog instead of an inline panel", () => {
     const html = renderToStaticMarkup(
       createElement(AssetsView, {
@@ -733,6 +787,51 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("Plan deployment-plan:audit-preview");
     expect(html).not.toContain("2026-06-28T08:10:00.000Z");
     expect(html).not.toContain("asset:codex:rule:agents");
+  });
+
+  it("shows source scan progress and detailed failures inside asset migration", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          migration: {
+            ...initialState.migration,
+            sourceProjectRoot: "/workspace/source",
+            targetScopeId: "/workspace/target",
+          },
+          activeTask: {
+            taskId: "task:scan:migration-source",
+            taskKind: "scan",
+            phase: "parsing",
+            status: "partially_succeeded",
+            progress: { phase: "parsing", completed: 99, total: 100, unit: "files" },
+            message: "Scan partially complete: 98 succeeded, 1 failed, 1 skipped.",
+            recoveryLock: false,
+            failure: {
+              itemRef: "/workspace/source/.claude/agents/reviewer.md",
+              errorCode: "FRONTMATTER_INVALID",
+              retryable: false,
+            },
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="scan-task-panel"');
+    expect(html).toContain('aria-label="Source scan status"');
+    expect(html).toContain("Source scan");
+    expect(html).toContain("Parsing");
+    expect(html).toContain("99/100 files");
+    expect(html).toContain("/workspace/source/.claude/agents/reviewer.md");
+    expect(html).toContain("FRONTMATTER_INVALID");
+    expect(html).toContain("Not retryable");
   });
 
   it("shows target project assets before preview and filters them by target tool and asset type", () => {

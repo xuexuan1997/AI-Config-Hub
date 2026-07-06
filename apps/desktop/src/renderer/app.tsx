@@ -182,9 +182,7 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
-        message: response.ok
-          ? t(locale, "Queued {taskId}", { taskId: response.data.taskId })
-          : localizeUiMessage(locale, response.error.message),
+        ...(response.ok ? {} : { message: localizeUiMessage(locale, response.error.message) }),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {
@@ -221,9 +219,7 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
-        message: response.ok
-          ? t(locale, "Queued {taskId}", { taskId: response.data.taskId })
-          : localizeUiMessage(locale, response.error.message),
+        ...(response.ok ? {} : { message: localizeUiMessage(locale, response.error.message) }),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {

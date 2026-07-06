@@ -607,7 +607,7 @@ describe("renderer project selection state", () => {
     expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
   });
 
-  it("maps task completion events onto scan status messages", () => {
+  it("maps task completion events onto scan status without global messages", () => {
     expect(
       scanActionForTaskEvent({
         apiVersion: 1,
@@ -627,7 +627,6 @@ describe("renderer project selection state", () => {
     ).toEqual({
       type: "scan",
       status: "complete",
-      message: "Scan complete: 2 succeeded, 1 skipped.",
     });
   });
 
@@ -641,6 +640,72 @@ describe("renderer project selection state", () => {
 
     expect(navigated.route).toBe("assets");
     expect(navigated.message).toBeUndefined();
+  });
+
+  it("accumulates scan item failures for detailed page-level reporting", () => {
+    const accepted = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:detailed-failures"),
+        sequence: 1,
+        emittedAt: "2026-06-28T08:00:00.000Z",
+        type: "accepted",
+        payload: {
+          taskKind: "scan",
+          phase: "queued",
+          acceptedAt: "2026-06-28T08:00:00.000Z",
+        },
+      })!,
+    });
+    const firstFailure = reducer(accepted, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:detailed-failures"),
+        sequence: 2,
+        emittedAt: "2026-06-28T08:00:01.000Z",
+        type: "item.failed",
+        payload: {
+          itemRef: "/workspace/.cursor/rules/broken.mdc",
+          diagnosticId: "diagnostic:scan:1",
+          errorCode: "SCAN_READ_FAILED",
+          retryable: true,
+        },
+      })!,
+    });
+    const secondFailure = reducer(firstFailure, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:detailed-failures"),
+        sequence: 3,
+        emittedAt: "2026-06-28T08:00:02.000Z",
+        type: "item.failed",
+        payload: {
+          itemRef: "/workspace/.claude/agents/reviewer.md",
+          diagnosticId: "diagnostic:scan:2",
+          errorCode: "FRONTMATTER_INVALID",
+          retryable: false,
+        },
+      })!,
+    });
+
+    expect(secondFailure.activeTask?.failures).toEqual([
+      {
+        itemRef: "/workspace/.cursor/rules/broken.mdc",
+        errorCode: "SCAN_READ_FAILED",
+        retryable: true,
+      },
+      {
+        itemRef: "/workspace/.claude/agents/reviewer.md",
+        errorCode: "FRONTMATTER_INVALID",
+        retryable: false,
+      },
+    ]);
   });
 
   it("stores loaded desktop settings and builds optimistic update requests", () => {

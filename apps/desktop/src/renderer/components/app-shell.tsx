@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { localeForState, localizeUiMessage, t } from "../i18n.js";
+import { localeForState, t } from "../i18n.js";
 import type { AppState, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
@@ -49,9 +49,6 @@ export function AppShell(props: {
         </div>
       </aside>
       <main data-route={props.state.route} key={props.state.route} ref={mainRef}>
-        {props.state.message === undefined ? null : (
-          <div className="status-banner">{localizeUiMessage(locale, props.state.message)}</div>
-        )}
         <section className="workspace" data-route={props.state.route}>
           {props.children}
         </section>
