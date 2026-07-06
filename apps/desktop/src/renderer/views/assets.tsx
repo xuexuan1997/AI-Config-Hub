@@ -5,6 +5,8 @@ import type { AppState, AssetDisablementMethod } from "../model.js";
 
 export function AssetsView(props: {
   readonly state: AppState;
+  readonly initialDiagnosticSeverity?: DiagnosticSeverityFilter;
+  readonly initialDiagnosticCode?: string;
   readonly onRefresh?: () => void;
   readonly onInspect: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onLoadEffective: () => void;
@@ -35,11 +37,31 @@ export function AssetsView(props: {
   const assetGroups = useMemo(() => assetGroupsByResourceType(visibleAssets), [visibleAssets]);
   const firstResourceType = assetGroups[0]?.resourceType;
   const [selectedResourceType, setSelectedResourceType] = useState(firstResourceType);
+  const [selectedDiagnosticSeverity, setSelectedDiagnosticSeverity] =
+    useState<DiagnosticSeverityFilter>(props.initialDiagnosticSeverity ?? "all");
+  const [selectedDiagnosticCode, setSelectedDiagnosticCode] = useState(
+    props.initialDiagnosticCode ?? ALL_DIAGNOSTIC_CODES,
+  );
   const activeResourceType =
     selectedResourceType !== undefined &&
     assetGroups.some((group) => group.resourceType === selectedResourceType)
       ? selectedResourceType
       : firstResourceType;
+  const diagnosticsInSeverity = useMemo(
+    () => diagnosticsForSeverity(props.state.diagnostics, selectedDiagnosticSeverity),
+    [props.state.diagnostics, selectedDiagnosticSeverity],
+  );
+  const diagnosticCodeOptions = useMemo(
+    () => diagnosticCodesFor(diagnosticsInSeverity),
+    [diagnosticsInSeverity],
+  );
+  const activeDiagnosticCode = diagnosticCodeOptions.includes(selectedDiagnosticCode)
+    ? selectedDiagnosticCode
+    : ALL_DIAGNOSTIC_CODES;
+  const visibleDiagnostics = useMemo(
+    () => diagnosticsForCode(diagnosticsInSeverity, activeDiagnosticCode),
+    [diagnosticsInSeverity, activeDiagnosticCode],
+  );
 
   useEffect(() => {
     if (
@@ -49,6 +71,12 @@ export function AssetsView(props: {
       setSelectedResourceType(firstResourceType);
     }
   }, [assetGroups, firstResourceType, selectedResourceType]);
+
+  useEffect(() => {
+    if (selectedDiagnosticCode !== activeDiagnosticCode) {
+      setSelectedDiagnosticCode(activeDiagnosticCode);
+    }
+  }, [activeDiagnosticCode, selectedDiagnosticCode]);
 
   return (
     <>
@@ -153,13 +181,37 @@ export function AssetsView(props: {
         />
       )}
       {detail !== undefined || props.state.diagnostics.length === 0 ? null : (
-        <section className="detail-panel" aria-label={diagnosticScope.panelLabel}>
-          <h2>{diagnosticScope.panelHeading}</h2>
-          <DiagnosticList
+        <section className="detail-panel diagnostic-panel" aria-label={diagnosticScope.panelLabel}>
+          <header className="diagnostic-panel-header">
+            <div>
+              <h2>{diagnosticScope.panelHeading}</h2>
+              <span className="diagnostic-result-summary">
+                {formatDiagnosticResultSummary(
+                  locale,
+                  visibleDiagnostics.length,
+                  props.state.diagnostics.length,
+                )}
+              </span>
+            </div>
+          </header>
+          <WorkspaceDiagnosticFilters
+            activeCode={activeDiagnosticCode}
+            activeSeverity={selectedDiagnosticSeverity}
+            codeOptions={diagnosticCodeOptions}
             diagnostics={props.state.diagnostics}
             locale={locale}
-            onLocateDiagnostic={props.onLocateDiagnostic}
+            onCodeChange={setSelectedDiagnosticCode}
+            onSeverityChange={setSelectedDiagnosticSeverity}
           />
+          {visibleDiagnostics.length === 0 ? (
+            <p className="empty-state">{t(locale, "No diagnostics match the current filters.")}</p>
+          ) : (
+            <DiagnosticList
+              diagnostics={visibleDiagnostics}
+              locale={locale}
+              onLocateDiagnostic={props.onLocateDiagnostic}
+            />
+          )}
         </section>
       )}
     </>
@@ -169,8 +221,17 @@ export function AssetsView(props: {
 type AssetSummary = AppState["assets"][number];
 type AssetStatus = "enabled" | "disabled";
 type AssetLoadState = "loaded" | "covered" | "disabled";
+type DiagnosticSummary = AppState["diagnostics"][number];
+type DiagnosticSeverityFilter = "all" | DiagnosticSummary["severity"];
 
 const DEFAULT_TOOL_KEY = "claude-code";
+const ALL_DIAGNOSTIC_CODES = "__all__";
+const DIAGNOSTIC_SEVERITY_FILTERS: readonly DiagnosticSeverityFilter[] = [
+  "all",
+  "error",
+  "warning",
+  "info",
+];
 
 function assetToolOptions(assets: readonly AssetSummary[]): readonly string[] {
   return [...new Set([DEFAULT_TOOL_KEY, ...assets.map((asset) => asset.toolKey)])].sort(
@@ -753,6 +814,110 @@ function LocateDiagnosticButton(props: {
   );
 }
 
+function WorkspaceDiagnosticFilters(props: {
+  readonly activeSeverity: DiagnosticSeverityFilter;
+  readonly activeCode: string;
+  readonly codeOptions: readonly string[];
+  readonly diagnostics: AppState["diagnostics"];
+  readonly locale: DesktopLocale;
+  readonly onSeverityChange: (severity: DiagnosticSeverityFilter) => void;
+  readonly onCodeChange: (code: string) => void;
+}) {
+  const counts = diagnosticCountsFor(props.diagnostics);
+  return (
+    <div className="diagnostic-filter-bar diagnostic-filter-surface">
+      <div
+        className="diagnostic-severity-filter"
+        aria-label={t(props.locale, "Diagnostic severity filters")}
+      >
+        {DIAGNOSTIC_SEVERITY_FILTERS.map((severity) => (
+          <button
+            aria-pressed={props.activeSeverity === severity}
+            key={severity}
+            type="button"
+            onClick={() => props.onSeverityChange(severity)}
+          >
+            {diagnosticSeverityFilterLabel(props.locale, severity, counts)}
+          </button>
+        ))}
+      </div>
+      <label className="diagnostic-code-filter">
+        <span>{t(props.locale, "Diagnostic code")}</span>
+        <select
+          aria-label={t(props.locale, "Diagnostic code filter")}
+          value={props.activeCode}
+          onChange={(event) => props.onCodeChange(event.currentTarget.value)}
+        >
+          <option value={ALL_DIAGNOSTIC_CODES}>{t(props.locale, "All diagnostic codes")}</option>
+          {props.codeOptions.map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function formatDiagnosticResultSummary(
+  locale: DesktopLocale,
+  visibleCount: number,
+  totalCount: number,
+): string {
+  return t(locale, "{visible} shown of {total}", {
+    visible: String(visibleCount),
+    total: String(totalCount),
+  });
+}
+
+function diagnosticsForSeverity(
+  diagnostics: AppState["diagnostics"],
+  severity: DiagnosticSeverityFilter,
+): AppState["diagnostics"] {
+  return severity === "all"
+    ? diagnostics
+    : diagnostics.filter((diagnostic) => diagnostic.severity === severity);
+}
+
+function diagnosticsForCode(
+  diagnostics: AppState["diagnostics"],
+  code: string,
+): AppState["diagnostics"] {
+  return code === ALL_DIAGNOSTIC_CODES
+    ? diagnostics
+    : diagnostics.filter((diagnostic) => diagnostic.code === code);
+}
+
+function diagnosticCodesFor(diagnostics: AppState["diagnostics"]): readonly string[] {
+  return [...new Set(diagnostics.map((diagnostic) => diagnostic.code))].sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+function diagnosticCountsFor(diagnostics: AppState["diagnostics"]): AppState["diagnosticCounts"] {
+  const counts = { info: 0, warning: 0, error: 0 };
+  for (const diagnostic of diagnostics) counts[diagnostic.severity] += 1;
+  return counts;
+}
+
+function diagnosticSeverityFilterLabel(
+  locale: DesktopLocale,
+  severity: DiagnosticSeverityFilter,
+  counts: AppState["diagnosticCounts"],
+): string {
+  switch (severity) {
+    case "all":
+      return t(locale, "All diagnostics");
+    case "error":
+      return t(locale, "Errors {count}", { count: String(counts.error) });
+    case "warning":
+      return t(locale, "Warnings {count}", { count: String(counts.warning) });
+    case "info":
+      return t(locale, "Info {count}", { count: String(counts.info) });
+  }
+}
+
 function DiagnosticList(props: {
   readonly diagnostics: AppState["diagnostics"];
   readonly locale: DesktopLocale;
@@ -761,24 +926,33 @@ function DiagnosticList(props: {
   return (
     <ul className="diagnostic-list">
       {props.diagnostics.map((diagnostic) => (
-        <li key={diagnostic.id}>
-          <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
-          <span>{diagnosticText(props.locale, diagnostic.message)}</span>
-          {diagnostic.location === undefined ? null : (
-            <small>
-              {diagnostic.location.pathDisplay}
-              {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
-              {diagnostic.location.column === undefined ? "" : `:${diagnostic.location.column}`}
-            </small>
-          )}
-          <small>{diagnosticText(props.locale, diagnostic.suggestedAction)}</small>
-          {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
-            <LocateDiagnosticButton
-              assetId={diagnostic.assetId}
-              locale={props.locale}
-              onLocate={props.onLocateDiagnostic}
-            />
-          )}
+        <li key={diagnostic.id} className={`diagnostic-row ${diagnostic.severity}`}>
+          <div className="diagnostic-row-main">
+            <div className="diagnostic-row-title">
+              <span className={`diagnostic-severity-pill ${diagnostic.severity}`}>
+                {severityLabel(props.locale, diagnostic.severity)}
+              </span>
+              <strong>{diagnosticCodeLabel(props.locale, diagnostic.code)}</strong>
+            </div>
+            <span>{diagnosticText(props.locale, diagnostic.message)}</span>
+            {diagnostic.location === undefined ? null : (
+              <small>
+                {diagnostic.location.pathDisplay}
+                {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
+                {diagnostic.location.column === undefined ? "" : `:${diagnostic.location.column}`}
+              </small>
+            )}
+            <small>{diagnosticText(props.locale, diagnostic.suggestedAction)}</small>
+          </div>
+          <div className="diagnostic-row-action">
+            {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
+              <LocateDiagnosticButton
+                assetId={diagnostic.assetId}
+                locale={props.locale}
+                onLocate={props.onLocateDiagnostic}
+              />
+            )}
+          </div>
         </li>
       ))}
     </ul>
