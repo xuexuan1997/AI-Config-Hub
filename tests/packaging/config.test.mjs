@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 describe("desktop installer packaging config", () => {
@@ -11,12 +11,14 @@ describe("desktop installer packaging config", () => {
     assert.match(config, /^appId: io\.aiconfighub\.desktop$/m);
     assert.match(config, /^productName: AI Config Hub$/m);
     assert.match(config, /^executableName: ai-config-hub$/m);
+    assert.match(config, /^icon: resources\/icon\.png$/m);
     assert.match(config, /^asar: true$/m);
     assert.match(config, /^npmRebuild: false$/m);
     assert.match(config, /^buildDependenciesFromSource: false$/m);
     assert.match(config, /^electronUpdaterCompatibility: ">= 2\.16"$/m);
     assert.match(config, /directories:\r?\n\s+output: \.\.\/\.\.\/release\/linux-x64/);
     assert.match(config, /linux:[\s\S]*target: AppImage/);
+    assert.match(config, /linux:[\s\S]*icon: resources\/icon\.png/);
     assert.match(config, /linux:[\s\S]*arch:\r?\n\s+- x64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-x86_64\.\$\{ext\}/);
     assert.match(config, /category: Development/);
@@ -25,6 +27,7 @@ describe("desktop installer packaging config", () => {
       /linux:[\s\S]*publish:\r?\n\s+provider: github\r?\n\s+owner: xuexuan1997\r?\n\s+repo: AI-Config-Hub/,
     );
     assert.match(config, /win:[\s\S]*target: nsis/);
+    assert.match(config, /win:[\s\S]*icon: resources\/icon\.ico/);
     assert.match(config, /win:[\s\S]*arch:\r?\n\s+- x64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-windows-x64\.\$\{ext\}/);
     assert.match(
@@ -33,12 +36,22 @@ describe("desktop installer packaging config", () => {
     );
     assert.match(config, /nsis:[\s\S]*allowToChangeInstallationDirectory: true/);
     assert.match(config, /mac:[\s\S]*target: dmg/);
+    assert.match(config, /mac:[\s\S]*icon: resources\/icon\.icns/);
     assert.match(config, /mac:[\s\S]*arch:\r?\n\s+- x64\r?\n\s+- arm64/);
     assert.match(config, /artifactName: AI-Config-Hub-\$\{version\}-macos-\$\{arch\}\.\$\{ext\}/);
     assert.match(config, /dist\/main\/\*\*\/\*/);
     assert.match(config, /dist\/renderer\/\*\*\/\*/);
     assert.match(config, /!\*\*\/\*\.test\.\*/);
     assert.match(config, /!\*\*\/fixtures\/\*\*/);
+
+    for (const iconPath of [
+      "apps/desktop/resources/icon.svg",
+      "apps/desktop/resources/icon.png",
+      "apps/desktop/resources/icon.ico",
+      "apps/desktop/resources/icon.icns",
+    ]) {
+      assert.ok((await stat(iconPath)).size > 0, `${iconPath} should be present`);
+    }
   });
 
   it("builds every desktop main workspace dependency before packaging", async () => {
@@ -68,8 +81,14 @@ describe("desktop installer packaging config", () => {
 
     assert.match(updatesSource, /^import \{ createRequire \} from "node:module";$/m);
     assert.match(updatesSource, /createRequire\(import\.meta\.url\)/);
-    assert.doesNotMatch(updatesSource, /import\s+\{\s*autoUpdater\s*\}\s+from\s+"electron-updater"/);
-    assert.doesNotMatch(updatesSource, /^const\s+\{\s*autoUpdater\s*\}\s*=\s*require\("electron-updater"\)/m);
+    assert.doesNotMatch(
+      updatesSource,
+      /import\s+\{\s*autoUpdater\s*\}\s+from\s+"electron-updater"/,
+    );
+    assert.doesNotMatch(
+      updatesSource,
+      /^const\s+\{\s*autoUpdater\s*\}\s*=\s*require\("electron-updater"\)/m,
+    );
   });
 
   it("uses cross-platform workspace build scripts for native installer runners", async () => {

@@ -1,11 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI Config Hub">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="AI Config Hub">
   <defs>
-    <linearGradient id="g" x1="24" x2="232" y1="24" y2="232">
+    <linearGradient id="base" x1="160" x2="864" y1="112" y2="912" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#090f1a"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="264" x2="760" y1="216" y2="808" gradientUnits="userSpaceOnUse">
       <stop stop-color="#5eead4"/>
+      <stop offset="0.54" stop-color="#38bdf8"/>
       <stop offset="1" stop-color="#315efb"/>
     </linearGradient>
+    <linearGradient id="sheet" x1="356" x2="668" y1="276" y2="748" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#c9d8ee"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="matrix(0 372 -372 0 704 252)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5eead4" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#5eead4" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="128" y="128" width="768" height="768" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="36" stdDeviation="42" flood-color="#000817" flood-opacity="0.42"/>
+    </filter>
   </defs>
-  <rect width="256" height="256" rx="56" fill="#0b1020"/>
-  <path fill="url(#g)" d="M64 76a28 28 0 0 1 28-28h72a28 28 0 0 1 28 28v104a28 28 0 0 1-28 28H92a28 28 0 0 1-28-28V76Zm32 4v96h64V80H96Z"/>
-  <path fill="#e5eefb" d="M112 104h32v16h-32v-16Zm0 32h32v16h-32v-16Z"/>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#base)"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#glow)"/>
+
+  <g filter="url(#shadow)">
+    <path fill="url(#mark)" d="M256 312a112 112 0 0 1 112-112h288a112 112 0 0 1 112 112v400a112 112 0 0 1-112 112H368a112 112 0 0 1-112-112V312Zm128 16v368h256V328H384Z"/>
+    <path fill="url(#sheet)" d="M416 304h192a64 64 0 0 1 64 64v288a64 64 0 0 1-64 64H416a64 64 0 0 1-64-64V368a64 64 0 0 1 64-64Z"/>
+    <path fill="#38bdf8" d="M544 304h64a64 64 0 0 1 64 64v64L544 304Z" opacity="0.72"/>
+    <path fill="#172554" d="M432 432h160v48H432v-48Zm0 112h160v48H432v-48Z"/>
+    <path fill="#315efb" d="M432 656h104v40H432v-40Z" opacity="0.9"/>
+  </g>
+
+  <path fill="none" stroke="#5eead4" stroke-linecap="round" stroke-width="32" d="M256 368h-72m584 112h72M352 824l-56 56"/>
+  <path fill="none" stroke="#38bdf8" stroke-linecap="round" stroke-width="28" d="M768 656l76 76"/>
+
+  <circle cx="184" cy="368" r="46" fill="#5eead4"/>
+  <circle cx="184" cy="368" r="22" fill="#0b1020"/>
+  <circle cx="840" cy="480" r="46" fill="#38bdf8"/>
+  <circle cx="840" cy="480" r="22" fill="#0b1020"/>
+  <circle cx="296" cy="880" r="42" fill="#315efb"/>
+  <circle cx="296" cy="880" r="20" fill="#e5eefb"/>
+  <circle cx="844" cy="732" r="38" fill="#5eead4"/>
+  <circle cx="844" cy="732" r="18" fill="#0b1020"/>
+
+  <path fill="#e5eefb" d="M740 210c13 42 38 67 80 80-42 13-67 38-80 80-13-42-38-67-80-80 42-13 67-38 80-80Z" opacity="0.72"/>
 </svg>
