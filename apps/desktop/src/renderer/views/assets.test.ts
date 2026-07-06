@@ -213,11 +213,48 @@ describe("AssetsView", () => {
       },
     });
 
-    expect(html).toContain("Source package files");
+    expect(html).toContain("Source package folder");
+    expect(html).toContain('class="asset-source-tree"');
+    expect(html).toContain("release/");
     expect(html).toContain("SKILL.md");
+    expect(html).toContain("assets/");
     expect(html).toContain("assets/logo.png");
     expect(html).toContain("support");
     expect(html).toContain("image/png / binary");
+  });
+
+  it("shows the inspected asset load result from the review list", () => {
+    const detail = assetDetailFixture("asset-covered", "mcp:docs");
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture("asset-covered", "mcp:docs", {
+          loadState: "covered",
+          coveredByLogicalKey: "mcp:docs",
+        }),
+      ],
+      assetDetail: detail,
+    });
+
+    expect(html).toContain("Load result</dt>");
+    expect(html).toContain("No, covered by mcp:docs");
+  });
+
+  it("does not render effective configuration JSON in the asset detail dialog", () => {
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      effective: {
+        effective: { rules: ["Use tests."] },
+        contributors: [],
+        ignored: [],
+        diagnostics: [],
+        snapshotRevision: "revision-1",
+      },
+    });
+
+    expect(html).not.toContain("Load effective configuration");
+    expect(html).not.toContain("Effective configuration");
+    expect(html).not.toContain("Use tests.");
   });
 
   it("renders disablement options as an accessible radio group defaulting to the recommended method", () => {
