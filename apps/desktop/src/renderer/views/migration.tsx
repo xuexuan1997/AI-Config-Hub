@@ -348,24 +348,30 @@ export function MigrationView(props: {
               <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
               {preview.changes.map((change) => (
                 <section key={change.pathDisplay} className="planned-change">
-                  <h2>
-                    {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
-                  </h2>
-                  <dl>
-                    <dt>{t(locale, "Deployment")}</dt>
-                    <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
-                    {change.sourcePathDisplay === undefined ? null : (
-                      <>
-                        <dt>{t(locale, "Source file")}</dt>
-                        <dd>{change.sourcePathDisplay}</dd>
-                      </>
-                    )}
-                    <dt>{t(locale, "Before")}</dt>
-                    <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
-                    <dt>{t(locale, "After")}</dt>
-                    <dd>{change.afterHash ?? t(locale, "absent")}</dd>
-                  </dl>
-                  <pre>{change.diff}</pre>
+                  <div className="planned-change-summary">
+                    <h2>
+                      {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
+                    </h2>
+                    <span>{deploymentTypeLabel(locale, change.deploymentType)}</span>
+                  </div>
+                  <details className="planned-change-details">
+                    <summary>{t(locale, "Show diff and hashes")}</summary>
+                    <dl>
+                      <dt>{t(locale, "Deployment")}</dt>
+                      <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
+                      {change.sourcePathDisplay === undefined ? null : (
+                        <>
+                          <dt>{t(locale, "Source file")}</dt>
+                          <dd>{change.sourcePathDisplay}</dd>
+                        </>
+                      )}
+                      <dt>{t(locale, "Before")}</dt>
+                      <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
+                      <dt>{t(locale, "After")}</dt>
+                      <dd>{change.afterHash ?? t(locale, "absent")}</dd>
+                    </dl>
+                    <pre>{change.diff}</pre>
+                  </details>
                 </section>
               ))}
             </>
@@ -398,6 +404,10 @@ function TargetAssetRow(props: {
   readonly targetProject: string | undefined;
   readonly targetTool: string;
 }) {
+  const statusLabel =
+    props.change === undefined
+      ? liveDifferenceStatusLabel(props.locale, props.liveDifference)
+      : targetChangeStatusLabel(props.locale, props.change.operation);
   return (
     <div
       className={`target-change-row ${
@@ -408,49 +418,57 @@ function TargetAssetRow(props: {
     >
       <div className="target-change-heading">
         <strong>{props.asset.logicalKey}</strong>
+        <span>{statusLabel}</span>
+      </div>
+      <p className="target-change-meta">
+        <span>{props.targetTool}</span>
+        <span>{resourceTypeLabel(props.locale, props.asset.resourceType)}</span>
         <span>
           {props.change === undefined
-            ? liveDifferenceStatusLabel(props.locale, props.liveDifference)
-            : targetChangeStatusLabel(props.locale, props.change.operation)}
+            ? liveHashChangeCompactLabel(props.asset.contentHash, props.liveDifference?.sourceAsset)
+            : deploymentTypeLabel(props.locale, props.change.deploymentType)}
         </span>
-      </div>
-      <dl>
-        <dt>{t(props.locale, "Target project")}</dt>
-        <dd>{props.targetProject}</dd>
-        <dt>{t(props.locale, "Target tool")}</dt>
-        <dd>{props.targetTool}</dd>
-        <dt>{t(props.locale, "Asset type")}</dt>
-        <dd>{resourceTypeLabel(props.locale, props.asset.resourceType)}</dd>
-        <dt>{t(props.locale, "Target directory")}</dt>
-        <dd>{props.asset.sourceDirectory ?? t(props.locale, "unknown")}</dd>
-        <dt>{t(props.locale, "Content hash")}</dt>
-        <dd>{props.asset.contentHash}</dd>
-        {props.change !== undefined ? (
-          <>
-            <dt>{t(props.locale, "Source asset")}</dt>
-            <dd>{props.sourceAssetSummary}</dd>
-            <dt>{t(props.locale, "Preview target file")}</dt>
-            <dd>{props.change.pathDisplay}</dd>
-            <dt>{t(props.locale, "Deployment")}</dt>
-            <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
-            {props.change.sourcePathDisplay === undefined ? null : (
-              <>
-                <dt>{t(props.locale, "Source file")}</dt>
-                <dd>{props.change.sourcePathDisplay}</dd>
-              </>
-            )}
-            <dt>{t(props.locale, "Hash change")}</dt>
-            <dd>{hashChangeLabel(props.locale, props.change)}</dd>
-          </>
-        ) : props.liveDifference?.sourceAsset === undefined ? null : (
-          <>
-            <dt>{t(props.locale, "Source asset")}</dt>
-            <dd>{props.liveDifference.sourceAsset.logicalKey}</dd>
-            <dt>{t(props.locale, "Hash change")}</dt>
-            <dd>{liveHashChangeLabel(props.liveDifference)}</dd>
-          </>
-        )}
-      </dl>
+      </p>
+      <details className="target-change-details">
+        <summary>{t(props.locale, "Details")}</summary>
+        <dl>
+          <dt>{t(props.locale, "Target project")}</dt>
+          <dd>{props.targetProject}</dd>
+          <dt>{t(props.locale, "Target tool")}</dt>
+          <dd>{props.targetTool}</dd>
+          <dt>{t(props.locale, "Asset type")}</dt>
+          <dd>{resourceTypeLabel(props.locale, props.asset.resourceType)}</dd>
+          <dt>{t(props.locale, "Target directory")}</dt>
+          <dd>{props.asset.sourceDirectory ?? t(props.locale, "unknown")}</dd>
+          <dt>{t(props.locale, "Content hash")}</dt>
+          <dd>{props.asset.contentHash}</dd>
+          {props.change !== undefined ? (
+            <>
+              <dt>{t(props.locale, "Source asset")}</dt>
+              <dd>{props.sourceAssetSummary}</dd>
+              <dt>{t(props.locale, "Preview target file")}</dt>
+              <dd>{props.change.pathDisplay}</dd>
+              <dt>{t(props.locale, "Deployment")}</dt>
+              <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
+              {props.change.sourcePathDisplay === undefined ? null : (
+                <>
+                  <dt>{t(props.locale, "Source file")}</dt>
+                  <dd>{props.change.sourcePathDisplay}</dd>
+                </>
+              )}
+              <dt>{t(props.locale, "Hash change")}</dt>
+              <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+            </>
+          ) : props.liveDifference?.sourceAsset === undefined ? null : (
+            <>
+              <dt>{t(props.locale, "Source asset")}</dt>
+              <dd>{props.liveDifference.sourceAsset.logicalKey}</dd>
+              <dt>{t(props.locale, "Hash change")}</dt>
+              <dd>{liveHashChangeLabel(props.liveDifference)}</dd>
+            </>
+          )}
+        </dl>
+      </details>
     </div>
   );
 }
@@ -468,26 +486,34 @@ function PreviewTargetRow(props: {
         <strong>{props.change.pathDisplay}</strong>
         <span>{targetChangeStatusLabel(props.locale, props.change.operation)}</span>
       </div>
-      <dl>
-        <dt>{t(props.locale, "Target project")}</dt>
-        <dd>{props.targetProject}</dd>
-        <dt>{t(props.locale, "Target tool")}</dt>
-        <dd>{props.targetTool}</dd>
-        <dt>{t(props.locale, "Source asset")}</dt>
-        <dd>{props.sourceAssetSummary}</dd>
-        <dt>{t(props.locale, "Preview target file")}</dt>
-        <dd>{props.change.pathDisplay}</dd>
-        <dt>{t(props.locale, "Deployment")}</dt>
-        <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
-        {props.change.sourcePathDisplay === undefined ? null : (
-          <>
-            <dt>{t(props.locale, "Source file")}</dt>
-            <dd>{props.change.sourcePathDisplay}</dd>
-          </>
-        )}
-        <dt>{t(props.locale, "Hash change")}</dt>
-        <dd>{hashChangeLabel(props.locale, props.change)}</dd>
-      </dl>
+      <p className="target-change-meta">
+        <span>{props.targetTool}</span>
+        <span>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</span>
+        <span>{hashChangeCompactLabel(props.locale, props.change)}</span>
+      </p>
+      <details className="target-change-details">
+        <summary>{t(props.locale, "Details")}</summary>
+        <dl>
+          <dt>{t(props.locale, "Target project")}</dt>
+          <dd>{props.targetProject}</dd>
+          <dt>{t(props.locale, "Target tool")}</dt>
+          <dd>{props.targetTool}</dd>
+          <dt>{t(props.locale, "Source asset")}</dt>
+          <dd>{props.sourceAssetSummary}</dd>
+          <dt>{t(props.locale, "Preview target file")}</dt>
+          <dd>{props.change.pathDisplay}</dd>
+          <dt>{t(props.locale, "Deployment")}</dt>
+          <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
+          {props.change.sourcePathDisplay === undefined ? null : (
+            <>
+              <dt>{t(props.locale, "Source file")}</dt>
+              <dd>{props.change.sourcePathDisplay}</dd>
+            </>
+          )}
+          <dt>{t(props.locale, "Hash change")}</dt>
+          <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+        </dl>
+      </details>
     </div>
   );
 }
@@ -506,18 +532,26 @@ function SourceOnlyTargetRow(props: {
         <strong>{sourceAsset.logicalKey}</strong>
         <span>{targetChangeStatusLabel(props.locale, "create")}</span>
       </div>
-      <dl>
-        <dt>{t(props.locale, "Target project")}</dt>
-        <dd>{props.targetProject}</dd>
-        <dt>{t(props.locale, "Target tool")}</dt>
-        <dd>{props.targetTool}</dd>
-        <dt>{t(props.locale, "Asset type")}</dt>
-        <dd>{resourceTypeLabel(props.locale, sourceAsset.resourceType)}</dd>
-        <dt>{t(props.locale, "Source asset")}</dt>
-        <dd>{sourceAsset.logicalKey}</dd>
-        <dt>{t(props.locale, "Content hash")}</dt>
-        <dd>{sourceAsset.contentHash}</dd>
-      </dl>
+      <p className="target-change-meta">
+        <span>{props.targetTool}</span>
+        <span>{resourceTypeLabel(props.locale, sourceAsset.resourceType)}</span>
+        <span>{shortHash(sourceAsset.contentHash)}</span>
+      </p>
+      <details className="target-change-details">
+        <summary>{t(props.locale, "Details")}</summary>
+        <dl>
+          <dt>{t(props.locale, "Target project")}</dt>
+          <dd>{props.targetProject}</dd>
+          <dt>{t(props.locale, "Target tool")}</dt>
+          <dd>{props.targetTool}</dd>
+          <dt>{t(props.locale, "Asset type")}</dt>
+          <dd>{resourceTypeLabel(props.locale, sourceAsset.resourceType)}</dd>
+          <dt>{t(props.locale, "Source asset")}</dt>
+          <dd>{sourceAsset.logicalKey}</dd>
+          <dt>{t(props.locale, "Content hash")}</dt>
+          <dd>{sourceAsset.contentHash}</dd>
+        </dl>
+      </details>
     </div>
   );
 }
@@ -606,10 +640,30 @@ function hashChangeLabel(locale: DesktopLocale, change: MigrationPreviewChange):
   }`;
 }
 
+function hashChangeCompactLabel(locale: DesktopLocale, change: MigrationPreviewChange): string {
+  return `${change.beforeHash === null ? t(locale, "absent") : shortHash(change.beforeHash)} -> ${
+    change.afterHash === null ? t(locale, "absent") : shortHash(change.afterHash)
+  }`;
+}
+
 function liveHashChangeLabel(difference: MigrationAssetDifference): string {
   return `${difference.sourceAsset?.contentHash ?? "absent"} -> ${
     difference.targetAsset?.contentHash ?? "absent"
   }`;
+}
+
+function liveHashChangeCompactLabel(
+  targetHash: string,
+  sourceAsset: MigrationAssetSummary | undefined,
+): string {
+  return `${sourceAsset === undefined ? "absent" : shortHash(sourceAsset.contentHash)} -> ${shortHash(
+    targetHash,
+  )}`;
+}
+
+function shortHash(hash: string): string {
+  const prefix = "sha256:";
+  return hash.startsWith(prefix) ? `${prefix}${hash.slice(prefix.length, prefix.length + 8)}` : hash;
 }
 
 function targetChangeStatusLabel(
@@ -940,8 +994,8 @@ function HashSnapshot(props: {
   readonly preview: NonNullable<AppState["preview"]>;
 }) {
   return (
-    <section className="hash-snapshot" aria-label={t(props.locale, "Migration hash snapshot")}>
-      <h2>{t(props.locale, "Hash snapshot")}</h2>
+    <details className="hash-snapshot" aria-label={t(props.locale, "Migration hash snapshot")}>
+      <summary>{t(props.locale, "Hash snapshot")}</summary>
       <table>
         <thead>
           <tr>
@@ -962,7 +1016,7 @@ function HashSnapshot(props: {
           ))}
         </tbody>
       </table>
-    </section>
+    </details>
   );
 }
 

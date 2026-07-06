@@ -771,7 +771,10 @@ pre {
 .field label,
 .asset-picker legend,
 .preview-summary span,
-.planned-change dt {
+.planned-change dt,
+.target-change-details summary,
+.planned-change-details summary,
+.hash-snapshot summary {
   color: var(--muted-text);
 }
 
@@ -808,6 +811,13 @@ pre {
   display: grid;
   gap: 0.35rem;
   margin-bottom: 1rem;
+  min-width: 0;
+}
+
+.preview-summary strong,
+.preview-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .warning-list {
@@ -875,8 +885,16 @@ pre {
   padding-top: 1rem;
 }
 
-.hash-snapshot h2 {
-  font-size: 1rem;
+.hash-snapshot summary,
+.planned-change-details summary,
+.target-change-details summary {
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.hash-snapshot table {
+  margin-top: 0.75rem;
 }
 
 .hash-snapshot td {
@@ -885,23 +903,53 @@ pre {
 
 .planned-change {
   border-top: 1px solid var(--panel-border);
-  padding-top: 1rem;
+  display: grid;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+}
+
+.planned-change-summary {
+  align-items: start;
+  display: grid;
+  gap: 0.35rem 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .planned-change h2 {
   font-size: 1rem;
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
-.planned-change dl {
+.planned-change-summary span {
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--top-border);
+  border-radius: 999px;
+  color: var(--subtle-text);
+  font-size: 0.78rem;
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+}
+
+.planned-change-details {
+  min-width: 0;
+}
+
+.planned-change-details dl {
   display: grid;
   gap: 0.35rem 0.75rem;
   grid-template-columns: max-content 1fr;
+  margin: 0.65rem 0;
 }
 
 .planned-change dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.planned-change pre {
+  max-height: 320px;
+  overflow: auto;
 }
 
 .deployment-confirmation-panel,
@@ -1577,7 +1625,7 @@ main {
   border: 1px solid var(--top-border);
   border-radius: 8px;
   display: grid;
-  gap: 0.25rem;
+  gap: 0.45rem;
   padding: 0.65rem;
 }
 
@@ -1608,6 +1656,10 @@ main {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.target-change-heading strong {
+  line-height: 1.3;
+}
+
 .target-change-heading span {
   background: rgb(255 255 255 / 72%);
   border: 1px solid var(--top-border);
@@ -1618,11 +1670,34 @@ main {
   white-space: nowrap;
 }
 
-.target-change-row dl {
+.target-change-meta {
+  color: var(--subtle-text);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+}
+
+.target-change-meta span {
+  background: rgb(255 255 255 / 56%);
+  border: 1px solid var(--top-border);
+  border-radius: 999px;
+  font-size: 0.76rem;
+  line-height: 1.3;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 0.12rem 0.45rem;
+}
+
+.target-change-details {
+  min-width: 0;
+}
+
+.target-change-details dl {
   display: grid;
   gap: 0.2rem 0.65rem;
   grid-template-columns: max-content minmax(0, 1fr);
-  margin: 0;
+  margin: 0.55rem 0 0;
 }
 
 .target-change-row span,
@@ -1652,6 +1727,10 @@ main {
 
 .app-shell[data-theme="dark"] .target-change-heading span {
   background: rgb(17 24 39 / 72%);
+}
+
+.app-shell[data-theme="dark"] .target-change-meta span {
+  background: rgb(17 24 39 / 55%);
 }
 
 .migration-preview-details {
@@ -1789,8 +1868,13 @@ main {
   .review-workspace,
   .migration-project-picker,
   .migration-comparison-body,
-  .migration-execution-heading {
+  .migration-execution-heading,
+  .planned-change-summary {
     grid-template-columns: 1fr;
+  }
+
+  .planned-change-summary span {
+    justify-self: start;
   }
 
   .page-heading {
