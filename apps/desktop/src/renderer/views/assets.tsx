@@ -24,11 +24,10 @@ export function AssetsView(props: {
 }) {
   const locale = localeForState(props.state);
   const detail = props.state.assetDetail;
-  const effective = props.state.effective;
   const diagnosticScope = diagnosticScopeFor(locale, detail);
-  const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
   const activeTask = props.state.activeTask;
   const scanTask = activeTask?.taskKind === "scan" ? activeTask : undefined;
+  const assetsById = new Map(props.state.assets.map((asset) => [asset.id, asset]));
   const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
   const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
   const visibleAssets = useMemo(
@@ -150,14 +149,12 @@ export function AssetsView(props: {
       {detail === undefined ? null : (
         <AssetDetailDialog
           detail={detail}
-          effective={effective}
+          summary={assetsById.get(detail.asset.id)}
           diagnostics={props.state.diagnostics}
-          assetLabels={assetLabels}
           locale={locale}
           message={props.state.message}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
-          onLoadEffective={props.onLoadEffective}
           onCloseInspect={props.onCloseInspect}
           onLocateDiagnostic={props.onLocateDiagnostic}
         />
@@ -177,6 +174,11 @@ export function AssetsView(props: {
 }
 
 type AssetSummary = AppState["assets"][number];
+type AssetLoadStateSource = {
+  readonly status?: string | undefined;
+  readonly loadState?: AssetLoadState | undefined;
+  readonly coveredByLogicalKey?: string | undefined;
+};
 type AssetStatus = "enabled" | "disabled";
 type AssetLoadState = "loaded" | "covered" | "disabled";
 
@@ -403,7 +405,7 @@ function formatAssetCount(locale: DesktopLocale, count: number): string {
   return `${count} ${count === 1 ? "asset" : "assets"}`;
 }
 
-function assetStatusFor(asset: { readonly status?: string }): AssetStatus {
+function assetStatusFor(asset: { readonly status?: string | undefined }): AssetStatus {
   return asset.status === "disabled" ? "disabled" : "enabled";
 }
 
@@ -411,7 +413,7 @@ function assetStatusLabel(locale: DesktopLocale, status: AssetStatus): string {
   return status === "disabled" ? t(locale, "Disabled") : t(locale, "Enabled");
 }
 
-function assetLoadStateFor(asset: AssetSummary): AssetLoadState {
+function assetLoadStateFor(asset: AssetLoadStateSource): AssetLoadState {
   if (assetStatusFor(asset) === "disabled") return "disabled";
   return asset.loadState ?? "loaded";
 }
@@ -420,7 +422,7 @@ function sourceDirectoryLabel(locale: DesktopLocale, asset: AssetSummary): strin
   return asset.sourceDirectory ?? t(locale, "Unknown source");
 }
 
-function loadStateLabel(locale: DesktopLocale, asset: AssetSummary): string {
+function loadStateLabel(locale: DesktopLocale, asset: AssetLoadStateSource): string {
   const state = assetLoadStateFor(asset);
   if (state === "disabled") return t(locale, "No, disabled");
   if (state === "covered") {
@@ -431,7 +433,10 @@ function loadStateLabel(locale: DesktopLocale, asset: AssetSummary): string {
   return t(locale, "Yes");
 }
 
-function AssetLoadBadge(props: { readonly asset: AssetSummary; readonly locale: DesktopLocale }) {
+function AssetLoadBadge(props: {
+  readonly asset: AssetLoadStateSource;
+  readonly locale: DesktopLocale;
+}) {
   const state = assetLoadStateFor(props.asset);
   return (
     <span className={`asset-load-badge ${state}`}>{loadStateLabel(props.locale, props.asset)}</span>
@@ -528,36 +533,6 @@ function scopeKindLabel(locale: DesktopLocale, scopeKind: string): string {
   return `${label} scope`;
 }
 
-function assetLabel(assetId: string, assetLabels: ReadonlyMap<string, string>): string {
-  return assetLabels.get(assetId) ?? displayIdentifier(assetId);
-}
-
-function contributionLabel(locale: DesktopLocale, action: string, reasonCode: string): string {
-  const reason = reasonLabel(locale, reasonCode);
-  switch (action) {
-    case "inherit":
-      return t(locale, "Inherited from {reason}.", { reason });
-    case "merge":
-      return t(locale, "Merged because {reason}.", { reason });
-    case "override":
-      return t(locale, "Overrode lower-priority values because {reason}.", { reason });
-    default:
-      return t(locale, "{action} because {reason}.", {
-        action: sentenceCaseIdentifier(action),
-        reason,
-      });
-  }
-}
-
-function reasonLabel(locale: DesktopLocale, reasonCode: string): string {
-  return t(locale, lowerFirst(sentenceCaseIdentifier(reasonCode)));
-}
-
-function displayIdentifier(identifier: string): string {
-  const delimiterIndex = identifier.indexOf(":");
-  return delimiterIndex === -1 ? identifier : identifier.slice(delimiterIndex + 1);
-}
-
 function formatTimestamp(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
   if (Number.isNaN(date.getTime())) return isoTimestamp;
@@ -587,10 +562,6 @@ function sentenceCaseIdentifier(identifier: string): string {
   if (firstWord === undefined) return identifier;
   const remainingWords = words.slice(1);
   return [firstWord[0]?.toUpperCase() + firstWord.slice(1), ...remainingWords].join(" ");
-}
-
-function lowerFirst(value: string): string {
-  return value.length === 0 ? value : value[0]?.toLowerCase() + value.slice(1);
 }
 
 const ZH_DIAGNOSTIC_CODE_LABELS: Readonly<Record<string, string>> = {
@@ -811,9 +782,8 @@ function selectedDefaultDisablementMethod(
 
 function AssetDetailDialog(props: {
   readonly detail: NonNullable<AppState["assetDetail"]>;
-  readonly effective: AppState["effective"];
+  readonly summary: AssetSummary | undefined;
   readonly diagnostics: AppState["diagnostics"];
-  readonly assetLabels: ReadonlyMap<string, string>;
   readonly locale: DesktopLocale;
   readonly message: string | undefined;
   readonly onOpenSource: () => void;
@@ -822,13 +792,12 @@ function AssetDetailDialog(props: {
     nextStatus: AssetStatus,
     disablementMethod?: AssetDisablementMethod,
   ) => void;
-  readonly onLoadEffective: () => void;
   readonly onCloseInspect: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
 }) {
   const detail = props.detail;
-  const effective = props.effective;
   const status = assetStatusFor(detail.asset);
+  const loadStateSource = { ...props.summary, status };
   const disablementOptions = detail.asset.disablementOptions ?? [];
   const defaultDisablementMethod = selectedDefaultDisablementMethod(disablementOptions);
   const [selectedDisablementMethod, setSelectedDisablementMethod] =
@@ -861,9 +830,6 @@ function AssetDetailDialog(props: {
             <button type="button" onClick={props.onOpenSource}>
               {t(props.locale, "Open source")}
             </button>
-            <button type="button" onClick={props.onLoadEffective}>
-              {t(props.locale, "Load effective configuration")}
-            </button>
           </div>
           {props.message === undefined ? null : (
             <div className="asset-detail-message" role="status">
@@ -877,6 +843,10 @@ function AssetDetailDialog(props: {
             <dd>{resourceTypeLabel(props.locale, detail.asset.resourceType)}</dd>
             <dt>{t(props.locale, "Status")}</dt>
             <dd>{assetStatusLabel(props.locale, status)}</dd>
+            <dt>{t(props.locale, "Load result")}</dt>
+            <dd>
+              <AssetLoadBadge asset={loadStateSource} locale={props.locale} />
+            </dd>
             <dt>{t(props.locale, "Scope")}</dt>
             <dd>{detail.asset.scopeId}</dd>
             <dt>{t(props.locale, "Source")}</dt>
@@ -884,7 +854,9 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
-          {detail.source.files.length <= 1 ? null : (
+          {detail.source.files.length <= 1 ? null : detail.asset.resourceType === "skill" ? (
+            <AssetSourceTree detail={detail} locale={props.locale} />
+          ) : (
             <section
               className="asset-source-files"
               aria-label={t(props.locale, "Source package files")}
@@ -1004,72 +976,92 @@ function AssetDetailDialog(props: {
               <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
             </>
           )}
-          {effective === undefined ? null : (
-            <>
-              <h3>{t(props.locale, "Effective configuration")}</h3>
-              <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
-              <h3>{t(props.locale, "Contributors")}</h3>
-              {effective.contributors.length === 0 ? (
-                <p>{t(props.locale, "No contributing assets.")}</p>
-              ) : (
-                <ul>
-                  {effective.contributors.map((contributor) => (
-                    <li
-                      key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
-                    >
-                      <strong>{assetLabel(contributor.assetId, props.assetLabels)}</strong>{" "}
-                      <span>
-                        {contributionLabel(
-                          props.locale,
-                          contributor.action,
-                          contributor.reasonCode,
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h3>{t(props.locale, "Ignored assets")}</h3>
-              {effective.ignored.length === 0 ? (
-                <p>{t(props.locale, "No ignored assets.")}</p>
-              ) : (
-                <ul>
-                  {effective.ignored.map((ignored) => (
-                    <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
-                      <strong>{assetLabel(ignored.assetId, props.assetLabels)}</strong>{" "}
-                      <span>
-                        {t(props.locale, "Ignored because {reason}.", {
-                          reason: reasonLabel(props.locale, ignored.reasonCode),
-                        })}
-                        {ignored.coveredByAssetId === undefined
-                          ? null
-                          : ` ${t(props.locale, "Covered by {asset}.", {
-                              asset: assetLabel(ignored.coveredByAssetId, props.assetLabels),
-                            })}`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <h3>{t(props.locale, "Effective diagnostics")}</h3>
-              {effective.diagnostics.length === 0 ? (
-                <p>{t(props.locale, "No effective diagnostics.")}</p>
-              ) : (
-                <ul className="diagnostic-list">
-                  {effective.diagnostics.map((diagnostic) => (
-                    <li key={diagnostic.id}>
-                      <strong>{diagnosticLabel(props.locale, diagnostic)}</strong>
-                      <span>{diagnosticText(props.locale, diagnostic.message)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
         </div>
       </section>
     </div>
   );
+}
+
+function AssetSourceTree(props: {
+  readonly detail: NonNullable<AppState["assetDetail"]>;
+  readonly locale: DesktopLocale;
+}) {
+  const entries = sourceTreeEntries(props.detail.source.files);
+  return (
+    <section className="asset-source-tree" aria-label={t(props.locale, "Source package folder")}>
+      <h3>{t(props.locale, "Source package folder")}</h3>
+      <ul>
+        <li>
+          <span className="source-tree-name folder">{sourcePackageFolderName(props.detail)}/</span>
+          <ul>
+            {entries.map((entry) => (
+              <li className={`source-tree-entry depth-${entry.depth}`} key={entry.key}>
+                <span className={`source-tree-name ${entry.kind}`} title={entry.relativePath}>
+                  {entry.label}
+                </span>
+                {entry.file === undefined ? null : (
+                  <span className="source-tree-meta">
+                    {sourceFileRoleLabel(props.locale, entry.file.role)}, {entry.file.mediaType} /{" "}
+                    {sourceFileTextLabel(props.locale, entry.file.isText)}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+function sourceTreeEntries(files: NonNullable<AppState["assetDetail"]>["source"]["files"]) {
+  const directories = new Set<string>();
+  const entries: Array<{
+    readonly key: string;
+    readonly label: string;
+    readonly relativePath: string;
+    readonly depth: number;
+    readonly kind: "folder" | "file";
+    readonly file?: (typeof files)[number];
+  }> = [];
+
+  for (const file of files) {
+    const parts = file.relativePath.split("/").filter((part) => part.length > 0);
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const directory = parts.slice(0, index + 1).join("/");
+      if (!directories.has(directory)) {
+        directories.add(directory);
+        entries.push({
+          key: `folder:${directory}`,
+          label: `${parts[index] ?? directory}/`,
+          relativePath: directory,
+          depth: index,
+          kind: "folder",
+        });
+      }
+    }
+    entries.push({
+      key: `file:${file.relativePath}`,
+      label: parts.at(-1) ?? file.relativePath,
+      relativePath: file.relativePath,
+      depth: Math.max(0, parts.length - 1),
+      kind: "file",
+      file,
+    });
+  }
+
+  return entries;
+}
+
+function sourcePackageFolderName(detail: NonNullable<AppState["assetDetail"]>): string {
+  const primaryPath =
+    detail.source.files.find((file) => file.role === "primary")?.pathDisplay ??
+    detail.source.pathDisplay;
+  const segments = primaryPath
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]+/)
+    .filter((segment) => segment.length > 0);
+  return segments.at(-2) ?? detail.asset.logicalKey;
 }
 
 function disablementOptionCopy(

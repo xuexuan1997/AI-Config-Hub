@@ -60,6 +60,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   Language: "语言",
   Light: "浅色",
   "Load effective configuration": "加载有效配置",
+  "Load result": "加载结果",
   "Load settings": "加载设置",
   Loading: "正在加载",
   "Logical key": "逻辑键",
@@ -141,6 +142,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Source scan status": "源扫描状态",
   "Open source": "打开来源",
   "Source file opened.": "来源文件已打开。",
+  "Source package folder": "来源包文件夹",
   "Inspect asset": "检查资产",
   Inspect: "检查",
   "Inspect one current project without implying that it is a migration source.":
