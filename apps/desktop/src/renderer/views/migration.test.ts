@@ -98,6 +98,55 @@ describe("MigrationView", () => {
     expect(html).toContain("/workspace/source/.claude/skills/release/assets/logo.png");
     expect(html).toContain(".agents/skills/release/assets/logo.png");
   });
+
+  it("keeps verbose migration target and preview details collapsed", () => {
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [AssetIdSchema.parse("asset-source-skill")],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-skill", "skill:release", {
+          toolKey: "claude-code",
+        }),
+      ],
+      preview: {
+        planId: DeploymentPlanIdSchema.parse("plan-1"),
+        planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        compatibility: "full",
+        fieldLosses: [],
+        changes: [
+          {
+            operation: "create",
+            deploymentType: "copy",
+            pathDisplay: ".agents/skills/release/assets/logo.png",
+            sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
+            beforeHash: null,
+            afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            diff: "+ copied binary asset",
+          },
+        ],
+        requiredConfirmations: [],
+        warnings: [],
+        sourceHashes: {
+          [AssetIdSchema.parse("asset-source-skill")]: ContentHashSchema.parse(
+            `sha256:${"c".repeat(64)}`,
+          ),
+        },
+        targetHashes: { ".agents/skills/release/assets/logo.png": null },
+        expiresAt: "2026-06-28T08:10:00.000Z",
+      },
+    });
+
+    expect(html).toContain('class="target-change-meta"');
+    expect(html).toContain('class="target-change-details"');
+    expect(html).toContain("<summary>Details</summary>");
+    expect(html).toContain('class="planned-change-summary"');
+    expect(html).toContain("<summary>Show diff and hashes</summary>");
+    expect(html).toContain("<pre>+ copied binary asset</pre>");
+  });
 });
 
 function renderMigration(statePatch: Partial<AppState>): string {
