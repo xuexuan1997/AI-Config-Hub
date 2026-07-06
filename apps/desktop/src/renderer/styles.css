@@ -632,6 +632,57 @@ pre {
   max-height: 360px;
 }
 
+.asset-source-tree {
+  border-top: 1px solid var(--panel-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.asset-source-tree h3 {
+  margin-top: 0;
+}
+
+.asset-source-tree ul {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.asset-source-tree li ul {
+  border-left: 1px solid var(--panel-border);
+  margin-top: 0.4rem;
+  padding-left: 1rem;
+}
+
+.source-tree-entry {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.source-tree-entry.depth-1 {
+  margin-left: 1rem;
+}
+
+.source-tree-entry.depth-2 {
+  margin-left: 2rem;
+}
+
+.source-tree-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.source-tree-name.folder {
+  color: var(--strong-text);
+  font-weight: 750;
+}
+
+.source-tree-meta {
+  color: var(--muted-text);
+  font-size: 0.82rem;
+}
+
 .asset-status-control {
   align-items: start;
   background: var(--soft-panel-bg);
