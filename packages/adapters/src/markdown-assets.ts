@@ -136,7 +136,7 @@ export function parseMarkdownAsset(
           extensions: {},
         },
       ],
-      diagnostics: unsupportedNativeFieldDiagnostics(kind, candidate.sourcePath, extensions),
+      diagnostics: [],
     };
   } catch (error) {
     return rejectedParse(candidate, error);

@@ -7,7 +7,7 @@ import { fixtureSnapshot, memoryReadApi, neverCancelled } from "./test-support.j
 
 const files = {
   "/project/.cursor/rules/project.mdc":
-    "---\ndescription: Project rules\nglobs: [src/**/*.ts]\nalwaysApply: false\nunknownMode: kept\n---\nUse strict TypeScript.\n",
+    "---\ndescription: Project rules\nglobs: [src/**/*.ts]\nversion: 2\nx-owner: platform\nalwaysApply: false\nunknownMode: kept\n---\nUse strict TypeScript.\n",
   "/project/src/.cursor/rules/nested.mdc": "---\nalwaysApply: true\n---\nNested rule.\n",
   "/project/AGENTS.md": "# Agent guidance\nUse tests.\n",
   "/project/.cursorrules": "Legacy guidance.\n",
@@ -65,6 +65,8 @@ describe("Cursor adapter read path", () => {
         globs: ["src/**/*.ts"],
         extensions: {
           description: "Project rules",
+          version: 2,
+          "x-owner": "platform",
           alwaysApply: false,
           unknownMode: "kept",
         },
@@ -74,11 +76,10 @@ describe("Cursor adapter read path", () => {
       kind: "agent",
       data: { name: "reviewer", description: "Review code" },
     });
-    expect(results.flatMap(({ diagnostics }) => diagnostics)).toEqual(
+    expect(results.flatMap(({ diagnostics }) => diagnostics)).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "RULE_UNSUPPORTED_NATIVE_FIELD",
-          evidence: expect.objectContaining({ field: "alwaysApply" }) as unknown,
         }),
       ]),
     );
