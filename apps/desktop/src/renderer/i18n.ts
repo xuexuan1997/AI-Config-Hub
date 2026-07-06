@@ -70,7 +70,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "No assets indexed yet.": "尚未索引资产。",
   "No assets match the selected tool.": "没有匹配所选工具的资产。",
   "No differences for this asset type.": "此资产类型没有差异。",
-  "No diagnostics": "无诊断",
+  "No diagnostics": "正常",
   "No diagnostics for this asset.": "此资产没有诊断。",
   "No contributing assets.": "无贡献资产。",
   "No deployment history yet.": "暂无部署历史。",

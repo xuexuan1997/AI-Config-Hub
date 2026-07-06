@@ -111,6 +111,30 @@ describe("AssetsView", () => {
     expect(html).not.toContain("/workspace/.codex");
   });
 
+  it("labels zero diagnostics as normal in the Simplified Chinese review table", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      assets: [
+        assetSummaryFixture(
+          "asset-normal",
+          "rule:AGENTS",
+          {},
+          {
+            info: 0,
+            warning: 0,
+            error: 0,
+          },
+        ),
+      ],
+    });
+
+    expect(html).toContain("<td>正常</td>");
+    expect(html).not.toContain("<td>无诊断</td>");
+  });
+
   it("opens the rule tab first when assets arrive in another order", () => {
     const html = renderAssets({
       assets: [
