@@ -910,26 +910,28 @@ function DriftPanel(props: {
     <section className="drift-panel" aria-label={t(props.locale, "Source drift warnings")}>
       <h2>{t(props.locale, "Source drift")}</h2>
       <p>{t(props.locale, "Refresh the scan and create a fresh preview before migrating.")}</p>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">{t(props.locale, "Asset")}</th>
-            <th scope="col">{t(props.locale, "Status")}</th>
-            <th scope="col">{t(props.locale, "Expected hash")}</th>
-            <th scope="col">{t(props.locale, "Current hash")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.driftRows.map((row) => (
-            <tr key={row.assetId}>
-              <td>{assetLabel(row.assetId, props.assetLabels)}</td>
-              <td>{driftStatusLabel(props.locale, row.status)}</td>
-              <td>{row.expectedHash}</td>
-              <td>{row.currentHash ?? t(props.locale, "missing")}</td>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">{t(props.locale, "Asset")}</th>
+              <th scope="col">{t(props.locale, "Status")}</th>
+              <th scope="col">{t(props.locale, "Expected hash")}</th>
+              <th scope="col">{t(props.locale, "Current hash")}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {props.driftRows.map((row) => (
+              <tr key={row.assetId}>
+                <td>{assetLabel(row.assetId, props.assetLabels)}</td>
+                <td>{driftStatusLabel(props.locale, row.status)}</td>
+                <td>{row.expectedHash}</td>
+                <td>{row.currentHash ?? t(props.locale, "missing")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -942,26 +944,28 @@ function HashSnapshot(props: {
   return (
     <section className="hash-snapshot" aria-label={t(props.locale, "Migration hash snapshot")}>
       <h2>{t(props.locale, "Hash snapshot")}</h2>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">{t(props.locale, "Kind")}</th>
-            <th scope="col">{t(props.locale, "Item")}</th>
-            <th scope="col">{t(props.locale, "Expected hash")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {migrationHashRowsForPreview(props.preview).map((row) => (
-            <tr key={`${row.kind}:${row.label}`}>
-              <td>{hashRowKindLabel(props.locale, row.kind)}</td>
-              <td>
-                {row.kind === "source" ? assetLabel(row.label, props.assetLabels) : row.label}
-              </td>
-              <td>{row.hash}</td>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">{t(props.locale, "Kind")}</th>
+              <th scope="col">{t(props.locale, "Item")}</th>
+              <th scope="col">{t(props.locale, "Expected hash")}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {migrationHashRowsForPreview(props.preview).map((row) => (
+              <tr key={`${row.kind}:${row.label}`}>
+                <td>{hashRowKindLabel(props.locale, row.kind)}</td>
+                <td>
+                  {row.kind === "source" ? assetLabel(row.label, props.assetLabels) : row.label}
+                </td>
+                <td>{row.hash}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

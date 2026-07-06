@@ -332,46 +332,48 @@ function AssetTypeTable(props: {
         <h2>{t(props.locale, "{resource} assets", { resource: groupLabel })}</h2>
         <span>{formatAssetCount(props.locale, props.group.assets.length)}</span>
       </header>
-      <table className="asset-table-compact">
-        <thead>
-          <tr>
-            <th>{t(props.locale, "Logical key")}</th>
-            <th>{t(props.locale, "Source directory")}</th>
-            <th>{t(props.locale, "Will load")}</th>
-            <th>{t(props.locale, "Diagnostics")}</th>
-            <th>{t(props.locale, "Detail")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.group.assets.map((asset) => (
-            <tr key={asset.id} className="asset-row-compact">
-              <td className="asset-primary-cell">
-                <strong>{asset.logicalKey}</strong>
-                <span className="asset-row-meta">
-                  {scopeKindLabel(props.locale, asset.scopeKind)}
-                  <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
-                </span>
-              </td>
-              <td className="asset-source-cell" title={sourceDirectoryLabel(props.locale, asset)}>
-                {sourceDirectoryLabel(props.locale, asset)}
-              </td>
-              <td>
-                <AssetLoadBadge asset={asset} locale={props.locale} />
-              </td>
-              <td>{formatDiagnosticCounts(props.locale, asset.diagnosticCounts)}</td>
-              <td>
-                <button
-                  className="asset-inspect-button"
-                  type="button"
-                  onClick={() => props.onInspect(asset.id)}
-                >
-                  {t(props.locale, "Inspect")}
-                </button>
-              </td>
+      <div className="table-scroll">
+        <table className="asset-table-compact">
+          <thead>
+            <tr>
+              <th>{t(props.locale, "Logical key")}</th>
+              <th>{t(props.locale, "Source directory")}</th>
+              <th>{t(props.locale, "Will load")}</th>
+              <th>{t(props.locale, "Diagnostics")}</th>
+              <th>{t(props.locale, "Detail")}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {props.group.assets.map((asset) => (
+              <tr key={asset.id} className="asset-row-compact">
+                <td className="asset-primary-cell">
+                  <strong>{asset.logicalKey}</strong>
+                  <span className="asset-row-meta">
+                    {scopeKindLabel(props.locale, asset.scopeKind)}
+                    <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
+                  </span>
+                </td>
+                <td className="asset-source-cell" title={sourceDirectoryLabel(props.locale, asset)}>
+                  {sourceDirectoryLabel(props.locale, asset)}
+                </td>
+                <td>
+                  <AssetLoadBadge asset={asset} locale={props.locale} />
+                </td>
+                <td>{formatDiagnosticCounts(props.locale, asset.diagnosticCounts)}</td>
+                <td>
+                  <button
+                    className="asset-inspect-button"
+                    type="button"
+                    onClick={() => props.onInspect(asset.id)}
+                  >
+                    {t(props.locale, "Inspect")}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -880,29 +882,31 @@ function AssetDetailDialog(props: {
               aria-label={t(props.locale, "Source package files")}
             >
               <h3>{t(props.locale, "Source package files")}</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t(props.locale, "Role")}</th>
-                    <th>{t(props.locale, "Path")}</th>
-                    <th>{t(props.locale, "Media")}</th>
-                    <th>{t(props.locale, "Hash")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.source.files.map((sourceFile) => (
-                    <tr key={`${sourceFile.role}:${sourceFile.relativePath}`}>
-                      <td>{sourceFileRoleLabel(props.locale, sourceFile.role)}</td>
-                      <td title={sourceFile.pathDisplay}>{sourceFile.relativePath}</td>
-                      <td>
-                        {sourceFile.mediaType} /{" "}
-                        {sourceFileTextLabel(props.locale, sourceFile.isText)}
-                      </td>
-                      <td>{sourceFile.contentHash}</td>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t(props.locale, "Role")}</th>
+                      <th>{t(props.locale, "Path")}</th>
+                      <th>{t(props.locale, "Media")}</th>
+                      <th>{t(props.locale, "Hash")}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {detail.source.files.map((sourceFile) => (
+                      <tr key={`${sourceFile.role}:${sourceFile.relativePath}`}>
+                        <td>{sourceFileRoleLabel(props.locale, sourceFile.role)}</td>
+                        <td title={sourceFile.pathDisplay}>{sourceFile.relativePath}</td>
+                        <td>
+                          {sourceFile.mediaType} /{" "}
+                          {sourceFileTextLabel(props.locale, sourceFile.isText)}
+                        </td>
+                        <td>{sourceFile.contentHash}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           )}
           {status === "disabled" ? (
