@@ -63,6 +63,15 @@ describe("desktop installer packaging config", () => {
     assert.match(buildMain, /&& tsc -p tsconfig\.build\.json$/);
   });
 
+  it("loads electron-updater through a CommonJS bridge", async () => {
+    const updatesSource = await readFile("apps/desktop/src/main/updates.ts", "utf8");
+
+    assert.match(updatesSource, /^import \{ createRequire \} from "node:module";$/m);
+    assert.match(updatesSource, /createRequire\(import\.meta\.url\)/);
+    assert.doesNotMatch(updatesSource, /import\s+\{\s*autoUpdater\s*\}\s+from\s+"electron-updater"/);
+    assert.doesNotMatch(updatesSource, /^const\s+\{\s*autoUpdater\s*\}\s*=\s*require\("electron-updater"\)/m);
+  });
+
   it("uses cross-platform workspace build scripts for native installer runners", async () => {
     const storage = JSON.parse(await readFile("packages/storage/package.json", "utf8"));
 
