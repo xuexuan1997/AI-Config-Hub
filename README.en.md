@@ -4,6 +4,16 @@ Language: [简体中文](./README.md) | English
 
 AI Config Hub is a local-first configuration workbench for AI coding tools. It uses one domain model to scan, diagnose, explain, and migrate Rules, Agents, Skills, and MCP configuration across Claude Code, Cursor, Codex, and OpenCode. The current product experience is centered on the Electron desktop app: choose a project and review assets, choose source and target projects for migration, preview writes, then explicitly confirm before verified configuration files are written.
 
+### Problems It Solves
+
+Choosing an AI coding tool is rarely a one-time decision. A Claude Code account being banned, OpenCode introducing a cheaper Go plan, Cursor plans feeling expensive, or even a single top-down company decision can force teams to jump back and forth between IDEs and AI coding tools. Many users also run multiple IDEs at the same time to compare models, agents, rules, MCP integrations, and workflows. When they need to carry previous configuration, prompt assets, and project knowledge into another tool, each product's directory layout, file format, inheritance rules, and disable mechanism make manual migration complex and error-prone.
+
+Another common problem is figuring out why an AI IDE unexpectedly invokes a tool in a specific directory. The cause is often not random model behavior, but a tool-specific configuration loading mechanism: for example, Claude Code may load asset configuration from multiple directory levels, while Cursor, Codex, and OpenCode each have their own scopes, precedence, and ignore rules. Without deep knowledge of the IDE, it is hard to locate which asset was loaded and from which path; after locating it, safely disabling it and confirming the final effective configuration becomes another debugging task.
+
+### Solution Overview
+
+AI Config Hub scans Rules, Agents, Skills, and MCP configuration scattered across different IDEs and directory levels into one reviewable asset model. It explains each asset's source path, scope, load state, contributor relationships, and diagnostics. During migration, it first produces a cross-tool conversion preview that shows which fields will be preserved, transformed, or dropped, then uses hash checks, drift detection, backups, verification, and rollback to help users safely migrate and govern configuration across Claude Code, Cursor, Codex, and OpenCode.
+
 It is not a simple file sync tool. Before writing, AI Config Hub surfaces target impact, field loss, hash snapshots, drift risk, and required confirmations, then reduces migration risk through backups, verification, history records, and rollback APIs.
 
 ### Current Experience
