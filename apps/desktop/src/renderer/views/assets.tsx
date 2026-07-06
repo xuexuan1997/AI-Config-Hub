@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import type { AppState, AssetDisablementMethod } from "../model.js";
+import { ScanTaskPanel } from "./scan-task-panel.js";
 
 export function AssetsView(props: {
   readonly state: AppState;
@@ -26,6 +27,8 @@ export function AssetsView(props: {
   const effective = props.state.effective;
   const diagnosticScope = diagnosticScopeFor(locale, detail);
   const assetLabels = new Map(props.state.assets.map((asset) => [asset.id, asset.logicalKey]));
+  const activeTask = props.state.activeTask;
+  const scanTask = activeTask?.taskKind === "scan" ? activeTask : undefined;
   const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
   const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
   const visibleAssets = useMemo(
@@ -77,6 +80,13 @@ export function AssetsView(props: {
           </button>
         </div>
       </section>
+      <ScanTaskPanel
+        ariaLabel={t(locale, "Scan status")}
+        heading={t(locale, "Scanning assets")}
+        locale={locale}
+        message={props.state.scanStatus === "error" ? props.state.message : undefined}
+        task={scanTask}
+      />
       <section className="review-workspace">
         <aside className="review-filters">
           <h2>{t(locale, "Review filters")}</h2>

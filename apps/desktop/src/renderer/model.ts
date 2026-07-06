@@ -123,6 +123,11 @@ export interface ActiveTaskState {
     readonly errorCode: string;
     readonly retryable: boolean;
   };
+  readonly failures?: readonly {
+    readonly itemRef: string;
+    readonly errorCode: string;
+    readonly retryable: boolean;
+  }[];
 }
 
 export type ActiveTaskUpdate = Partial<ActiveTaskState> &
@@ -1091,14 +1096,13 @@ export function deploymentConfirmationLabel(confirmation: DeploymentConfirmation
 
 export function scanActionForTaskEvent(event: TaskEvent): AppAction | undefined {
   if (event.type === "accepted") {
-    return { type: "scan", status: "queued", message: `Queued ${event.taskId}` };
+    return { type: "scan", status: "queued" };
   }
   if (event.type !== "completed") return undefined;
   const status = event.payload.status === "failed" ? "error" : "complete";
   return {
     type: "scan",
     status,
-    message: formatTaskCompletionMessage("scan", event.payload),
   };
 }
 
@@ -1195,14 +1199,16 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
     };
   }
   if (event.type === "item.failed") {
+    const failure = {
+      itemRef: event.payload.itemRef,
+      errorCode: event.payload.errorCode,
+      retryable: event.payload.retryable,
+    };
     return {
       taskId: event.taskId,
       taskKind,
-      failure: {
-        itemRef: event.payload.itemRef,
-        errorCode: event.payload.errorCode,
-        retryable: event.payload.retryable,
-      },
+      failure,
+      failures: [failure],
       message: `${taskKind} failed: ${event.payload.errorCode}`,
     };
   }
@@ -1234,6 +1240,10 @@ function mergeActiveTask(
           recoveryLock: false,
         };
   const merged = { ...base, ...update };
+  const failures =
+    current?.taskId === update.taskId && update.failures !== undefined
+      ? [...(current.failures ?? []), ...update.failures]
+      : merged.failures;
   return {
     taskId: merged.taskId,
     taskKind: merged.taskKind,
@@ -1243,6 +1253,7 @@ function mergeActiveTask(
     ...(merged.progress === undefined ? {} : { progress: merged.progress }),
     ...(merged.message === undefined ? {} : { message: merged.message }),
     ...(merged.failure === undefined ? {} : { failure: merged.failure }),
+    ...(failures === undefined || failures.length === 0 ? {} : { failures }),
   };
 }
 

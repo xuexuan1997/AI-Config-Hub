@@ -16,6 +16,7 @@ import {
   type MigrationConflictPolicy,
   type MigrationTargetToolKey,
 } from "../model.js";
+import { ScanTaskPanel } from "./scan-task-panel.js";
 
 export function MigrationView(props: {
   readonly state: AppState;
@@ -56,8 +57,9 @@ export function MigrationView(props: {
   const deploymentBlockers = deploymentBlockersForState(props.state);
   const requiredConfirmations = preview?.requiredConfirmations ?? [];
   const grantedConfirmations = new Set(props.state.deploymentConfirmationGrants);
-  const activeTask =
-    props.state.activeTask?.taskKind === "deployment" ? props.state.activeTask : undefined;
+  const stateActiveTask = props.state.activeTask;
+  const activeTask = stateActiveTask?.taskKind === "deployment" ? stateActiveTask : undefined;
+  const scanTask = stateActiveTask?.taskKind === "scan" ? stateActiveTask : undefined;
   const targetRows = useMemo(
     () => targetRowsForState(props.state, activeResourceType),
     [props.state, activeResourceType],
@@ -143,6 +145,13 @@ export function MigrationView(props: {
             <strong>{t(locale, "Source assets")}</strong>
             <span>{formatAssetCount(locale, activeGroup?.assets.length ?? 0)}</span>
           </header>
+          <ScanTaskPanel
+            ariaLabel={t(locale, "Source scan status")}
+            heading={t(locale, "Source scan")}
+            locale={locale}
+            message={props.state.scanStatus === "error" ? props.state.message : undefined}
+            task={scanTask}
+          />
           <div className="migration-asset-list">
             {activeGroup === undefined ? (
               <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
