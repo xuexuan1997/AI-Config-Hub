@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { chmod, mkdir, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -115,10 +115,21 @@ type SnapshotMetadata =
 export async function createCliCommandServices(
   options: CliServiceOptions = {},
 ): Promise<{ readonly services: CommandServiceMap; readonly close: () => void }> {
-  const runtime = await createRuntime(options);
+  const serviceOptions = await canonicalServiceOptions(options);
+  const runtime = await createRuntime(serviceOptions);
   return {
-    services: createServices(runtime, options),
+    services: createServices(runtime, serviceOptions),
     close: () => runtime.close(),
+  };
+}
+
+async function canonicalServiceOptions(options: CliServiceOptions): Promise<CliServiceOptions> {
+  const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
+  const homeDirectory = await realpath(resolve(options.homeDirectory ?? homedir()));
+  return {
+    ...options,
+    cwd,
+    homeDirectory,
   };
 }
 
