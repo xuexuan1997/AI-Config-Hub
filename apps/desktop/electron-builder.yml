@@ -1,6 +1,7 @@
 appId: io.aiconfighub.desktop
 productName: AI Config Hub
 executableName: ai-config-hub
+icon: resources/icon.png
 copyright: Copyright © 2026 AI Config Hub
 asar: true
 npmRebuild: false
@@ -19,6 +20,7 @@ files:
   - "!**/*.test.*"
   - "!**/fixtures/**"
 linux:
+  icon: resources/icon.png
   target:
     - target: AppImage
       arch:
@@ -30,6 +32,7 @@ linux:
     owner: xuexuan1997
     repo: AI-Config-Hub
 win:
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch:
@@ -46,6 +49,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
 mac:
+  icon: resources/icon.icns
   target:
     - target: dmg
       arch:
