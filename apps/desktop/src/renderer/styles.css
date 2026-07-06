@@ -7,8 +7,6 @@
   --control-bg: #ffffff;
   --danger-border: #f3a6b4;
   --danger-text: #9f1239;
-  --desktop-min-height: 700px;
-  --desktop-min-width: 1024px;
   --focus-ring: #0f766e;
   --muted-text: #64748b;
   --panel-bg: #ffffff;
@@ -94,8 +92,6 @@ html,
 body,
 #root {
   height: 100%;
-  min-height: var(--desktop-min-height);
-  min-width: var(--desktop-min-width);
   overflow: hidden;
 }
 
@@ -175,8 +171,7 @@ select {
   display: grid;
   grid-template-columns: 260px 1fr;
   height: 100vh;
-  min-width: var(--desktop-min-width);
-  min-height: var(--desktop-min-height);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -216,12 +211,10 @@ nav button.active {
 }
 
 main {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
-  padding: 0;
+  overflow: auto;
+  padding: 1.5rem;
 }
 
 .cards {
@@ -354,15 +347,6 @@ table {
   border-collapse: collapse;
   margin-top: 1rem;
   width: 100%;
-}
-
-.table-scroll {
-  min-width: 0;
-  overflow: auto;
-}
-
-.table-scroll table {
-  min-width: max-content;
 }
 
 td,
@@ -544,15 +528,6 @@ th {
   overflow-wrap: anywhere;
 }
 
-.asset-primary-cell strong,
-.asset-option span,
-.target-change-heading strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .asset-inspect-button {
   border-radius: 8px;
   padding: 0.45rem 0.7rem;
@@ -561,8 +536,7 @@ th {
 pre {
   background: var(--control-bg);
   border-radius: 10px;
-  max-height: min(360px, 45vh);
-  overflow: auto;
+  overflow-x: auto;
   padding: 1rem;
 }
 
@@ -591,7 +565,6 @@ pre {
   max-height: calc(100vh - 2rem);
   max-width: 920px;
   min-height: 0;
-  min-width: min(720px, calc(100vw - 2rem));
   width: min(920px, 100%);
 }
 
@@ -656,7 +629,7 @@ pre {
 }
 
 .asset-detail-scroll pre {
-  max-height: min(360px, 45vh);
+  max-height: 360px;
 }
 
 .asset-status-control {
@@ -1261,36 +1234,14 @@ pre {
 
 main {
   background: var(--app-bg);
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
   padding: 0;
 }
 
 .workspace {
   display: grid;
   gap: 1rem;
-  grid-auto-rows: min-content;
   max-width: none;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
   padding: 1.1rem;
-}
-
-.workspace[data-route="assets"] {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-}
-
-.workspace[data-route="migration"] {
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-}
-
-.workspace[data-route="settings"] {
-  align-content: start;
-  overflow: auto;
 }
 
 .page-heading {
@@ -1372,8 +1323,6 @@ main {
   display: grid;
   gap: 0.75rem;
   grid-template-columns: 235px minmax(0, 1fr) 320px;
-  min-height: 0;
-  overflow: hidden;
   padding: 0.85rem;
 }
 
@@ -1390,19 +1339,10 @@ main {
 
 .review-filters,
 .review-detail-panel {
-  align-content: start;
   display: grid;
   gap: 0.65rem;
-  min-height: 0;
-  overflow: auto;
+  align-content: start;
   padding: 0.8rem;
-}
-
-.review-list-panel {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
 }
 
 .review-filters h2,
@@ -1494,13 +1434,9 @@ main {
 .asset-type-tabs {
   gap: 0;
   margin-top: 0;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .asset-type-panel {
-  min-height: 0;
-  overflow: auto;
   padding: 0.75rem;
 }
 
@@ -1571,15 +1507,7 @@ main {
   display: grid;
   gap: 0.75rem;
   grid-template-columns: minmax(220px, 1fr) minmax(260px, 0.85fr) minmax(220px, 1fr);
-  min-height: 0;
-  overflow: hidden;
   padding: 0.85rem;
-}
-
-.migration-source-panel,
-.migration-target-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panel-title {
@@ -1593,8 +1521,6 @@ main {
 .migration-asset-list {
   display: grid;
   gap: 0.55rem;
-  min-height: 0;
-  overflow: auto;
   padding: 0.75rem;
 }
 
@@ -1606,9 +1532,7 @@ main {
   gap: 0.65rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
-  max-height: 100%;
   min-width: 0;
-  overflow: auto;
   padding: 0.8rem;
 }
 
@@ -1733,8 +1657,6 @@ main {
 .migration-preview-details {
   display: grid;
   gap: 0.85rem;
-  min-height: 0;
-  overflow: auto;
   padding: 0.85rem;
 }
 
