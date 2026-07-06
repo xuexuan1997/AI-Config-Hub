@@ -1,4 +1,7 @@
-import { autoUpdater } from "electron-updater";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const electronUpdater = require("electron-updater") as typeof import("electron-updater");
 
 export type UpdatePlatform = NodeJS.Platform;
 type UpdateEventName =
@@ -90,6 +93,7 @@ const DEFAULT_INITIAL_DELAY_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 
 export function createElectronUpdaterPort(): UpdaterPort {
+  const { autoUpdater } = electronUpdater;
   const port: UpdaterPort = {
     get autoDownload() {
       return autoUpdater.autoDownload;
