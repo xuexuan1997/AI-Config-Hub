@@ -533,16 +533,6 @@ function formatSeverityCount(count: number, severity: "error" | "warning"): stri
   return `${count} ${count === 1 ? severity : `${severity}s`}`;
 }
 
-function diagnosticLabel(
-  locale: DesktopLocale,
-  diagnostic: AppState["diagnostics"][number],
-): string {
-  return `${severityLabel(locale, diagnostic.severity)}: ${diagnosticCodeLabel(
-    locale,
-    diagnostic.code,
-  )}`;
-}
-
 function severityLabel(
   locale: DesktopLocale,
   severity: AppState["diagnostics"][number]["severity"],
