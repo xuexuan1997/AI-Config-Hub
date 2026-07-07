@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
 
 import type { AdapterRegistry } from "@ai-config-hub/adapters";
 import {
   DeploymentPlanSchema,
   DeploymentRecordSchema,
   ConversionResultSchema,
+  PACKAGE_PATH_SAMPLE_LIMIT,
   type AdapterDiagnostic,
   type Asset,
   type ConversionResult,
   type ConversionTarget,
   type DeploymentOperation,
+  type DeploymentOperationGroup,
   type DeploymentPlan,
   type DeploymentRecord,
   type DeploymentRepository,
@@ -32,6 +34,7 @@ import {
   type ContentHash,
   type CorrelationId,
   type IsoDateTime,
+  type ResourceKind,
 } from "@ai-config-hub/shared";
 
 const PLAN_TTL_MS = 10 * 60 * 1_000;
@@ -59,6 +62,8 @@ export interface DeploymentPreviewServiceOptions {
 
 interface PlannedOutput {
   readonly conversionResultId: ConversionResult["conversionResultId"];
+  readonly sourceAssetId: Asset["assetId"];
+  readonly resourceKind: ResourceKind;
   readonly targetPath: AbsolutePath;
   readonly relativePath: string;
   readonly resolved: ResolvedConvertedOutput;
@@ -96,6 +101,182 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function shortStableHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+function buildOperationGroups(input: {
+  readonly operations: readonly DeploymentOperation[];
+  readonly outputs: readonly PlannedOutput[];
+  readonly targetRoot: AbsolutePath;
+}): readonly DeploymentOperationGroup[] {
+  const operationsByTarget = new Map(
+    input.operations.map((operation) => [operation.targetPath, operation]),
+  );
+  const outputsByConversion = new Map<ConversionResult["conversionResultId"], PlannedOutput[]>();
+  for (const output of input.outputs) {
+    const conversionOutputs = outputsByConversion.get(output.conversionResultId) ?? [];
+    conversionOutputs.push(output);
+    outputsByConversion.set(output.conversionResultId, conversionOutputs);
+  }
+
+  const groups: DeploymentOperationGroup[] = [];
+  const usedGroupIds = new Set<string>();
+  for (const conversionOutputs of [...outputsByConversion.values()].sort((left, right) =>
+    compareText(left[0]?.conversionResultId ?? "", right[0]?.conversionResultId ?? ""),
+  )) {
+    const sortedOutputs = [...conversionOutputs].sort((left, right) =>
+      compareText(left.relativePath, right.relativePath),
+    );
+    const changedOutputs = sortedOutputs.filter((output) =>
+      operationsByTarget.has(output.targetPath),
+    );
+    if (changedOutputs.length === 0) continue;
+    const firstOutput = sortedOutputs[0];
+    if (firstOutput === undefined) continue;
+
+    if (firstOutput.resourceKind === "skill" && sortedOutputs.length > 1) {
+      const targetRootRelativePath = skillPackageRootRelativePath(sortedOutputs);
+      const targetPaths = changedOutputs.map(({ targetPath }) => targetPath).sort(compareText);
+      groups.push(
+        operationGroupFromOperations({
+          groupId: uniqueGroupId(
+            `group:${firstOutput.sourceAssetId}:${firstOutput.resourceKind}:${targetRootRelativePath}`,
+            targetPaths,
+            usedGroupIds,
+          ),
+          sourceAssetId: firstOutput.sourceAssetId,
+          resourceKind: firstOutput.resourceKind,
+          targetRootPath: AbsolutePathSchema.parse(
+            resolve(input.targetRoot, targetRootRelativePath),
+          ),
+          targetRootRelativePath,
+          operations: targetPaths.map((targetPath) =>
+            operationForTarget(operationsByTarget, targetPath),
+          ),
+          targetPaths,
+          packageOutputCount: sortedOutputs.length,
+          packagePathSample: sortedOutputs
+            .map(({ relativePath }) => relativePath)
+            .filter((relativePath, index, all) => all.indexOf(relativePath) === index)
+            .sort(compareText)
+            .slice(0, PACKAGE_PATH_SAMPLE_LIMIT),
+        }),
+      );
+      continue;
+    }
+
+    for (const output of changedOutputs.sort((left, right) =>
+      compareText(left.targetPath, right.targetPath),
+    )) {
+      const operation = operationForTarget(operationsByTarget, output.targetPath);
+      groups.push(
+        operationGroupFromOperations({
+          groupId: uniqueGroupId(
+            `group:${output.sourceAssetId}:${output.resourceKind}:${output.relativePath}`,
+            [operation.targetPath],
+            usedGroupIds,
+          ),
+          sourceAssetId: output.sourceAssetId,
+          resourceKind: output.resourceKind,
+          targetRootPath: operation.targetPath,
+          targetRootRelativePath: output.relativePath,
+          operations: [operation],
+          targetPaths: [operation.targetPath],
+        }),
+      );
+    }
+  }
+
+  return groups.sort((left, right) => compareText(left.groupId, right.groupId));
+}
+
+function operationForTarget(
+  operationsByTarget: ReadonlyMap<AbsolutePath, DeploymentOperation>,
+  targetPath: AbsolutePath,
+): DeploymentOperation {
+  const operation = operationsByTarget.get(targetPath);
+  if (operation === undefined) {
+    throw error(
+      "VALIDATION_FAILED",
+      `Missing deployment operation for grouped target: ${targetPath}`,
+    );
+  }
+  return operation;
+}
+
+function uniqueGroupId(
+  baseGroupId: string,
+  targetPaths: readonly AbsolutePath[],
+  usedGroupIds: Set<string>,
+): string {
+  const groupId = usedGroupIds.has(baseGroupId)
+    ? `${baseGroupId}:${shortStableHash(targetPaths.join("\0"))}`
+    : baseGroupId;
+  usedGroupIds.add(groupId);
+  return groupId;
+}
+
+function operationGroupFromOperations(input: {
+  readonly groupId: string;
+  readonly sourceAssetId: Asset["assetId"];
+  readonly resourceKind: ResourceKind;
+  readonly targetRootPath: AbsolutePath;
+  readonly targetRootRelativePath: string;
+  readonly operations: readonly DeploymentOperation[];
+  readonly targetPaths: readonly AbsolutePath[];
+  readonly packageOutputCount?: number;
+  readonly packagePathSample?: readonly string[];
+}): DeploymentOperationGroup {
+  const operationKinds = [...new Set(input.operations.map(({ kind }) => kind))];
+  const deploymentTypes = input.operations.map(
+    (operation) => operation.deploymentType ?? "generated_file",
+  );
+  return {
+    groupId: input.groupId,
+    sourceAssetId: input.sourceAssetId,
+    resourceKind: input.resourceKind,
+    targetRootPath: input.targetRootPath,
+    targetRootRelativePath: input.targetRootRelativePath,
+    operation: operationKinds.length === 1 ? (operationKinds[0] ?? "mixed") : "mixed",
+    operationCount: input.operations.length,
+    createCount: input.operations.filter(({ kind }) => kind === "create").length,
+    replaceCount: input.operations.filter(({ kind }) => kind === "replace").length,
+    deleteCount: input.operations.filter(({ kind }) => kind === "delete").length,
+    generatedFileCount: deploymentTypes.filter(
+      (deploymentType) => deploymentType === "generated_file",
+    ).length,
+    copyCount: deploymentTypes.filter((deploymentType) => deploymentType === "copy").length,
+    symlinkCount: deploymentTypes.filter((deploymentType) => deploymentType === "symlink").length,
+    targetPaths: input.targetPaths,
+    ...(input.packageOutputCount === undefined
+      ? {}
+      : { packageOutputCount: input.packageOutputCount }),
+    ...(input.packagePathSample === undefined
+      ? {}
+      : { packagePathSample: input.packagePathSample }),
+  };
+}
+
+function skillPackageRootRelativePath(outputs: readonly PlannedOutput[]): string {
+  const manifest = outputs.find(({ relativePath }) => posix.basename(relativePath) === "SKILL.md");
+  if (manifest !== undefined) return posix.dirname(manifest.relativePath);
+  const directories = outputs.map(({ relativePath }) => posix.dirname(relativePath));
+  const [firstDirectory] = directories;
+  if (firstDirectory === undefined) return ".";
+  const commonSegments = firstDirectory.split("/");
+  for (const directory of directories.slice(1)) {
+    const segments = directory.split("/");
+    while (
+      commonSegments.length > 0 &&
+      commonSegments.join("/") !== segments.slice(0, commonSegments.length).join("/")
+    ) {
+      commonSegments.pop();
+    }
+  }
+  return commonSegments.join("/") || firstDirectory;
 }
 
 function hasRedactedValue(resource: NormalizedResource): boolean {
@@ -256,6 +437,8 @@ export class DeploymentPreviewService {
         targetKeys.add(canonicalTarget.comparisonKey);
         const plannedOutput = {
           conversionResultId: conversion.conversionResultId,
+          sourceAssetId: conversion.sourceAssetId,
+          resourceKind: conversion.targetResourceKind,
           targetPath: canonicalTarget.path,
           relativePath: output.relativePath,
           resolved: resolvedOutput,
@@ -509,6 +692,11 @@ export class DeploymentPreviewService {
     if (operations.length === 0) {
       throw error("TARGET_CONFLICT", "All converted outputs are already byte-identical");
     }
+    const operationGroups = buildOperationGroups({
+      operations,
+      outputs,
+      targetRoot: canonicalRoot.path,
+    });
 
     const expectedSourceHashes = Object.fromEntries(
       assets.map(({ assetId, contentHash }) => [assetId, contentHash]),
@@ -517,6 +705,18 @@ export class DeploymentPreviewService {
       (conversion): conversion is Extract<ConversionResult, { readonly level: "partial" }> =>
         conversion.level === "partial",
     );
+    const conversionWarnings = partials.flatMap(({ warnings }) => warnings);
+    const planWarnings = planningWarnings(planningDiagnostics);
+    const issueSummary = {
+      planWarningCount: planWarnings.length,
+      conversionWarningCount: conversionWarnings.length,
+      partialConversionCount: partials.length,
+      droppedFieldCount: partials.reduce((sum, { droppedFields }) => sum + droppedFields.length, 0),
+      transformedFieldCount: partials.reduce(
+        (sum, { transformedFields }) => sum + transformedFields.length,
+        0,
+      ),
+    };
     const confirmations = [
       ...(partials.length === 0 ? [] : (["partial_conversion"] as const)),
       ...(operations.some(({ kind }) => kind === "replace") ? (["overwrite"] as const) : []),
@@ -524,6 +724,7 @@ export class DeploymentPreviewService {
     const planPayload = {
       conversionResultIds: conversions.map(({ conversionResultId }) => conversionResultId),
       operations,
+      operationGroups,
       diffs,
       expectedSourceHashes,
       expectedTargetHashes,
@@ -535,10 +736,8 @@ export class DeploymentPreviewService {
           `Verify resulting files with ${adapter.adapterId}@${adapter.adapterVersion}`,
       },
       requiredConfirmations: confirmations,
-      warnings: [
-        ...partials.flatMap(({ warnings }) => warnings),
-        ...planningWarnings(planningDiagnostics),
-      ],
+      warnings: [...conversionWarnings, ...planWarnings],
+      issueSummary,
       adapterId: adapter.adapterId,
       adapterVersion: adapter.adapterVersion,
       createdAt: request.now,

@@ -8,6 +8,7 @@ import {
   DeploymentRecordSchema,
   DiagnosticSchema,
   ScopeSchema,
+  operationGroupsForPlan,
 } from "@ai-config-hub/core";
 import {
   AbsolutePathSchema,
@@ -654,7 +655,17 @@ describe("storage repositories", () => {
       diagnostics: [],
     });
     await repositories.deployments.savePlanAndRecord({ plan, record });
-    expect(await repositories.deployments.getPlan(plan.deploymentPlanId)).toEqual(plan);
+    const storedPlan = await repositories.deployments.getPlan(plan.deploymentPlanId);
+    expect(storedPlan).toEqual(plan);
+    expect(storedPlan).not.toHaveProperty("operationGroups");
+    expect(storedPlan).not.toHaveProperty("issueSummary");
+    expect(storedPlan === undefined ? [] : operationGroupsForPlan(storedPlan)).toEqual([
+      expect.objectContaining({
+        targetRootPath: "/project/AGENTS.md",
+        targetPaths: ["/project/AGENTS.md"],
+        operationCount: 1,
+      }),
+    ]);
     expect(await repositories.deployments.getRecord(record.deploymentRecordId)).toEqual(record);
     opened.database.close();
 

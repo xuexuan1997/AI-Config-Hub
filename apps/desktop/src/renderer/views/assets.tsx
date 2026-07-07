@@ -4,6 +4,8 @@ import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18
 import type { AppState, AssetDisablementMethod } from "../model.js";
 import { ScanTaskPanel } from "./scan-task-panel.js";
 
+type AssetSourceSummary = AppState["assets"][number]["sourceSummary"];
+
 export function AssetsView(props: {
   readonly state: AppState;
   readonly initialDiagnosticSeverity?: DiagnosticSeverityFilter;
@@ -409,7 +411,7 @@ function AssetTypeTable(props: {
         <thead>
           <tr>
             <th>{t(props.locale, "Logical key")}</th>
-            <th>{t(props.locale, "Source directory")}</th>
+            <th>{t(props.locale, "Source")}</th>
             <th>{t(props.locale, "Will load")}</th>
             <th>{t(props.locale, "Diagnostics")}</th>
             <th>{t(props.locale, "Detail")}</th>
@@ -425,8 +427,8 @@ function AssetTypeTable(props: {
                   <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
                 </span>
               </td>
-              <td className="asset-source-cell" title={sourceDirectoryLabel(props.locale, asset)}>
-                {sourceDirectoryLabel(props.locale, asset)}
+              <td className="asset-source-cell" title={assetSourceTitle(props.locale, asset)}>
+                {assetSourceLabel(props.locale, asset)}
               </td>
               <td>
                 <AssetLoadBadge asset={asset} locale={props.locale} />
@@ -466,6 +468,30 @@ function formatAssetCount(locale: DesktopLocale, count: number): string {
   return `${count} ${count === 1 ? "asset" : "assets"}`;
 }
 
+function formatFileCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个文件`;
+  return `${count} ${count === 1 ? "file" : "files"}`;
+}
+
+function formatFolderCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个文件夹`;
+  return `${count} ${count === 1 ? "folder" : "folders"}`;
+}
+
+function formatTextFileCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个文本文件`;
+  return `${count} ${count === 1 ? "text file" : "text files"}`;
+}
+
+function formatBinaryFileCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个二进制文件`;
+  return `${count} ${count === 1 ? "binary file" : "binary files"}`;
+}
+
+function packageRootLabel(summary: Extract<AssetSourceSummary, { readonly kind: "package" }>) {
+  return `${summary.rootName.replace(/[\\/]+$/, "")}/`;
+}
+
 function assetStatusFor(asset: { readonly status?: string | undefined }): AssetStatus {
   return asset.status === "disabled" ? "disabled" : "enabled";
 }
@@ -481,6 +507,27 @@ function assetLoadStateFor(asset: AssetLoadStateSource): AssetLoadState {
 
 function sourceDirectoryLabel(locale: DesktopLocale, asset: AssetSummary): string {
   return asset.sourceDirectory ?? t(locale, "Unknown source");
+}
+
+function assetSourceTitle(locale: DesktopLocale, asset: AssetSummary): string {
+  const summary: AssetSourceSummary | undefined = asset.sourceSummary;
+  if (summary?.kind === "package") {
+    return asset.sourceDirectory ?? packageRootLabel(summary);
+  }
+  return sourceDirectoryLabel(locale, asset);
+}
+
+function assetSourceLabel(locale: DesktopLocale, asset: AssetSummary): string {
+  const summary: AssetSourceSummary | undefined = asset.sourceSummary;
+  if (summary === undefined) return sourceDirectoryLabel(locale, asset);
+  if (summary.kind === "file") {
+    return asset.sourceDirectory ?? summary.fileName;
+  }
+  return [
+    packageRootLabel(summary),
+    formatFileCount(locale, summary.fileCount),
+    formatFolderCount(locale, summary.folderCount),
+  ].join(" · ");
 }
 
 function loadStateLabel(locale: DesktopLocale, asset: AssetLoadStateSource): string {
@@ -962,6 +1009,7 @@ function AssetDetailDialog(props: {
   const detail = props.detail;
   const status = assetStatusFor(detail.asset);
   const loadStateSource = { ...props.summary, status };
+  const sourceSummary: AssetSourceSummary | undefined = detail.source.sourceSummary;
   const disablementOptions = detail.asset.disablementOptions ?? [];
   const defaultDisablementMethod = selectedDefaultDisablementMethod(disablementOptions);
   const [selectedDisablementMethod, setSelectedDisablementMethod] =
@@ -1018,6 +1066,9 @@ function AssetDetailDialog(props: {
             <dt>{t(props.locale, "Observed")}</dt>
             <dd>{formatTimestamp(detail.source.observedAt)}</dd>
           </dl>
+          {sourceSummary?.kind === "package" ? (
+            <AssetSourceSummaryPanel summary={sourceSummary} locale={props.locale} />
+          ) : null}
           {detail.source.files.length <= 1 ? null : detail.asset.resourceType === "skill" ? (
             <AssetSourceTree detail={detail} locale={props.locale} />
           ) : (
@@ -1146,17 +1197,48 @@ function AssetDetailDialog(props: {
   );
 }
 
+function AssetSourceSummaryPanel(props: {
+  readonly summary: Extract<AssetSourceSummary, { readonly kind: "package" }>;
+  readonly locale: DesktopLocale;
+}) {
+  return (
+    <section
+      className="asset-source-summary"
+      aria-label={t(props.locale, "Source package summary")}
+    >
+      <h3>{t(props.locale, "Source package summary")}</h3>
+      <dl>
+        <dt>{t(props.locale, "Package root")}</dt>
+        <dd>{packageRootLabel(props.summary)}</dd>
+        <dt>{t(props.locale, "Files")}</dt>
+        <dd>{formatFileCount(props.locale, props.summary.fileCount)}</dd>
+        <dt>{t(props.locale, "Folders")}</dt>
+        <dd>{formatFolderCount(props.locale, props.summary.folderCount)}</dd>
+        <dt>{t(props.locale, "Text files")}</dt>
+        <dd>{formatTextFileCount(props.locale, props.summary.textCount)}</dd>
+        <dt>{t(props.locale, "Binary files")}</dt>
+        <dd>{formatBinaryFileCount(props.locale, props.summary.binaryCount)}</dd>
+      </dl>
+    </section>
+  );
+}
+
 function AssetSourceTree(props: {
   readonly detail: NonNullable<AppState["assetDetail"]>;
   readonly locale: DesktopLocale;
 }) {
   const entries = sourceTreeEntries(props.detail.source.files);
+  const sourceSummary: AssetSourceSummary | undefined = props.detail.source.sourceSummary;
+  const rootName =
+    sourceSummary?.kind === "package"
+      ? packageRootLabel(sourceSummary)
+      : `${sourcePackageFolderName(props.detail)}/`;
   return (
-    <section className="asset-source-tree" aria-label={t(props.locale, "Source package folder")}>
-      <h3>{t(props.locale, "Source package folder")}</h3>
+    <details className="asset-source-tree">
+      <summary>{t(props.locale, "Source package files")}</summary>
       <ul>
         <li>
-          <span className="source-tree-name folder">{sourcePackageFolderName(props.detail)}/</span>
+          <span className="source-tree-name folder">{rootName}</span>
           <ul>
             {entries.map((entry) => (
               <li className={`source-tree-entry depth-${entry.depth}`} key={entry.key}>
@@ -1174,7 +1256,7 @@ function AssetSourceTree(props: {
           </ul>
         </li>
       </ul>
-    </section>
+    </details>
   );
 }
 

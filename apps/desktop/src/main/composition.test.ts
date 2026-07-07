@@ -244,6 +244,11 @@ describe("desktop command service composition", () => {
         (asset) => asset.toolKey === "codex" && asset.logicalKey.includes("AGENTS"),
       );
       if (source === undefined) throw new Error("Expected scanned Codex AGENTS asset");
+      expect(source.sourceSummary).toMatchObject({
+        kind: "file",
+        fileName: "AGENTS.md",
+        isText: true,
+      });
 
       await expect(runtime.services["assets.openSource"]({ assetId: source.id })).resolves.toEqual({
         assetId: source.id,
@@ -287,9 +292,23 @@ describe("desktop command service composition", () => {
         (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
       );
       if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+      expect(source.sourceSummary).toEqual({
+        kind: "package",
+        rootName: "release",
+        fileCount: 2,
+        folderCount: 1,
+        textCount: 2,
+        binaryCount: 0,
+        roleCounts: {
+          primary: 1,
+          metadata: 0,
+          support: 1,
+        },
+      });
 
       const detail = await runtime.services["assets.get"]({ assetId: source.id });
 
+      expect(detail.source.sourceSummary).toEqual(source.sourceSummary);
       expect(detail.source.files.map((file) => [file.role, file.relativePath])).toEqual([
         ["primary", "SKILL.md"],
         ["support", "assets/notes.md"],
@@ -351,9 +370,31 @@ describe("desktop command service composition", () => {
         targetScopeId: targetProject,
         conflictPolicy: "replace",
       });
+      expect(preview.changeGroups).toEqual([
+        expect.objectContaining({
+          sourceAssetId: source.id,
+          resourceType: "skill",
+          targetRootRelativePath: ".cursor/skills/release",
+          operation: "create",
+          operationCount: 2,
+          changedTargetCount: 2,
+          packageOutputCount: 2,
+          visibleDetailCount: 2,
+          detailsTruncated: false,
+        }),
+      ]);
+      expect(preview.differenceSummary).toMatchObject({
+        addedToTarget: 2,
+        overwrittenInTarget: 0,
+        changedGroupCount: 1,
+        changedFileCount: 2,
+      });
+      expect(preview.changesTruncated).toBe(false);
+      expect(preview.changeDetailLimit).toBe(50);
       const copyChange = preview.changes.find((change) => change.deploymentType === "copy");
 
       expect(copyChange).toMatchObject({
+        groupId: preview.changeGroups[0]?.groupId,
         operation: "create",
         sourcePathDisplay: supportFile.pathDisplay,
         afterHash: supportFile.contentHash,
@@ -379,6 +420,83 @@ describe("desktop command service composition", () => {
       await expect(
         readFile(join(targetProject, ".cursor", "skills", "release", "assets", "notes.md"), "utf8"),
       ).resolves.toBe("Release notes template\n");
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("returns bounded grouped previews for large Skill packages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-large-skill-preview-"));
+    temporaryDirectories.push(root);
+    const sourceProject = join(root, "source");
+    const targetProject = join(root, "target");
+    const userData = join(root, "user-data");
+    await writeLargeSkillPackage(sourceProject, 205);
+    await mkdir(targetProject);
+
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: sourceProject,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      await runtime.services["scan.start"]({ mode: "full", roots: [sourceProject] });
+      const assets = await runtime.services["assets.list"]({ limit: 50 });
+      const source = assets.items.find(
+        (asset) => asset.toolKey === "codex" && asset.resourceType === "skill",
+      );
+      if (source === undefined) throw new Error("Expected scanned Codex skill asset");
+
+      const preview = await runtime.services["migration.preview"]({
+        sourceAssetIds: [source.id],
+        targetToolKey: "cursor",
+        targetScopeId: targetProject,
+        conflictPolicy: "replace",
+      });
+      const group = preview.changeGroups[0];
+
+      expect(preview.changes).toHaveLength(50);
+      expect(preview.changesTruncated).toBe(true);
+      expect(preview.changeDetailLimit).toBe(50);
+      expect(group).toMatchObject({
+        sourceAssetId: source.id,
+        resourceType: "skill",
+        targetRootRelativePath: ".cursor/skills/release",
+        operationCount: 206,
+        changedTargetCount: 206,
+        packageOutputCount: 206,
+        visibleDetailCount: 50,
+        detailsTruncated: true,
+      });
+      expect(group?.targetPathSample).toHaveLength(10);
+      expect(group?.packagePathSample).toHaveLength(10);
+      expect(preview.differenceSummary).toMatchObject({
+        addedToTarget: 206,
+        changedGroupCount: 1,
+        changedFileCount: 206,
+      });
+      expect(new Set(preview.changes.map((change) => change.groupId))).toEqual(
+        new Set([group?.groupId]),
+      );
+
+      const history = await runtime.services["history.list"]({ kinds: ["deployment"], limit: 10 });
+      const planned = history.items.find((entry) => entry.status === "planned");
+      if (planned === undefined) throw new Error("Expected planned deployment history entry");
+      const historyDetail = await runtime.services["history.get"]({ id: planned.id });
+
+      expect(historyDetail.changes).toHaveLength(50);
+      expect(historyDetail.changesTruncated).toBe(true);
+      expect(historyDetail.changeGroups[0]).toMatchObject({
+        changedTargetCount: 206,
+        visibleDetailCount: 50,
+        detailsTruncated: true,
+      });
+      expect(historyDetail.differenceSummary).toMatchObject({
+        changedGroupCount: 1,
+        changedFileCount: 206,
+      });
     } finally {
       runtime.close();
     }
@@ -1435,6 +1553,30 @@ describe("desktop command service composition", () => {
     }
   });
 });
+
+async function writeLargeSkillPackage(project: string, supportFileCount: number): Promise<void> {
+  await mkdir(join(project, ".agents", "skills", "release", "assets"), { recursive: true });
+  await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+  await writeFile(
+    join(project, ".agents", "skills", "release", "SKILL.md"),
+    "---\nname: release\ndescription: Release safely\n---\nRun the checklist.\n",
+    "utf8",
+  );
+  for (let index = 1; index <= supportFileCount; index += 1) {
+    await writeFile(
+      join(
+        project,
+        ".agents",
+        "skills",
+        "release",
+        "assets",
+        `note-${String(index).padStart(3, "0")}.md`,
+      ),
+      `Release note ${index}\n`,
+      "utf8",
+    );
+  }
+}
 
 function projectIdForIndexedRoot(database: DatabaseSync, root: string): string | undefined {
   const row = database

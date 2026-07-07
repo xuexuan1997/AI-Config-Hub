@@ -95,6 +95,88 @@ describe("command schemas", () => {
     ).toBe(true);
   });
 
+  it("accepts file source summaries in asset list responses", () => {
+    expect(
+      CommandResponseSchemas["assets.list"].safeParse({
+        items: [
+          {
+            id: "asset-1",
+            toolKey: "codex",
+            resourceType: "rule",
+            scopeKind: "project",
+            logicalKey: "rule:AGENTS",
+            sourceDirectory: "/workspace/project",
+            sourceSummary: {
+              kind: "file",
+              fileName: "AGENTS.md",
+              mediaType: "text/markdown",
+              isText: true,
+            },
+            contentHash: hash,
+            status: "enabled",
+            diagnosticCounts: { info: 0, warning: 0, error: 0 },
+          },
+        ],
+        nextCursor: null,
+        snapshotRevision: "revision-1",
+        stale: false,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts package source summaries in asset detail responses", () => {
+    expect(
+      CommandResponseSchemas["assets.get"].safeParse({
+        asset: {
+          id: "asset-1",
+          toolKey: "codex",
+          resourceType: "skill",
+          scopeId: "scope-1",
+          logicalKey: "skill:release",
+          status: "enabled",
+          disablementOptions: [],
+        },
+        source: {
+          pathDisplay: "/workspace/project/.agents/skills/release/SKILL.md",
+          contentHash: hash,
+          observedAt: now,
+          sourceSummary: {
+            kind: "package",
+            rootName: "release",
+            fileCount: 2,
+            folderCount: 1,
+            textCount: 2,
+            binaryCount: 0,
+            roleCounts: {
+              primary: 1,
+              metadata: 0,
+              support: 1,
+            },
+          },
+          files: [
+            {
+              pathDisplay: "/workspace/project/.agents/skills/release/SKILL.md",
+              relativePath: "SKILL.md",
+              role: "primary",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: hash,
+            },
+            {
+              pathDisplay: "/workspace/project/.agents/skills/release/assets/notes.md",
+              relativePath: "assets/notes.md",
+              role: "support",
+              mediaType: "text/markdown",
+              isText: true,
+              contentHash: hash,
+            },
+          ],
+        },
+        redactions: [],
+      }).success,
+    ).toBe(true);
+  });
+
   it("limits history records to supported deployment record kinds", () => {
     expect(
       CommandRequestSchemas["history.list"].safeParse({ kinds: ["deployment", "rollback"] })
@@ -259,6 +341,12 @@ describe("command schemas", () => {
             resourceType: "rule",
             scopeKind: "project",
             logicalKey: "repository-policy",
+            sourceSummary: {
+              kind: "file",
+              fileName: "AGENTS.md",
+              mediaType: "text/markdown",
+              isText: true,
+            },
             contentHash: hash,
             status: "enabled",
             diagnosticCounts,
@@ -296,6 +384,12 @@ describe("command schemas", () => {
           pathDisplay: "AGENTS.md",
           contentHash: hash,
           observedAt: now,
+          sourceSummary: {
+            kind: "file",
+            fileName: "AGENTS.md",
+            mediaType: "text/markdown",
+            isText: true,
+          },
           files: [
             {
               pathDisplay: "AGENTS.md",
@@ -356,8 +450,38 @@ describe("command schemas", () => {
         planHash: hash,
         compatibility: "full",
         fieldLosses: [],
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "create",
+            resourceType: "rule",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".cursor/rules/repository-policy.mdc",
+            targetRootRelativePath: ".cursor/rules/repository-policy.mdc",
+            operationCount: 1,
+            createCount: 1,
+            replaceCount: 0,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 0,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".cursor/rules/repository-policy.mdc"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 1,
+          overwrittenInTarget: 0,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "create",
             deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
@@ -366,6 +490,8 @@ describe("command schemas", () => {
             diff: "+ content",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
         requiredConfirmations: ["overwrite"],
         warnings: [],
         sourceHashes: { "asset-1": hash },
@@ -450,8 +576,38 @@ describe("command schemas", () => {
           planHash: hash,
           requiredConfirmations: ["overwrite"],
         },
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "replace",
+            resourceType: "rule",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".cursor/rules/repository-policy.mdc",
+            targetRootRelativePath: ".cursor/rules/repository-policy.mdc",
+            operationCount: 1,
+            createCount: 0,
+            replaceCount: 1,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 0,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".cursor/rules/repository-policy.mdc"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 0,
+          overwrittenInTarget: 1,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "replace",
             deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
@@ -460,6 +616,8 @@ describe("command schemas", () => {
             diff: "- old\n+ new",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
       },
       "settings.get": {
         values: { theme: "system", language: "system" },
@@ -526,8 +684,38 @@ describe("command schemas", () => {
             warnings: ["Some source fields are not expressible in the target format."],
           },
         ],
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "replace",
+            resourceType: "rule",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".cursor/rules/repository-policy.mdc",
+            targetRootRelativePath: ".cursor/rules/repository-policy.mdc",
+            operationCount: 1,
+            createCount: 0,
+            replaceCount: 1,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 0,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".cursor/rules/repository-policy.mdc"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 0,
+          overwrittenInTarget: 1,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 1,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "replace",
             deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/repository-policy.mdc",
@@ -536,10 +724,79 @@ describe("command schemas", () => {
             diff: "- old\n+ new",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
         requiredConfirmations: ["partial_conversion", "overwrite"],
         warnings: [],
         sourceHashes: { "asset-1": hash },
         targetHashes: { ".cursor/rules/repository-policy.mdc": hash },
+        expiresAt: now,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts grouped migration preview summaries with bounded file details", () => {
+    expect(
+      CommandResponseSchemas["migration.preview"].safeParse({
+        planId: "plan-1",
+        planHash: hash,
+        compatibility: "full",
+        fieldLosses: [],
+        changeGroups: [
+          {
+            groupId: "group:asset-1:skill:.agents/skills/release",
+            operation: "mixed",
+            resourceType: "skill",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: "/project/.agents/skills/release",
+            targetRootRelativePath: ".agents/skills/release",
+            operationCount: 2,
+            createCount: 1,
+            replaceCount: 1,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 1,
+            symlinkCount: 0,
+            changedTargetCount: 2,
+            targetPathSample: [
+              ".agents/skills/release/SKILL.md",
+              ".agents/skills/release/assets/logo.png",
+            ],
+            packageOutputCount: 203,
+            packagePathSample: [
+              ".agents/skills/release/SKILL.md",
+              ".agents/skills/release/assets/logo.png",
+            ],
+            visibleDetailCount: 1,
+            detailsTruncated: true,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 1,
+          overwrittenInTarget: 1,
+          unchangedPlannedTargetOutputs: 201,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 2,
+        },
+        changes: [
+          {
+            groupId: "group:asset-1:skill:.agents/skills/release",
+            operation: "create",
+            deploymentType: "copy",
+            pathDisplay: ".agents/skills/release/assets/logo.png",
+            sourcePathDisplay: "/project/.codex/skills/release/assets/logo.png",
+            beforeHash: null,
+            afterHash: hash,
+            diff: "",
+          },
+        ],
+        changesTruncated: true,
+        changeDetailLimit: 50,
+        requiredConfirmations: [],
+        warnings: [],
+        sourceHashes: { "asset-1": hash },
+        targetHashes: { ".agents/skills/release/assets/logo.png": null },
         expiresAt: now,
       }).success,
     ).toBe(true);
@@ -552,8 +809,38 @@ describe("command schemas", () => {
         planHash: hash,
         compatibility: "full",
         fieldLosses: [],
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "create",
+            resourceType: "skill",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".agents/skills/release/assets/logo.png",
+            targetRootRelativePath: ".agents/skills/release/assets/logo.png",
+            operationCount: 1,
+            createCount: 1,
+            replaceCount: 0,
+            deleteCount: 0,
+            generatedFileCount: 0,
+            copyCount: 1,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".agents/skills/release/assets/logo.png"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 1,
+          overwrittenInTarget: 0,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "create",
             deploymentType: "copy",
             pathDisplay: ".agents/skills/release/assets/logo.png",
@@ -563,6 +850,8 @@ describe("command schemas", () => {
             diff: "",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
         requiredConfirmations: [],
         warnings: [],
         sourceHashes: { "asset-1": hash },

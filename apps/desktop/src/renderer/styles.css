@@ -758,14 +758,32 @@ pre {
   max-height: 360px;
 }
 
+.asset-source-summary {
+  border-top: 1px solid var(--panel-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.asset-source-summary h3 {
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+}
+
 .asset-source-tree {
   border-top: 1px solid var(--panel-border);
   margin-top: 1rem;
   padding-top: 1rem;
 }
 
-.asset-source-tree h3 {
-  margin-top: 0;
+.asset-source-tree summary {
+  color: var(--strong-text);
+  cursor: pointer;
+  font-weight: 750;
+  margin-bottom: 0;
+}
+
+.asset-source-tree[open] summary {
+  margin-bottom: 0.75rem;
 }
 
 .asset-source-tree ul {

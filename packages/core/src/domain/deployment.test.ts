@@ -1,20 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { AssetIdSchema } from "@ai-config-hub/shared";
 
 import {
   DeploymentOperationSchema,
   DeploymentPlanSchema,
   DeploymentRecordSchema,
+  PACKAGE_PATH_SAMPLE_LIMIT,
+  operationGroupsForPlan,
+  type DeploymentOperation,
+  type DeploymentOperationGroup,
 } from "./deployment.js";
 
-const operation = {
+const operation = DeploymentOperationSchema.parse({
   deploymentType: "generated_file",
   kind: "replace",
   targetPath: "/workspace/.cursor/rules/generated.mdc",
   nextText: "Use strict TypeScript",
   expectedTargetHash: `sha256:${"a".repeat(64)}`,
-} as const;
+});
 
-const validPlan = {
+const createOperation = DeploymentOperationSchema.parse({
+  deploymentType: "generated_file",
+  kind: "create",
+  targetPath: "/workspace/.cursor/rules/new.mdc",
+  nextText: "Create strict TypeScript guidance",
+  expectedTargetHash: "absent",
+});
+
+const copyOperation = DeploymentOperationSchema.parse({
+  deploymentType: "copy",
+  kind: "create",
+  targetPath: "/workspace/.cursor/assets/logo.png",
+  expectedTargetHash: "absent",
+  sourcePath: "/workspace/.codex/skills/release/assets/logo.png",
+  sourceHash: `sha256:${"e".repeat(64)}`,
+});
+const validPlan = DeploymentPlanSchema.parse({
   deploymentPlanId: "plan-1",
   conversionResultIds: ["conversion-1"],
   operations: [operation],
@@ -35,9 +56,9 @@ const validPlan = {
   adapterId: "cursor.builtin",
   adapterVersion: "1.0.0",
   createdAt: "2026-06-21T10:00:00Z",
-} as const;
+});
 
-const validSucceededRecord = {
+const validSucceededRecord = DeploymentRecordSchema.parse({
   deploymentRecordId: "deployment-1",
   deploymentPlanId: "plan-1",
   confirmedPlanHash: validPlan.planHash,
@@ -60,7 +81,7 @@ const validSucceededRecord = {
   finishedAt: "2026-06-21T10:03:00Z",
   correlationId: "correlation-1",
   diagnostics: [],
-} as const;
+});
 
 describe("DeploymentPlanSchema", () => {
   it("parses an immutable deployment preview", () => {
@@ -71,6 +92,229 @@ describe("DeploymentPlanSchema", () => {
     expect(
       DeploymentPlanSchema.safeParse({ ...validPlan, operations: [operation, operation] }).success,
     ).toBe(false);
+  });
+
+  it("validates operation group coverage when groups are present", () => {
+    const groupedPlan = planWithGroups([
+      groupFixture({
+        targetPaths: [operation.targetPath],
+        operationCount: 1,
+        replaceCount: 1,
+      }),
+      groupFixture({
+        groupId: "group:create",
+        targetRootPath: createOperation.targetPath,
+        targetRootRelativePath: ".cursor/rules/new.mdc",
+        targetPaths: [createOperation.targetPath],
+        operation: "create",
+        operationCount: 1,
+        createCount: 1,
+        replaceCount: 0,
+      }),
+    ]);
+
+    expect(DeploymentPlanSchema.safeParse(groupedPlan).success).toBe(true);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...groupedPlan,
+        operationGroups: groupedPlan.operationGroups.slice(0, 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...groupedPlan,
+        operationGroups: [
+          groupFixture({
+            targetPaths: ["/workspace/.cursor/rules/missing.mdc"],
+            targetRootPath: "/workspace/.cursor/rules/missing.mdc",
+          }),
+          groupedPlan.operationGroups[1],
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...groupedPlan,
+        operationGroups: [
+          groupedPlan.operationGroups[0],
+          groupFixture({
+            groupId: "group:duplicate",
+            targetPaths: [operation.targetPath],
+            operationCount: 1,
+            replaceCount: 1,
+          }),
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates operation group statistics against grouped operations", () => {
+    const mixedGroup = groupFixture({
+      targetPaths: [operation.targetPath, createOperation.targetPath],
+      operation: "mixed",
+      operationCount: 2,
+      createCount: 1,
+      replaceCount: 1,
+    });
+    expect(DeploymentPlanSchema.safeParse(planWithGroups([mixedGroup])).success).toBe(true);
+
+    for (const invalidGroup of [
+      { ...mixedGroup, targetPaths: [] },
+      { ...mixedGroup, operationCount: 0 },
+      { ...mixedGroup, operationCount: 1 },
+      { ...mixedGroup, createCount: 0 },
+      { ...mixedGroup, replaceCount: 0 },
+      { ...mixedGroup, deleteCount: 1 },
+      { ...mixedGroup, generatedFileCount: 1 },
+      { ...mixedGroup, copyCount: 1 },
+      { ...mixedGroup, operation: "create" as const },
+    ]) {
+      expect(DeploymentPlanSchema.safeParse(planWithGroups([invalidGroup])).success).toBe(false);
+    }
+
+    const sourceDeploymentGroup = groupFixture({
+      targetPaths: [operation.targetPath, copyOperation.targetPath],
+      operation: "mixed",
+      operationCount: 2,
+      createCount: 1,
+      replaceCount: 1,
+      generatedFileCount: 1,
+      copyCount: 1,
+      targetRootPath: "/workspace/.cursor",
+      targetRootRelativePath: ".cursor",
+    });
+    expect(
+      DeploymentPlanSchema.safeParse(
+        planWithGroups([sourceDeploymentGroup], [operation, copyOperation]),
+      ).success,
+    ).toBe(true);
+    expect(
+      DeploymentPlanSchema.safeParse(
+        planWithGroups([{ ...sourceDeploymentGroup, copyCount: 0 }], [operation, copyOperation]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("validates package context metadata on operation groups", () => {
+    const packageGroup = groupFixture({
+      targetPaths: [operation.targetPath, createOperation.targetPath],
+      operation: "mixed",
+      operationCount: 2,
+      createCount: 1,
+      replaceCount: 1,
+      targetRootPath: "/workspace/.cursor/rules",
+      targetRootRelativePath: ".cursor/rules",
+      packageOutputCount: 3,
+      packagePathSample: [
+        ".cursor/rules/generated.mdc",
+        ".cursor/rules/new.mdc",
+        ".cursor/rules/readme.md",
+      ],
+    });
+    expect(DeploymentPlanSchema.safeParse(planWithGroups([packageGroup])).success).toBe(true);
+
+    expect(
+      DeploymentPlanSchema.safeParse(planWithGroups([{ ...packageGroup, packageOutputCount: 1 }]))
+        .success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse(
+        planWithGroups([
+          { ...packageGroup, packagePathSample: packageGroup.packagePathSample?.toReversed() },
+        ]),
+      ).success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse(
+        planWithGroups([
+          {
+            ...packageGroup,
+            packagePathSample: [".cursor/rules/generated.mdc", ".cursor/rules/generated.mdc"],
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse(
+        planWithGroups([
+          {
+            ...packageGroup,
+            packageOutputCount: PACKAGE_PATH_SAMPLE_LIMIT + 2,
+            packagePathSample: Array.from(
+              { length: PACKAGE_PATH_SAMPLE_LIMIT + 1 },
+              (_, index) => `.cursor/rules/${String(index).padStart(2, "0")}.md`,
+            ),
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("validates persisted issue summaries while allowing legacy plans without them", () => {
+    expect(DeploymentPlanSchema.safeParse(validPlan).success).toBe(true);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...validPlan,
+        warnings: ["planning warning", "conversion warning"],
+        issueSummary: {
+          planWarningCount: 1,
+          conversionWarningCount: 1,
+          partialConversionCount: 1,
+          droppedFieldCount: 2,
+          transformedFieldCount: 3,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...validPlan,
+        warnings: ["planning warning", "conversion warning"],
+        issueSummary: {
+          planWarningCount: 2,
+          conversionWarningCount: 1,
+          partialConversionCount: 1,
+          droppedFieldCount: 0,
+          transformedFieldCount: 0,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      DeploymentPlanSchema.safeParse({
+        ...validPlan,
+        warnings: ["planning warning"],
+        issueSummary: {
+          planWarningCount: -1,
+          conversionWarningCount: 2,
+          partialConversionCount: 1,
+          droppedFieldCount: 0,
+          transformedFieldCount: 0,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("builds deterministic one-file fallback groups for legacy and rollback plans", () => {
+    const [fallbackGroup] = operationGroupsForPlan(validPlan);
+
+    expect(fallbackGroup).toMatchObject({
+      groupId: `group:operation:${encodeURIComponent(operation.targetPath)}`,
+      targetRootPath: operation.targetPath,
+      targetPaths: [operation.targetPath],
+      operation: "replace",
+      operationCount: 1,
+      createCount: 0,
+      replaceCount: 1,
+      deleteCount: 0,
+      generatedFileCount: 1,
+      copyCount: 0,
+      symlinkCount: 0,
+    });
+    expect(fallbackGroup?.targetRootRelativePath).toBeUndefined();
+    expect(
+      operationGroupsForPlan(
+        DeploymentPlanSchema.parse(planWithGroups([groupFixture()], [operation])),
+      )[0]?.groupId,
+    ).toBe("group:replace");
   });
 });
 
@@ -230,3 +474,42 @@ describe("DeploymentRecordSchema", () => {
     ).toBe(false);
   });
 });
+
+function groupFixture(overrides: Partial<DeploymentOperationGroup> = {}): DeploymentOperationGroup {
+  return {
+    groupId: overrides.groupId ?? "group:replace",
+    sourceAssetId: overrides.sourceAssetId ?? AssetIdSchema.parse("asset-1"),
+    resourceKind: overrides.resourceKind ?? "rule",
+    targetRootPath: overrides.targetRootPath ?? operation.targetPath,
+    targetRootRelativePath: overrides.targetRootRelativePath ?? ".cursor/rules/generated.mdc",
+    operation: overrides.operation ?? "replace",
+    operationCount: overrides.operationCount ?? 1,
+    createCount: overrides.createCount ?? 0,
+    replaceCount: overrides.replaceCount ?? 1,
+    deleteCount: overrides.deleteCount ?? 0,
+    generatedFileCount: overrides.generatedFileCount ?? overrides.operationCount ?? 1,
+    copyCount: overrides.copyCount ?? 0,
+    symlinkCount: overrides.symlinkCount ?? 0,
+    targetPaths: overrides.targetPaths ?? [operation.targetPath],
+    ...(overrides.packageOutputCount === undefined
+      ? {}
+      : { packageOutputCount: overrides.packageOutputCount }),
+    ...(overrides.packagePathSample === undefined
+      ? {}
+      : { packagePathSample: overrides.packagePathSample }),
+  };
+}
+
+function planWithGroups(
+  operationGroups: readonly DeploymentOperationGroup[],
+  operations: readonly DeploymentOperation[] = [operation, createOperation],
+) {
+  return {
+    ...validPlan,
+    operations,
+    expectedTargetHashes: Object.fromEntries(
+      operations.map((item) => [item.targetPath, item.expectedTargetHash]),
+    ),
+    operationGroups,
+  } as const;
+}

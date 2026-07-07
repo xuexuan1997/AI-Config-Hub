@@ -1,8 +1,11 @@
 import {
   AssetSourceFileRoleSchema,
   AssetSourceRelativePathSchema,
+  CHANGE_DETAIL_LIMIT,
   CORE_COMMAND_NAMES,
   DeploymentOperationTypeSchema,
+  GROUP_TARGET_PATH_SAMPLE_LIMIT,
+  PACKAGE_PATH_SAMPLE_LIMIT,
 } from "@ai-config-hub/core";
 import {
   AssetIdSchema,
@@ -330,6 +333,36 @@ const DiagnosticCountsSchema = z
   .strict()
   .readonly();
 const AssetLoadStateSchema = z.enum(["loaded", "covered", "disabled"]);
+const AssetSourceSummarySchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("file"),
+      fileName: z.string().trim().min(1).max(500),
+      mediaType: z.string().trim().min(1).max(200),
+      isText: z.boolean(),
+    })
+    .strict()
+    .readonly(),
+  z
+    .object({
+      kind: z.literal("package"),
+      rootName: z.string().trim().min(1).max(500),
+      fileCount: z.number().int().positive(),
+      folderCount: z.number().int().nonnegative(),
+      textCount: z.number().int().nonnegative(),
+      binaryCount: z.number().int().nonnegative(),
+      roleCounts: z
+        .object({
+          primary: z.number().int().nonnegative(),
+          metadata: z.number().int().nonnegative(),
+          support: z.number().int().nonnegative(),
+        })
+        .strict()
+        .readonly(),
+    })
+    .strict()
+    .readonly(),
+]);
 const AssetSummarySchema = z
   .object({
     id: AssetIdSchema,
@@ -338,6 +371,7 @@ const AssetSummarySchema = z
     scopeKind: ScopeKindSchema,
     logicalKey: z.string().trim().min(1).max(500),
     sourceDirectory: z.string().trim().min(1).max(1_000).optional(),
+    sourceSummary: AssetSourceSummarySchema,
     loadState: AssetLoadStateSchema.optional(),
     coveredByAssetId: AssetIdSchema.optional(),
     coveredByLogicalKey: z.string().trim().min(1).max(500).optional(),
@@ -402,6 +436,7 @@ const AssetsGetResponseSchema = z
         pathDisplay: z.string().min(1).max(1_000),
         contentHash: ContentHashSchema,
         observedAt: IsoDateTimeSchema,
+        sourceSummary: AssetSourceSummarySchema,
         files: z.array(AssetSourceFileViewSchema).min(1).max(1_000).readonly(),
       })
       .strict()
@@ -516,8 +551,9 @@ const DiagnosticsExportResponseSchema = z
   })
   .strict()
   .readonly();
-const PlannedChangeSchema = z
+const GroupedPlannedChangeSchema = z
   .object({
+    groupId: z.string().trim().min(1).max(1_000),
     operation: z.enum(["create", "replace", "delete"]),
     deploymentType: DeploymentOperationTypeSchema,
     pathDisplay: z.string().min(1).max(1_000),
@@ -525,6 +561,48 @@ const PlannedChangeSchema = z
     beforeHash: ContentHashSchema.nullable(),
     afterHash: ContentHashSchema.nullable(),
     diff: z.string().max(1_000_000),
+  })
+  .strict()
+  .readonly();
+const MigrationChangeGroupSchema = z
+  .object({
+    groupId: z.string().trim().min(1).max(1_000),
+    operation: z.enum(["create", "replace", "delete", "mixed"]),
+    resourceType: ResourceKindSchema.optional(),
+    sourceAssetId: AssetIdSchema.optional(),
+    targetRootPathDisplay: z.string().min(1).max(1_000),
+    targetRootRelativePath: z.string().min(1).max(1_000),
+    operationCount: z.number().int().min(1),
+    createCount: z.number().int().nonnegative(),
+    replaceCount: z.number().int().nonnegative(),
+    deleteCount: z.number().int().nonnegative(),
+    generatedFileCount: z.number().int().nonnegative(),
+    copyCount: z.number().int().nonnegative(),
+    symlinkCount: z.number().int().nonnegative(),
+    changedTargetCount: z.number().int().min(1),
+    targetPathSample: z
+      .array(z.string().min(1).max(1_000))
+      .max(GROUP_TARGET_PATH_SAMPLE_LIMIT)
+      .readonly(),
+    packageOutputCount: z.number().int().nonnegative().optional(),
+    packagePathSample: z
+      .array(z.string().min(1).max(1_000))
+      .max(PACKAGE_PATH_SAMPLE_LIMIT)
+      .readonly()
+      .optional(),
+    visibleDetailCount: z.number().int().nonnegative(),
+    detailsTruncated: z.boolean(),
+  })
+  .strict()
+  .readonly();
+const MigrationDifferenceSummarySchema = z
+  .object({
+    addedToTarget: z.number().int().nonnegative(),
+    overwrittenInTarget: z.number().int().nonnegative(),
+    unchangedPlannedTargetOutputs: z.number().int().nonnegative(),
+    conflictsOrWarnings: z.number().int().nonnegative(),
+    changedGroupCount: z.number().int().nonnegative(),
+    changedFileCount: z.number().int().nonnegative(),
   })
   .strict()
   .readonly();
@@ -556,7 +634,11 @@ const MigrationPreviewResponseSchema = z
     planHash: ContentHashSchema,
     compatibility: z.enum(["full", "partial"]),
     fieldLosses: z.array(MigrationFieldLossSchema).max(1_000).readonly(),
-    changes: z.array(PlannedChangeSchema).min(1).max(200).readonly(),
+    changeGroups: z.array(MigrationChangeGroupSchema).min(1).max(1_000).readonly(),
+    differenceSummary: MigrationDifferenceSummarySchema,
+    changes: z.array(GroupedPlannedChangeSchema).min(1).max(CHANGE_DETAIL_LIMIT).readonly(),
+    changesTruncated: z.boolean(),
+    changeDetailLimit: z.literal(CHANGE_DETAIL_LIMIT),
     requiredConfirmations: z.array(DeploymentConfirmationSchema).max(3).readonly(),
     warnings: z.array(DiagnosticViewSchema).max(1_000).readonly(),
     sourceHashes: z.record(AssetIdSchema, ContentHashSchema).readonly(),
@@ -648,7 +730,11 @@ const HistoryGetResponseSchema = z
       })
       .strict()
       .readonly(),
-    changes: z.array(PlannedChangeSchema).max(200).readonly(),
+    changeGroups: z.array(MigrationChangeGroupSchema).min(1).max(1_000).readonly(),
+    differenceSummary: MigrationDifferenceSummarySchema,
+    changes: z.array(GroupedPlannedChangeSchema).max(CHANGE_DETAIL_LIMIT).readonly(),
+    changesTruncated: z.boolean(),
+    changeDetailLimit: z.literal(CHANGE_DETAIL_LIMIT),
   })
   .strict()
   .readonly();

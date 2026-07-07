@@ -63,35 +63,11 @@ describe("MigrationView", () => {
       },
       migrationSourceAssets: [
         assetSummaryFixture("asset-source-skill", "skill:release", {
+          resourceType: "skill",
           toolKey: "claude-code",
         }),
       ],
-      preview: {
-        planId: DeploymentPlanIdSchema.parse("plan-1"),
-        planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-        compatibility: "full",
-        fieldLosses: [],
-        changes: [
-          {
-            operation: "create",
-            deploymentType: "copy",
-            pathDisplay: ".agents/skills/release/assets/logo.png",
-            sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
-            beforeHash: null,
-            afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-            diff: "",
-          },
-        ],
-        requiredConfirmations: [],
-        warnings: [],
-        sourceHashes: {
-          [AssetIdSchema.parse("asset-source-skill")]: ContentHashSchema.parse(
-            `sha256:${"c".repeat(64)}`,
-          ),
-        },
-        targetHashes: { ".agents/skills/release/assets/logo.png": null },
-        expiresAt: "2026-06-28T08:10:00.000Z",
-      },
+      preview: skillPackagePreviewFixture({ diff: "" }),
     });
 
     expect(html).toContain("Copy source file");
@@ -109,35 +85,11 @@ describe("MigrationView", () => {
       },
       migrationSourceAssets: [
         assetSummaryFixture("asset-source-skill", "skill:release", {
+          resourceType: "skill",
           toolKey: "claude-code",
         }),
       ],
-      preview: {
-        planId: DeploymentPlanIdSchema.parse("plan-1"),
-        planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-        compatibility: "full",
-        fieldLosses: [],
-        changes: [
-          {
-            operation: "create",
-            deploymentType: "copy",
-            pathDisplay: ".agents/skills/release/assets/logo.png",
-            sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
-            beforeHash: null,
-            afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-            diff: "+ copied binary asset",
-          },
-        ],
-        requiredConfirmations: [],
-        warnings: [],
-        sourceHashes: {
-          [AssetIdSchema.parse("asset-source-skill")]: ContentHashSchema.parse(
-            `sha256:${"c".repeat(64)}`,
-          ),
-        },
-        targetHashes: { ".agents/skills/release/assets/logo.png": null },
-        expiresAt: "2026-06-28T08:10:00.000Z",
-      },
+      preview: skillPackagePreviewFixture({ diff: "+ copied binary asset" }),
     });
 
     expect(html).toContain('class="target-change-meta"');
@@ -146,6 +98,112 @@ describe("MigrationView", () => {
     expect(html).toContain('class="planned-change-summary"');
     expect(html).toContain("<summary>Show diff and hashes</summary>");
     expect(html).toContain("<pre>+ copied binary asset</pre>");
+  });
+
+  it("renders multi-file Skill previews as one top-level package row", () => {
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [AssetIdSchema.parse("asset-source-skill")],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-skill", "skill:release", {
+          resourceType: "skill",
+          toolKey: "claude-code",
+        }),
+      ],
+      preview: skillPackagePreviewFixture({
+        changes: [
+          {
+            groupId: "group-skill",
+            operation: "create",
+            deploymentType: "generated_file",
+            pathDisplay: ".agents/skills/release/SKILL.md",
+            beforeHash: null,
+            afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+            diff: "+ skill",
+          },
+          {
+            groupId: "group-skill",
+            operation: "create",
+            deploymentType: "copy",
+            pathDisplay: ".agents/skills/release/assets/logo.png",
+            sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
+            beforeHash: null,
+            afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+            diff: "",
+          },
+        ],
+      }),
+    });
+
+    expect(html).toContain("<strong>.agents/skills/release</strong>");
+    expect(html).toContain("2 files");
+    expect(html).not.toContain("<strong>.agents/skills/release/SKILL.md</strong>");
+    expect(html).not.toContain("<strong>.agents/skills/release/assets/logo.png</strong>");
+    expect(html).toContain(".agents/skills/release/assets/logo.png");
+  });
+
+  it("uses complete preview groups for target rows when file details are truncated", () => {
+    const preview = skillPackagePreviewFixture({ changedTargetCount: 51, changesTruncated: true });
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [AssetIdSchema.parse("asset-source-skill")],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-skill", "skill:release", {
+          resourceType: "skill",
+          toolKey: "claude-code",
+        }),
+      ],
+      migrationTargetAssets: [
+        assetSummaryFixture(
+          "asset-target-outside-bounded-detail",
+          "target-only-outside-bounded-detail",
+          {
+            contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+            resourceType: "skill",
+            toolKey: "cursor",
+          },
+        ),
+      ],
+      preview,
+    });
+
+    expect(html).toContain("<strong>.agents/skills/release</strong>");
+    expect(html).toContain("51 files");
+    expect(html).toContain("File details are truncated to 1.");
+    expect(html).not.toContain("target-only-outside-bounded-detail");
+  });
+
+  it("filters preview target groups by the active resource type tab", () => {
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [AssetIdSchema.parse("asset-source-skill")],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-rule", "rule:AGENTS", {
+          resourceType: "rule",
+          toolKey: "codex",
+        }),
+        assetSummaryFixture("asset-source-skill", "skill:release", {
+          resourceType: "skill",
+          toolKey: "claude-code",
+        }),
+      ],
+      preview: skillPackagePreviewFixture(),
+    });
+
+    expect(html).toContain("No target assets for this tool and type.");
+    expect(html).not.toContain('class="target-change-row is-create"');
   });
 });
 
@@ -167,18 +225,98 @@ function renderMigration(statePatch: Partial<AppState>): string {
 function assetSummaryFixture(
   id: string,
   logicalKey: string,
-  overrides: Partial<Pick<AppState["assets"][number], "contentHash" | "toolKey">> = {},
+  overrides: Partial<
+    Pick<AppState["assets"][number], "contentHash" | "resourceType" | "toolKey">
+  > = {},
 ): AppState["assets"][number] {
   return {
     id: AssetIdSchema.parse(id),
     toolKey: overrides.toolKey ?? "codex",
-    resourceType: "rule",
+    resourceType: overrides.resourceType ?? "rule",
     scopeKind: "project",
     logicalKey,
     sourceDirectory: "/workspace",
+    sourceSummary: {
+      kind: "file",
+      fileName: "AGENTS.md",
+      mediaType: "text/markdown",
+      isText: true,
+    },
     loadState: "loaded",
     contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     status: "enabled",
     diagnosticCounts: { info: 0, warning: 0, error: 0 },
+  };
+}
+
+function skillPackagePreviewFixture(
+  overrides: {
+    readonly changes?: NonNullable<AppState["preview"]>["changes"];
+    readonly changedTargetCount?: number;
+    readonly changesTruncated?: boolean;
+    readonly diff?: string;
+  } = {},
+): NonNullable<AppState["preview"]> {
+  const changes = overrides.changes ?? [
+    {
+      groupId: "group-skill",
+      operation: "create",
+      deploymentType: "copy",
+      pathDisplay: ".agents/skills/release/assets/logo.png",
+      sourcePathDisplay: "/workspace/source/.claude/skills/release/assets/logo.png",
+      beforeHash: null,
+      afterHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+      diff: overrides.diff ?? "",
+    },
+  ];
+  return {
+    planId: DeploymentPlanIdSchema.parse("plan-1"),
+    planHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+    compatibility: "full",
+    fieldLosses: [],
+    changeGroups: [
+      {
+        groupId: "group-skill",
+        operation: "create",
+        resourceType: "skill",
+        sourceAssetId: AssetIdSchema.parse("asset-source-skill"),
+        targetRootPathDisplay: ".agents/skills/release",
+        targetRootRelativePath: ".agents/skills/release",
+        operationCount: changes.length,
+        createCount: changes.length,
+        replaceCount: 0,
+        deleteCount: 0,
+        generatedFileCount: changes.filter((change) => change.deploymentType === "generated_file")
+          .length,
+        copyCount: changes.filter((change) => change.deploymentType === "copy").length,
+        symlinkCount: 0,
+        changedTargetCount: overrides.changedTargetCount ?? changes.length,
+        targetPathSample: changes.map((change) => change.pathDisplay),
+        packageOutputCount: overrides.changedTargetCount ?? changes.length,
+        packagePathSample: changes.map((change) => change.pathDisplay),
+        visibleDetailCount: changes.length,
+        detailsTruncated: Boolean(overrides.changesTruncated),
+      },
+    ],
+    differenceSummary: {
+      addedToTarget: overrides.changedTargetCount ?? changes.length,
+      overwrittenInTarget: 0,
+      unchangedPlannedTargetOutputs: 0,
+      conflictsOrWarnings: 0,
+      changedGroupCount: 1,
+      changedFileCount: overrides.changedTargetCount ?? changes.length,
+    },
+    changes,
+    changesTruncated: Boolean(overrides.changesTruncated),
+    changeDetailLimit: 50,
+    requiredConfirmations: [],
+    warnings: [],
+    sourceHashes: {
+      [AssetIdSchema.parse("asset-source-skill")]: ContentHashSchema.parse(
+        `sha256:${"c".repeat(64)}`,
+      ),
+    },
+    targetHashes: Object.fromEntries(changes.map((change) => [change.pathDisplay, null])),
+    expiresAt: "2026-06-28T08:10:00.000Z",
   };
 }

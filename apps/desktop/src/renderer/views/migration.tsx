@@ -44,7 +44,9 @@ export function MigrationView(props: {
     () => assetGroupsByResourceType(props.state.migrationSourceAssets),
     [props.state.migrationSourceAssets],
   );
-  const firstResourceType = assetGroups[0]?.resourceType;
+  const firstResourceType =
+    assetGroups.find((group) => group.assets.length > 0)?.resourceType ??
+    assetGroups[0]?.resourceType;
   const [selectedResourceType, setSelectedResourceType] = useState(firstResourceType);
   const activeResourceType =
     selectedResourceType !== undefined &&
@@ -188,7 +190,9 @@ export function MigrationView(props: {
             <strong>{summary.overwrittenInTarget}</strong>
           </div>
           <div className="summary-card">
-            <span>{t(locale, "Target-only kept")}</span>
+            <span>
+              {t(locale, preview === undefined ? "Target-only kept" : "Unchanged planned outputs")}
+            </span>
             <strong>{summary.targetOnlyKept}</strong>
           </div>
           <div className="summary-card">
@@ -293,8 +297,8 @@ export function MigrationView(props: {
                   />
                 ) : row.kind === "preview" ? (
                   <PreviewTargetRow
-                    key={row.change.pathDisplay}
-                    change={row.change}
+                    key={row.group.groupId}
+                    group={row.group}
                     locale={locale}
                     sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
                     targetProject={props.state.migration.targetScopeId}
@@ -355,31 +359,47 @@ export function MigrationView(props: {
                 <DriftPanel assetLabels={assetLabels} driftRows={driftRows} locale={locale} />
               )}
               <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
-              {preview.changes.map((change) => (
-                <section key={change.pathDisplay} className="planned-change">
+              {changeGroupsForPreview(preview).map((group) => (
+                <section key={group.groupId} className="planned-change">
                   <div className="planned-change-summary">
                     <h2>
-                      {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
+                      {groupOperationLabel(locale, group.operation)} {group.targetRootRelativePath}
                     </h2>
-                    <span>{deploymentTypeLabel(locale, change.deploymentType)}</span>
+                    <span>{formatFileCount(locale, group.changedTargetCount)}</span>
                   </div>
                   <details className="planned-change-details">
                     <summary>{t(locale, "Show diff and hashes")}</summary>
-                    <dl>
-                      <dt>{t(locale, "Deployment")}</dt>
-                      <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
-                      {change.sourcePathDisplay === undefined ? null : (
-                        <>
-                          <dt>{t(locale, "Source file")}</dt>
-                          <dd>{change.sourcePathDisplay}</dd>
-                        </>
-                      )}
-                      <dt>{t(locale, "Before")}</dt>
-                      <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
-                      <dt>{t(locale, "After")}</dt>
-                      <dd>{change.afterHash ?? t(locale, "absent")}</dd>
-                    </dl>
-                    <pre>{change.diff}</pre>
+                    {preview.changes
+                      .filter((change) => changeGroupId(change) === group.groupId)
+                      .map((change) => (
+                        <div className="planned-change-file" key={change.pathDisplay}>
+                          <h3>
+                            {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
+                          </h3>
+                          <dl>
+                            <dt>{t(locale, "Deployment")}</dt>
+                            <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
+                            {change.sourcePathDisplay === undefined ? null : (
+                              <>
+                                <dt>{t(locale, "Source file")}</dt>
+                                <dd>{change.sourcePathDisplay}</dd>
+                              </>
+                            )}
+                            <dt>{t(locale, "Before")}</dt>
+                            <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
+                            <dt>{t(locale, "After")}</dt>
+                            <dd>{change.afterHash ?? t(locale, "absent")}</dd>
+                          </dl>
+                          <pre>{change.diff}</pre>
+                        </div>
+                      ))}
+                    {group.detailsTruncated ? (
+                      <p>
+                        {t(locale, "File details are truncated to {count}.", {
+                          count: group.visibleDetailCount,
+                        })}
+                      </p>
+                    ) : null}
                   </details>
                 </section>
               ))}
@@ -393,6 +413,7 @@ export function MigrationView(props: {
 
 type MigrationAssetSummary = AppState["assets"][number];
 type MigrationPreviewChange = NonNullable<AppState["preview"]>["changes"][number];
+type MigrationPreviewGroup = NonNullable<AppState["preview"]>["changeGroups"][number];
 type MigrationAssetDifference = ReturnType<typeof migrationAssetDifferencesForState>[number];
 type MigrationTargetRow =
   | {
@@ -401,8 +422,45 @@ type MigrationTargetRow =
       readonly change: MigrationPreviewChange | undefined;
       readonly liveDifference: MigrationAssetDifference | undefined;
     }
-  | { readonly kind: "preview"; readonly change: MigrationPreviewChange }
+  | { readonly kind: "preview"; readonly group: MigrationPreviewGroup }
   | { readonly kind: "source-only"; readonly difference: MigrationAssetDifference };
+
+function changeGroupsForPreview(
+  preview: NonNullable<AppState["preview"]>,
+): readonly MigrationPreviewGroup[] {
+  const previewWithOptionalGroups = preview as NonNullable<AppState["preview"]> & {
+    readonly changeGroups?: readonly MigrationPreviewGroup[];
+  };
+  if (previewWithOptionalGroups.changeGroups !== undefined) {
+    return previewWithOptionalGroups.changeGroups;
+  }
+  return preview.changes.map((change) => {
+    const groupId = changeGroupId(change);
+    return {
+      groupId,
+      operation: change.operation,
+      targetRootPathDisplay: change.pathDisplay,
+      targetRootRelativePath: change.pathDisplay,
+      operationCount: 1,
+      createCount: change.operation === "create" ? 1 : 0,
+      replaceCount: change.operation === "replace" ? 1 : 0,
+      deleteCount: change.operation === "delete" ? 1 : 0,
+      generatedFileCount: change.deploymentType === "generated_file" ? 1 : 0,
+      copyCount: change.deploymentType === "copy" ? 1 : 0,
+      symlinkCount: change.deploymentType === "symlink" ? 1 : 0,
+      changedTargetCount: 1,
+      targetPathSample: [change.pathDisplay],
+      visibleDetailCount: 1,
+      detailsTruncated: false,
+    };
+  });
+}
+
+function changeGroupId(change: MigrationPreviewChange): string {
+  return (
+    (change as MigrationPreviewChange & { readonly groupId?: string }).groupId ?? change.pathDisplay
+  );
+}
 
 function TargetAssetRow(props: {
   readonly asset: MigrationAssetSummary;
@@ -483,22 +541,24 @@ function TargetAssetRow(props: {
 }
 
 function PreviewTargetRow(props: {
-  readonly change: MigrationPreviewChange;
+  readonly group: MigrationPreviewGroup;
   readonly locale: DesktopLocale;
   readonly sourceAssetSummary: string;
   readonly targetProject: string | undefined;
   readonly targetTool: string;
 }) {
   return (
-    <div className={`target-change-row ${targetChangeTone(props.change.operation)}`}>
+    <div className={`target-change-row ${targetChangeTone(props.group.operation)}`}>
       <div className="target-change-heading">
-        <strong>{props.change.pathDisplay}</strong>
-        <span>{targetChangeStatusLabel(props.locale, props.change.operation)}</span>
+        <strong>{props.group.targetRootRelativePath}</strong>
+        <span>{targetChangeStatusLabel(props.locale, props.group.operation)}</span>
       </div>
       <p className="target-change-meta">
         <span>{props.targetTool}</span>
-        <span>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</span>
-        <span>{hashChangeCompactLabel(props.locale, props.change)}</span>
+        {props.group.resourceType === undefined ? null : (
+          <span>{resourceTypeLabel(props.locale, props.group.resourceType)}</span>
+        )}
+        <span>{formatFileCount(props.locale, props.group.changedTargetCount)}</span>
       </p>
       <details className="target-change-details">
         <summary>{t(props.locale, "Details")}</summary>
@@ -509,18 +569,12 @@ function PreviewTargetRow(props: {
           <dd>{props.targetTool}</dd>
           <dt>{t(props.locale, "Source asset")}</dt>
           <dd>{props.sourceAssetSummary}</dd>
-          <dt>{t(props.locale, "Preview target file")}</dt>
-          <dd>{props.change.pathDisplay}</dd>
-          <dt>{t(props.locale, "Deployment")}</dt>
-          <dd>{deploymentTypeLabel(props.locale, props.change.deploymentType)}</dd>
-          {props.change.sourcePathDisplay === undefined ? null : (
-            <>
-              <dt>{t(props.locale, "Source file")}</dt>
-              <dd>{props.change.sourcePathDisplay}</dd>
-            </>
-          )}
-          <dt>{t(props.locale, "Hash change")}</dt>
-          <dd>{hashChangeLabel(props.locale, props.change)}</dd>
+          <dt>{t(props.locale, "Preview target folder")}</dt>
+          <dd>{props.group.targetRootRelativePath}</dd>
+          <dt>{t(props.locale, "Changed files")}</dt>
+          <dd>{formatFileCount(props.locale, props.group.changedTargetCount)}</dd>
+          <dt>{t(props.locale, "Preview target files")}</dt>
+          <dd>{props.group.targetPathSample.join(", ")}</dd>
         </dl>
       </details>
     </div>
@@ -579,20 +633,19 @@ function targetRowsForState(
   if (state.preview === undefined) {
     return liveTargetRowsForState(state, targetAssets, resourceType);
   }
-  const changes = state.preview?.changes ?? [];
-  const assetRows = targetAssets.map((asset): MigrationTargetRow => {
-    const change = changes.find((candidate) => candidate.beforeHash === asset.contentHash);
-    return { kind: "asset", asset, change, liveDifference: undefined };
-  });
-  const matchedChangePaths = new Set(
-    assetRows
-      .map((row) => (row.kind === "asset" ? row.change?.pathDisplay : undefined))
-      .filter((path): path is string => path !== undefined),
-  );
-  const previewRows = changes
-    .filter((change) => !matchedChangePaths.has(change.pathDisplay))
-    .map((change): MigrationTargetRow => ({ kind: "preview", change }));
-  return [...assetRows, ...previewRows];
+  return changeGroupsForPreview(state.preview)
+    .filter(
+      (group) =>
+        resourceType === undefined ||
+        group.resourceType === undefined ||
+        group.resourceType === resourceType,
+    )
+    .map(
+      (group): MigrationTargetRow => ({
+        kind: "preview",
+        group,
+      }),
+    );
 }
 
 function liveTargetRowsForState(
@@ -637,7 +690,7 @@ function targetRowLabel(row: MigrationTargetRow): string {
     case "asset":
       return row.asset.logicalKey;
     case "preview":
-      return row.change.pathDisplay;
+      return row.group.targetRootRelativePath;
     case "source-only":
       return row.difference.sourceAsset?.logicalKey ?? row.difference.logicalKey;
   }
@@ -646,12 +699,6 @@ function targetRowLabel(row: MigrationTargetRow): string {
 function hashChangeLabel(locale: DesktopLocale, change: MigrationPreviewChange): string {
   return `${change.beforeHash === null ? t(locale, "absent") : change.beforeHash} -> ${
     change.afterHash === null ? t(locale, "absent") : change.afterHash
-  }`;
-}
-
-function hashChangeCompactLabel(locale: DesktopLocale, change: MigrationPreviewChange): string {
-  return `${change.beforeHash === null ? t(locale, "absent") : shortHash(change.beforeHash)} -> ${
-    change.afterHash === null ? t(locale, "absent") : shortHash(change.afterHash)
   }`;
 }
 
@@ -672,12 +719,16 @@ function liveHashChangeCompactLabel(
 
 function shortHash(hash: string): string {
   const prefix = "sha256:";
-  return hash.startsWith(prefix) ? `${prefix}${hash.slice(prefix.length, prefix.length + 8)}` : hash;
+  return hash.startsWith(prefix)
+    ? `${prefix}${hash.slice(prefix.length, prefix.length + 8)}`
+    : hash;
 }
 
 function targetChangeStatusLabel(
   locale: DesktopLocale,
-  operation: MigrationPreviewChange["operation"],
+  operation:
+    | MigrationPreviewChange["operation"]
+    | NonNullable<AppState["preview"]>["changeGroups"][number]["operation"],
 ): string {
   switch (operation) {
     case "create":
@@ -686,6 +737,8 @@ function targetChangeStatusLabel(
       return t(locale, "Will overwrite");
     case "delete":
       return t(locale, "Will delete");
+    case "mixed":
+      return t(locale, "Will change");
   }
 }
 
@@ -1002,9 +1055,17 @@ function HashSnapshot(props: {
   readonly locale: DesktopLocale;
   readonly preview: NonNullable<AppState["preview"]>;
 }) {
+  const hashRows = migrationHashRowsForPreview(props.preview);
+  const visibleRows = hashRows.slice(0, HASH_SAMPLE_LIMIT);
   return (
     <details className="hash-snapshot" aria-label={t(props.locale, "Migration hash snapshot")}>
-      <summary>{t(props.locale, "Hash snapshot")}</summary>
+      <summary>
+        {t(props.locale, "Hash snapshot")}{" "}
+        {t(props.locale, "{visible} shown of {total}", {
+          visible: visibleRows.length,
+          total: hashRows.length,
+        })}
+      </summary>
       <table>
         <thead>
           <tr>
@@ -1014,7 +1075,7 @@ function HashSnapshot(props: {
           </tr>
         </thead>
         <tbody>
-          {migrationHashRowsForPreview(props.preview).map((row) => (
+          {visibleRows.map((row) => (
             <tr key={`${row.kind}:${row.label}`}>
               <td>{hashRowKindLabel(props.locale, row.kind)}</td>
               <td>
@@ -1025,6 +1086,13 @@ function HashSnapshot(props: {
           ))}
         </tbody>
       </table>
+      {hashRows.length > visibleRows.length ? (
+        <p>
+          {t(props.locale, "Hash rows are truncated to {count}.", {
+            count: visibleRows.length,
+          })}
+        </p>
+      ) : null}
     </details>
   );
 }
@@ -1048,6 +1116,7 @@ function assetGroupsByResourceType(
 }
 
 const KNOWN_MIGRATION_RESOURCE_TYPES = ["rule", "agent", "skill", "mcp"] as const;
+const HASH_SAMPLE_LIMIT = 20;
 
 function compareAssetGroups(left: MigrationAssetGroup, right: MigrationAssetGroup): number {
   const leftPriority = resourceTypePriority(left.resourceType);
@@ -1092,6 +1161,11 @@ function formatDifferenceCount(locale: DesktopLocale, count: number): string {
 function formatAssetCount(locale: DesktopLocale, count: number): string {
   if (locale === "zh-CN") return `${count} 个资产`;
   return `${count} ${count === 1 ? "asset" : "assets"}`;
+}
+
+function formatFileCount(locale: DesktopLocale, count: number): string {
+  if (locale === "zh-CN") return `${count} 个文件`;
+  return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
 function targetToolLabel(targetTool: MigrationTargetToolKey): string {
@@ -1181,6 +1255,22 @@ function changeOperationLabel(
   }
 }
 
+function groupOperationLabel(
+  locale: DesktopLocale,
+  operation: NonNullable<AppState["preview"]>["changeGroups"][number]["operation"],
+): string {
+  switch (operation) {
+    case "create":
+      return t(locale, "Create files");
+    case "replace":
+      return t(locale, "Replace files");
+    case "delete":
+      return t(locale, "Delete files");
+    case "mixed":
+      return t(locale, "Change files");
+  }
+}
+
 function deploymentTypeLabel(
   locale: DesktopLocale,
   deploymentType: NonNullable<AppState["preview"]>["changes"][number]["deploymentType"],
@@ -1196,7 +1286,7 @@ function deploymentTypeLabel(
 }
 
 function targetChangeTone(
-  operation: NonNullable<AppState["preview"]>["changes"][number]["operation"],
+  operation: NonNullable<AppState["preview"]>["changeGroups"][number]["operation"],
 ): string {
   switch (operation) {
     case "create":
@@ -1205,6 +1295,8 @@ function targetChangeTone(
       return "is-replace";
     case "delete":
       return "is-delete";
+    case "mixed":
+      return "is-replace";
   }
 }
 

@@ -871,21 +871,32 @@ export interface MigrationAssetDifference {
 export function migrationDifferenceSummaryForState(state: AppState): MigrationDifferenceSummary {
   const preview = state.preview;
   if (preview === undefined) return liveMigrationDifferenceSummaryForState(state);
-  const changedTargetPaths = new Set(preview.changes.map((change) => change.pathDisplay));
-  return {
-    addedToTarget: preview.changes.filter((change) => change.operation === "create").length,
-    overwrittenInTarget: preview.changes.filter((change) => change.operation === "replace").length,
-    targetOnlyKept: Object.entries(preview.targetHashes).filter(
-      ([path, hash]) => hash !== null && !changedTargetPaths.has(path),
-    ).length,
-    conflictsOrWarnings:
-      preview.warnings.length +
-      preview.fieldLosses.filter(
-        (loss) =>
-          loss.droppedFields.length > 0 ||
-          loss.transformedFields.length > 0 ||
-          loss.warnings.length > 0,
+  const differenceSummary: CommandResponse<"migration.preview">["differenceSummary"] | undefined =
+    preview.differenceSummary;
+  if (differenceSummary === undefined) {
+    const changedTargetPaths = new Set(preview.changes.map((change) => change.pathDisplay));
+    return {
+      addedToTarget: preview.changes.filter((change) => change.operation === "create").length,
+      overwrittenInTarget: preview.changes.filter((change) => change.operation === "replace")
+        .length,
+      targetOnlyKept: Object.entries(preview.targetHashes).filter(
+        ([path, hash]) => hash !== null && !changedTargetPaths.has(path),
       ).length,
+      conflictsOrWarnings:
+        preview.warnings.length +
+        preview.fieldLosses.filter(
+          (loss) =>
+            loss.droppedFields.length > 0 ||
+            loss.transformedFields.length > 0 ||
+            loss.warnings.length > 0,
+        ).length,
+    };
+  }
+  return {
+    addedToTarget: differenceSummary.addedToTarget,
+    overwrittenInTarget: differenceSummary.overwrittenInTarget,
+    targetOnlyKept: differenceSummary.unchangedPlannedTargetOutputs,
+    conflictsOrWarnings: differenceSummary.conflictsOrWarnings,
   };
 }
 

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   DeploymentPlanSchema,
   DeploymentRecordSchema,
+  operationGroupsForPlan,
   type DeploymentFilePort,
   type DeploymentPlan,
   type DeploymentRecord,
@@ -244,6 +245,28 @@ describe("DeploymentRollbackService", () => {
         deploymentType: "generated_file",
       },
     ]);
+    const rollbackGroups = operationGroupsForPlan(rollbackPlan);
+    expect(rollbackGroups).toEqual([
+      expect.objectContaining({
+        targetRootPath: "/target/created.md",
+        targetPaths: ["/target/created.md"],
+        operation: "delete",
+        operationCount: 1,
+      }),
+      expect.objectContaining({
+        targetRootPath: "/target/replaced.md",
+        targetPaths: ["/target/replaced.md"],
+        operation: "replace",
+        operationCount: 1,
+      }),
+      expect.objectContaining({
+        targetRootPath: "/target/deleted.md",
+        targetPaths: ["/target/deleted.md"],
+        operation: "create",
+        operationCount: 1,
+      }),
+    ]);
+    expect(rollbackGroups.every((group) => !("targetRootRelativePath" in group))).toBe(true);
     expect(rollbackPlan.planHash).toMatch(/^sha256:/);
   });
 

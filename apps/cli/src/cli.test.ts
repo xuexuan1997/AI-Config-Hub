@@ -12,6 +12,7 @@ import { createCliProgram, runCli } from "./cli.js";
 
 const now = "2026-06-24T08:00:00.000Z";
 const hash = ContentHashSchema.parse(`sha256:${"a".repeat(64)}`);
+type MigrationPreviewResponse = Awaited<ReturnType<CommandServiceMap["migration.preview"]>>;
 
 function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap {
   const base: Record<keyof CommandServiceMap, (payload: never) => Promise<unknown>> = {
@@ -48,6 +49,12 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
             resourceType: "rule",
             scopeKind: "project",
             logicalKey: "AGENTS.md",
+            sourceSummary: {
+              kind: "file",
+              fileName: "AGENTS.md",
+              mediaType: "text/markdown",
+              isText: true,
+            },
             contentHash: hash,
             status: "enabled",
             diagnosticCounts: { info: 0, warning: 1, error: 0 },
@@ -75,6 +82,12 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           pathDisplay: "AGENTS.md",
           contentHash: hash,
           observedAt: now,
+          sourceSummary: {
+            kind: "file",
+            fileName: "AGENTS.md",
+            mediaType: "text/markdown",
+            isText: true,
+          },
           files: [
             {
               pathDisplay: "AGENTS.md",
@@ -156,8 +169,38 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
         compatibility: "full",
         fieldLosses: [],
         requiredConfirmations: [],
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "create",
+            resourceType: "rule",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".cursor/rules/AGENTS.mdc",
+            targetRootRelativePath: ".cursor/rules/AGENTS.mdc",
+            operationCount: 1,
+            createCount: 1,
+            replaceCount: 0,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 0,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".cursor/rules/AGENTS.mdc"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 1,
+          overwrittenInTarget: 0,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "create",
             deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/AGENTS.mdc",
@@ -166,6 +209,8 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
             diff: "+ Use local conventions.",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
         warnings: [],
         sourceHashes: { "asset-1": hash },
         targetHashes: { ".cursor/rules/AGENTS.mdc": null },
@@ -216,8 +261,38 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           planHash: hash,
           requiredConfirmations: [],
         },
+        changeGroups: [
+          {
+            groupId: "group-1",
+            operation: "create",
+            resourceType: "rule",
+            sourceAssetId: "asset-1",
+            targetRootPathDisplay: ".cursor/rules/AGENTS.mdc",
+            targetRootRelativePath: ".cursor/rules/AGENTS.mdc",
+            operationCount: 1,
+            createCount: 1,
+            replaceCount: 0,
+            deleteCount: 0,
+            generatedFileCount: 1,
+            copyCount: 0,
+            symlinkCount: 0,
+            changedTargetCount: 1,
+            targetPathSample: [".cursor/rules/AGENTS.mdc"],
+            visibleDetailCount: 1,
+            detailsTruncated: false,
+          },
+        ],
+        differenceSummary: {
+          addedToTarget: 1,
+          overwrittenInTarget: 0,
+          unchangedPlannedTargetOutputs: 0,
+          conflictsOrWarnings: 0,
+          changedGroupCount: 1,
+          changedFileCount: 1,
+        },
         changes: [
           {
+            groupId: "group-1",
             operation: "create",
             deploymentType: "generated_file",
             pathDisplay: ".cursor/rules/AGENTS.mdc",
@@ -226,6 +301,8 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
             diff: "+ Use local conventions.",
           },
         ],
+        changesTruncated: false,
+        changeDetailLimit: 50,
       }),
     "settings.get": () =>
       Promise.resolve({
@@ -661,8 +738,38 @@ describe("CLI program", () => {
                 },
               ],
               requiredConfirmations: ["partial_conversion", "overwrite"],
+              changeGroups: [
+                {
+                  groupId: "group-1",
+                  operation: "replace",
+                  resourceType: "rule",
+                  sourceAssetId: AssetIdSchema.parse("asset-1"),
+                  targetRootPathDisplay: ".cursor/rules/AGENTS.mdc",
+                  targetRootRelativePath: ".cursor/rules/AGENTS.mdc",
+                  operationCount: 1,
+                  createCount: 0,
+                  replaceCount: 1,
+                  deleteCount: 0,
+                  generatedFileCount: 1,
+                  copyCount: 0,
+                  symlinkCount: 0,
+                  changedTargetCount: 1,
+                  targetPathSample: [".cursor/rules/AGENTS.mdc"],
+                  visibleDetailCount: 1,
+                  detailsTruncated: false,
+                },
+              ],
+              differenceSummary: {
+                addedToTarget: 0,
+                overwrittenInTarget: 1,
+                unchangedPlannedTargetOutputs: 0,
+                conflictsOrWarnings: 1,
+                changedGroupCount: 1,
+                changedFileCount: 1,
+              },
               changes: [
                 {
+                  groupId: "group-1",
                   operation: "replace",
                   deploymentType: "generated_file",
                   pathDisplay: ".cursor/rules/AGENTS.mdc",
@@ -671,6 +778,8 @@ describe("CLI program", () => {
                   diff: "- Old\n+ Use local conventions.",
                 },
               ],
+              changesTruncated: false,
+              changeDetailLimit: 50,
               warnings: [],
               sourceHashes: { "asset-1": hash },
               targetHashes: { ".cursor/rules/AGENTS.mdc": hash },
@@ -690,14 +799,94 @@ describe("CLI program", () => {
     expect(text).toContain("Required confirmations: partial_conversion, overwrite");
     expect(text).toContain("Expires: 2026-06-24T08:00:00.000Z");
     expect(text).toContain("Plan hash: sha256:");
-    expect(text).toContain("Source hashes:");
+    expect(text).toContain("Source hashes (1):");
     expect(text).toContain("  asset-1: sha256:");
-    expect(text).toContain("Target hashes:");
+    expect(text).toContain("Target hashes (1):");
     expect(text).toContain("  .cursor/rules/AGENTS.mdc: sha256:");
     expect(text).toContain("Field loss asset-1: dropped /data/extensions, /data/allowedTools");
     expect(text).toContain("replace .cursor/rules/AGENTS.mdc");
+    expect(text.indexOf("replace .cursor/rules/AGENTS.mdc")).toBeLessThan(
+      text.indexOf("Source hashes (1):"),
+    );
     expect(text).toContain("- Old");
     expect(text).toContain("+ Use local conventions.");
+  });
+
+  it("prints bounded hash samples for large migration previews", async () => {
+    const output: string[] = [];
+    const result = await runCli(
+      createCliProgram({
+        services: services({
+          "migration.preview": () =>
+            Promise.resolve({
+              planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+              planHash: hash,
+              compatibility: "full",
+              fieldLosses: [],
+              requiredConfirmations: [],
+              changeGroups: [
+                {
+                  groupId: "group-1",
+                  operation: "create",
+                  resourceType: "rule",
+                  targetRootPathDisplay: ".cursor/rules/AGENTS.mdc",
+                  targetRootRelativePath: ".cursor/rules/AGENTS.mdc",
+                  operationCount: 1,
+                  createCount: 1,
+                  replaceCount: 0,
+                  deleteCount: 0,
+                  generatedFileCount: 1,
+                  copyCount: 0,
+                  symlinkCount: 0,
+                  changedTargetCount: 1,
+                  targetPathSample: [".cursor/rules/AGENTS.mdc"],
+                  visibleDetailCount: 1,
+                  detailsTruncated: false,
+                },
+              ],
+              differenceSummary: {
+                addedToTarget: 1,
+                overwrittenInTarget: 0,
+                unchangedPlannedTargetOutputs: 0,
+                conflictsOrWarnings: 0,
+                changedGroupCount: 1,
+                changedFileCount: 1,
+              },
+              changes: [
+                {
+                  groupId: "group-1",
+                  operation: "create",
+                  deploymentType: "generated_file",
+                  pathDisplay: ".cursor/rules/AGENTS.mdc",
+                  beforeHash: null,
+                  afterHash: hash,
+                  diff: "+ Use local conventions.",
+                },
+              ],
+              changesTruncated: false,
+              changeDetailLimit: 50,
+              warnings: [],
+              sourceHashes: sourceHashes(22),
+              targetHashes: targetHashes(21),
+              expiresAt: now,
+            }),
+        }),
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+      }),
+      ["migrate", "--dry-run", "--source", "asset-1", "--target", "cursor", "--scope", "scope-1"],
+    );
+
+    const text = output.join("");
+    expect(result).toEqual({ exitCode: 0 });
+    expect(text).toContain("Source hashes (22):");
+    expect(text).toContain("  asset-020: sha256:");
+    expect(text).not.toContain("asset-021: sha256:");
+    expect(text).toContain("  ... 2 more");
+    expect(text).toContain("Target hashes (21):");
+    expect(text).toContain("  target-020.mdc: sha256:");
+    expect(text).not.toContain("target-021.mdc: sha256:");
+    expect(text).toContain("  ... 1 more");
   });
 
   it("prints a redacted diagnostic report in text mode", async () => {
@@ -742,3 +931,23 @@ describe("CLI program", () => {
     expect(text).not.toContain("sk-live-secret");
   });
 });
+
+function sourceHashes(count: number): MigrationPreviewResponse["sourceHashes"] {
+  const hashes: MigrationPreviewResponse["sourceHashes"] = Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [
+      AssetIdSchema.parse(`asset-${String(index + 1).padStart(3, "0")}`),
+      hash,
+    ]),
+  );
+  return hashes;
+}
+
+function targetHashes(count: number): MigrationPreviewResponse["targetHashes"] {
+  const hashes: MigrationPreviewResponse["targetHashes"] = Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [
+      `target-${String(index + 1).padStart(3, "0")}.mdc`,
+      hash,
+    ]),
+  );
+  return hashes;
+}

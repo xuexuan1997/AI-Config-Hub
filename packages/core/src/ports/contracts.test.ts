@@ -123,9 +123,35 @@ describe("core use cases", () => {
       readonly assetId: AssetId;
       readonly status: "enabled";
     }>();
+    expectTypeOf<UseCaseContractMap["assets.list"]["output"]["items"][number]>().toHaveProperty(
+      "sourceSummary",
+    );
+    expectTypeOf<UseCaseContractMap["assets.get"]["output"]>()
+      .toHaveProperty("source")
+      .toHaveProperty("sourceSummary");
+    expectTypeOf<UseCaseContractMap["migration.preview"]["output"]>().toHaveProperty(
+      "changeGroups",
+    );
+    expectTypeOf<UseCaseContractMap["migration.preview"]["output"]>().toHaveProperty(
+      "differenceSummary",
+    );
+    expectTypeOf<UseCaseContractMap["migration.preview"]["output"]>().toHaveProperty(
+      "changesTruncated",
+    );
+    expectTypeOf<UseCaseContractMap["migration.preview"]["output"]>().toHaveProperty(
+      "changeDetailLimit",
+    );
+    expectTypeOf<UseCaseContractMap["migration.preview"]["output"]["changes"][number]>()
+      .toHaveProperty("groupId")
+      .toEqualTypeOf<string>();
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("entry");
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("plan");
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("changeGroups");
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("differenceSummary");
     expectTypeOf<UseCaseContractMap["history.get"]["output"]>().toHaveProperty("changes");
+    expectTypeOf<UseCaseContractMap["history.get"]["output"]["changes"][number]>()
+      .toHaveProperty("groupId")
+      .toEqualTypeOf<string>();
   });
 
   it("requires preview hash confirmation for deployment execution", () => {

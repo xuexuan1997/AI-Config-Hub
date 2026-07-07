@@ -51,6 +51,7 @@ const assetDetailSourceFixture = {
   pathDisplay: "/workspace/AGENTS.md",
   contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
   observedAt: "2026-06-28T08:00:00.000Z",
+  sourceSummary: fileSourceSummary("AGENTS.md"),
   files: [
     {
       pathDisplay: "/workspace/AGENTS.md",
@@ -62,6 +63,136 @@ const assetDetailSourceFixture = {
     },
   ],
 } as const satisfies NonNullable<AppState["assetDetail"]>["source"];
+
+type MigrationPreviewFixture = NonNullable<AppState["preview"]>;
+type MigrationPreviewChangeFixture = Omit<MigrationPreviewFixture["changes"][number], "groupId"> &
+  Partial<Pick<MigrationPreviewFixture["changes"][number], "groupId">>;
+type MigrationPreviewFixtureOverrides = Omit<
+  Partial<MigrationPreviewFixture>,
+  "changes" | "changeGroups" | "differenceSummary"
+> & {
+  readonly changes?: readonly MigrationPreviewChangeFixture[];
+  readonly changeGroups?: MigrationPreviewFixture["changeGroups"];
+  readonly differenceSummary?: MigrationPreviewFixture["differenceSummary"];
+};
+
+function fileSourceSummary(fileName: string): AppState["assets"][number]["sourceSummary"] {
+  return { kind: "file", fileName, mediaType: "text/markdown", isText: true };
+}
+
+function migrationPreviewFixture(
+  overrides: MigrationPreviewFixtureOverrides = {},
+): MigrationPreviewFixture {
+  const {
+    changes: rawChanges = [
+      {
+        operation: "create",
+        deploymentType: "generated_file",
+        pathDisplay: "/workspace/.cursor/rules/generated.mdc",
+        beforeHash: null,
+        afterHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
+        diff: "+ Use tests.",
+      },
+    ],
+    changeGroups: overrideChangeGroups,
+    differenceSummary: overrideDifferenceSummary,
+    changesTruncated = false,
+    changeDetailLimit = 50,
+    ...rest
+  } = overrides;
+  const changes = rawChanges.map((change, index) => ({
+    groupId: change.groupId ?? `group-${index + 1}`,
+    ...change,
+  })) satisfies MigrationPreviewFixture["changes"];
+  const changeGroups = overrideChangeGroups ?? changeGroupsForChanges(changes);
+  const fieldLosses = rest.fieldLosses ?? [];
+  const warnings = rest.warnings ?? [];
+  const targetHashes = rest.targetHashes ?? {};
+
+  return {
+    planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
+    planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+    compatibility: "full",
+    fieldLosses,
+    requiredConfirmations: [],
+    warnings,
+    sourceHashes: {},
+    targetHashes,
+    expiresAt: "2026-06-28T08:10:00.000Z",
+    ...rest,
+    changes,
+    changeGroups,
+    differenceSummary:
+      overrideDifferenceSummary ??
+      differenceSummaryForChanges({ changes, changeGroups, fieldLosses, warnings, targetHashes }),
+    changesTruncated,
+    changeDetailLimit,
+  };
+}
+
+function changeGroupsForChanges(
+  changes: MigrationPreviewFixture["changes"],
+): MigrationPreviewFixture["changeGroups"] {
+  if (changes.length === 0) return [];
+  const createCount = changes.filter((change) => change.operation === "create").length;
+  const replaceCount = changes.filter((change) => change.operation === "replace").length;
+  const deleteCount = changes.filter((change) => change.operation === "delete").length;
+  const operations = new Set(changes.map((change) => change.operation));
+  const firstChange = changes[0]!;
+  const targetRootPathDisplay = parentPathFor(firstChange.pathDisplay);
+  return [
+    {
+      groupId: firstChange.groupId,
+      operation: operations.size === 1 ? firstChange.operation : "mixed",
+      resourceType: "rule",
+      targetRootPathDisplay,
+      targetRootRelativePath: targetRootPathDisplay,
+      operationCount: changes.length,
+      createCount,
+      replaceCount,
+      deleteCount,
+      generatedFileCount: changes.filter((change) => change.deploymentType === "generated_file")
+        .length,
+      copyCount: changes.filter((change) => change.deploymentType === "copy").length,
+      symlinkCount: changes.filter((change) => change.deploymentType === "symlink").length,
+      changedTargetCount: changes.length,
+      targetPathSample: changes.map((change) => change.pathDisplay).slice(0, 10),
+      visibleDetailCount: changes.length,
+      detailsTruncated: false,
+    },
+  ];
+}
+
+function differenceSummaryForChanges(input: {
+  readonly changes: MigrationPreviewFixture["changes"];
+  readonly changeGroups: MigrationPreviewFixture["changeGroups"];
+  readonly fieldLosses: MigrationPreviewFixture["fieldLosses"];
+  readonly warnings: MigrationPreviewFixture["warnings"];
+  readonly targetHashes: MigrationPreviewFixture["targetHashes"];
+}): MigrationPreviewFixture["differenceSummary"] {
+  const changedTargetPaths = new Set(input.changes.map((change) => change.pathDisplay));
+  const fieldLossWarningCount = input.fieldLosses.filter(
+    (loss) =>
+      loss.droppedFields.length > 0 ||
+      loss.transformedFields.length > 0 ||
+      loss.warnings.length > 0,
+  ).length;
+  return {
+    addedToTarget: input.changes.filter((change) => change.operation === "create").length,
+    overwrittenInTarget: input.changes.filter((change) => change.operation === "replace").length,
+    unchangedPlannedTargetOutputs: Object.entries(input.targetHashes).filter(
+      ([path, hash]) => hash !== null && !changedTargetPaths.has(path),
+    ).length,
+    conflictsOrWarnings: input.warnings.length + fieldLossWarningCount,
+    changedGroupCount: input.changeGroups.length,
+    changedFileCount: input.changes.length,
+  };
+}
+
+function parentPathFor(pathDisplay: string): string {
+  const separatorIndex = pathDisplay.lastIndexOf("/");
+  return separatorIndex < 0 ? pathDisplay : pathDisplay.slice(0, separatorIndex);
+}
 
 describe("renderer project selection state", () => {
   it("builds asset disable requests with the selected disablement method", () => {
@@ -128,18 +259,7 @@ describe("renderer project selection state", () => {
     });
     const withAssets = reducer(withReviewProject, {
       type: "assets",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "AGENTS.md")],
     });
 
     expect(withAssets.projectRoot).toBe("/home/user/workspace");
@@ -159,18 +279,7 @@ describe("renderer project selection state", () => {
     });
     const withAssets = reducer(withTargetProject, {
       type: "migrationSourceAssets",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "AGENTS.md")],
     });
 
     expect(withAssets.projectRoot).toBeUndefined();
@@ -199,20 +308,14 @@ describe("renderer project selection state", () => {
     });
     const withPreview = reducer(withTargetProject, {
       type: "preview",
-      preview: {
+      preview: migrationPreviewFixture({
         planId: DeploymentPlanIdSchema.parse("deployment-plan:swap-test"),
         planHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
         sourceHashes: {
           [AssetIdSchema.parse("asset-1")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
         },
-        targetHashes: {},
         compatibility: "full",
-        fieldLosses: [],
-        changes: [],
-        requiredConfirmations: [],
-        warnings: [],
-        expiresAt: "2026-06-28T08:10:00.000Z",
-      },
+      }),
     });
     const swapped = reducer(withPreview, { type: "migrationSwapProjects" });
 
@@ -229,18 +332,7 @@ describe("renderer project selection state", () => {
     });
     const withAssets = reducer(withSourceProject, {
       type: "migrationSourceAssets",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "AGENTS.md")],
     });
     const withTargetProject = reducer(withAssets, {
       type: "migrationTargetProject",
@@ -273,26 +365,12 @@ describe("renderer project selection state", () => {
     const withAssets = reducer(withTargetProject, {
       type: "migrationSourceAssets",
       assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-        {
-          id: AssetIdSchema.parse("asset-2"),
-          toolKey: "claude-code",
-          resourceType: "skill",
-          scopeKind: "project",
-          logicalKey: "review/SKILL.md",
+        migrationAssetFixture("asset-1", "AGENTS.md"),
+        migrationAssetFixture("asset-2", "review/SKILL.md", {
           contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
+          resourceType: "skill",
+          toolKey: "claude-code",
+        }),
       ],
     });
     const withSource = reducer(withAssets, {
@@ -335,26 +413,12 @@ describe("renderer project selection state", () => {
     const withAssets = reducer(withTargetProject, {
       type: "migrationSourceAssets",
       assets: [
-        {
-          id: AssetIdSchema.parse("asset-disabled"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "disabled/AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        migrationAssetFixture("asset-disabled", "disabled/AGENTS.md", {
           status: "disabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-        {
-          id: AssetIdSchema.parse("asset-enabled"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
+        }),
+        migrationAssetFixture("asset-enabled", "AGENTS.md", {
           contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
+        }),
       ],
     });
     const manuallySelectedDisabled = reducer(withAssets, {
@@ -376,26 +440,12 @@ describe("renderer project selection state", () => {
   });
 
   it("keeps asset review refreshes from replacing migration source assets or previews", () => {
-    const sourceAsset: AppState["assets"][number] = {
-      id: AssetIdSchema.parse("asset-source"),
-      toolKey: "codex",
-      resourceType: "rule",
-      scopeKind: "project",
-      logicalKey: "source/AGENTS.md",
-      contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-      status: "enabled" as const,
-      diagnosticCounts: { info: 0, warning: 0, error: 0 },
-    };
-    const reviewAsset: AppState["assets"][number] = {
-      id: AssetIdSchema.parse("asset-review"),
-      toolKey: "cursor",
-      resourceType: "skill",
-      scopeKind: "project",
-      logicalKey: "review/SKILL.md",
+    const sourceAsset = migrationAssetFixture("asset-source", "source/AGENTS.md");
+    const reviewAsset = migrationAssetFixture("asset-review", "review/SKILL.md", {
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-      status: "enabled" as const,
-      diagnosticCounts: { info: 0, warning: 1, error: 0 },
-    };
+      resourceType: "skill",
+      toolKey: "cursor",
+    });
     const withSourceProject = reducer(initialState, {
       type: "migrationSourceProject",
       sourceProjectRoot: "/home/user/source-workspace",
@@ -410,20 +460,14 @@ describe("renderer project selection state", () => {
     });
     const withPreview = reducer(withSourceAssets, {
       type: "preview",
-      preview: {
+      preview: migrationPreviewFixture({
         planId: DeploymentPlanIdSchema.parse("deployment-plan:state-isolation"),
         planHash: ContentHashSchema.parse(`sha256:${"d".repeat(64)}`),
         sourceHashes: {
           [sourceAsset.id]: sourceAsset.contentHash,
         },
-        targetHashes: {},
         compatibility: "full",
-        fieldLosses: [],
-        changes: [],
-        requiredConfirmations: [],
-        warnings: [],
-        expiresAt: "2026-06-28T08:10:00.000Z",
-      },
+      }),
     });
     const withReviewAssets = reducer(withPreview, {
       type: "assets",
@@ -444,26 +488,13 @@ describe("renderer project selection state", () => {
   });
 
   it("stores scanned migration target assets separately and swaps them with the source", () => {
-    const reviewAsset: AppState["assets"][number] = {
-      id: AssetIdSchema.parse("asset-review"),
-      toolKey: "codex",
-      resourceType: "rule",
-      scopeKind: "project",
-      logicalKey: "review/AGENTS.md",
-      contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-      status: "enabled" as const,
-      diagnosticCounts: { info: 0, warning: 0, error: 0 },
-    };
-    const sourceAsset: AppState["assets"][number] = {
-      ...reviewAsset,
-      id: AssetIdSchema.parse("asset-source"),
-      logicalKey: "source/AGENTS.md",
+    const reviewAsset = migrationAssetFixture("asset-review", "review/AGENTS.md");
+    const sourceAsset = {
+      ...migrationAssetFixture("asset-source", "source/AGENTS.md"),
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
     };
-    const targetAsset: AppState["assets"][number] = {
-      ...reviewAsset,
-      id: AssetIdSchema.parse("asset-target"),
-      logicalKey: "target/AGENTS.md",
+    const targetAsset = {
+      ...migrationAssetFixture("asset-target", "target/AGENTS.md"),
       contentHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
     };
     const withReview = reducer(initialState, {
@@ -509,50 +540,22 @@ describe("renderer project selection state", () => {
     });
     const withMigrationAssets = reducer(withMigrationSource, {
       type: "migrationSourceAssets",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "AGENTS.md")],
     });
     const withAssets = reducer(withMigrationAssets, {
       type: "assets",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "AGENTS.md")],
     });
     const withPreview = reducer(withAssets, {
       type: "preview",
-      preview: {
+      preview: migrationPreviewFixture({
         planId: DeploymentPlanIdSchema.parse("deployment-plan:status-test"),
         planHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
         sourceHashes: Object.fromEntries([
           [AssetIdSchema.parse("asset-1"), ContentHashSchema.parse(`sha256:${"a".repeat(64)}`)],
         ]),
-        targetHashes: {},
         compatibility: "full",
-        fieldLosses: [],
-        changes: [],
-        requiredConfirmations: [],
-        warnings: [],
-        expiresAt: "2026-06-28T08:10:00.000Z",
-      },
+      }),
     });
     const withDetail = reducer(withPreview, {
       type: "assetDetail",
@@ -570,6 +573,7 @@ describe("renderer project selection state", () => {
           pathDisplay: "/home/user/workspace/AGENTS.md",
           contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
           observedAt: "2026-06-28T08:00:00.000Z",
+          sourceSummary: fileSourceSummary("AGENTS.md"),
           files: [
             {
               pathDisplay: "/home/user/workspace/AGENTS.md",
@@ -773,29 +777,12 @@ describe("renderer project selection state", () => {
       ...initialState,
       projectRoot: "/workspace",
       scanStatus: "complete",
-      assets: [
-        {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "rule:AGENTS",
-          contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 1, error: 0 },
-        },
-      ],
+      assets: [migrationAssetFixture("asset-1", "rule:AGENTS")],
       migrationSourceAssets: [
-        {
-          id: AssetIdSchema.parse("asset-2"),
-          toolKey: "cursor",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "rule:.cursor/rules/local.mdc",
+        migrationAssetFixture("asset-2", "rule:.cursor/rules/local.mdc", {
           contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
-        },
+          toolKey: "cursor",
+        }),
       ],
       diagnostics: [
         {
@@ -808,20 +795,15 @@ describe("renderer project selection state", () => {
         },
       ],
       diagnosticCounts: { info: 0, warning: 1, error: 0 },
-      preview: {
+      preview: migrationPreviewFixture({
         planId: DeploymentPlanIdSchema.parse("deployment-plan:clear-cache"),
         planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
         sourceHashes: {
           [AssetIdSchema.parse("asset-1")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
         },
-        targetHashes: {},
         compatibility: "full",
-        fieldLosses: [],
-        changes: [],
-        requiredConfirmations: [],
-        warnings: [],
         expiresAt: "2026-07-04T08:10:00.000Z",
-      },
+      }),
       deploymentConfirmed: true,
       deploymentConfirmationGrants: ["overwrite"],
     };
@@ -1177,12 +1159,10 @@ describe("renderer project selection state", () => {
   });
 
   it("requires explicit deployment confirmation for each fresh preview", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
-      requiredConfirmations: [],
       changes: [
         {
           operation: "create" as const,
@@ -1193,11 +1173,8 @@ describe("renderer project selection state", () => {
           diff: "+ Use tests.",
         },
       ],
-      warnings: [],
-      sourceHashes: {},
-      targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const confirmed = reducer(initialState, { type: "deploymentConfirmation", confirmed: true });
     const withPreview = reducer(confirmed, { type: "preview", preview });
 
@@ -1209,11 +1186,10 @@ describe("renderer project selection state", () => {
   });
 
   it("retires a deployment preview after a successful deployment task completes", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
       requiredConfirmations: ["overwrite"] as const,
       changes: [
         {
@@ -1225,11 +1201,8 @@ describe("renderer project selection state", () => {
           diff: "+ Use tests.",
         },
       ],
-      warnings: [],
-      sourceHashes: {},
-      targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const withPreview = reducer(initialState, { type: "preview", preview });
     const confirmed = reducer(withPreview, { type: "deploymentConfirmation", confirmed: true });
     const granted = reducer(confirmed, {
@@ -1267,11 +1240,10 @@ describe("renderer project selection state", () => {
   });
 
   it("requires every migration confirmation grant before deployment", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "partial" as const,
-      fieldLosses: [],
       requiredConfirmations: ["overwrite", "partial_conversion"] as const,
       changes: [
         {
@@ -1283,11 +1255,8 @@ describe("renderer project selection state", () => {
           diff: "+ Use tests.",
         },
       ],
-      warnings: [],
-      sourceHashes: {},
-      targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const withPreview = reducer(initialState, { type: "preview", preview });
     const acknowledged = reducer(withPreview, {
       type: "deploymentConfirmation",
@@ -1325,12 +1294,10 @@ describe("renderer project selection state", () => {
       "Create a migration preview before migrating.",
     ]);
 
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
-      requiredConfirmations: [],
       changes: [
         {
           operation: "create" as const,
@@ -1343,23 +1310,16 @@ describe("renderer project selection state", () => {
       ],
       warnings: [],
       sourceHashes: {
-        "asset-1": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        [AssetIdSchema.parse("asset-1")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
       },
-      targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const withAssets = reducer(initialState, {
       type: "migrationSourceAssets",
       assets: [
         {
-          id: AssetIdSchema.parse("asset-1"),
-          toolKey: "codex",
-          resourceType: "rule",
-          scopeKind: "project",
-          logicalKey: "AGENTS.md",
+          ...migrationAssetFixture("asset-1", "AGENTS.md"),
           contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
-          status: "enabled",
-          diagnosticCounts: { info: 0, warning: 0, error: 0 },
         },
       ],
     });
@@ -1376,12 +1336,10 @@ describe("renderer project selection state", () => {
   });
 
   it("blocks deployment after a migration preview expires", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
-      requiredConfirmations: [],
       changes: [
         {
           operation: "create" as const,
@@ -1392,11 +1350,8 @@ describe("renderer project selection state", () => {
           diff: "+ Use tests.",
         },
       ],
-      warnings: [],
-      sourceHashes: {},
-      targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const confirmed = reducer(reducer(initialState, { type: "preview", preview }), {
       type: "deploymentConfirmation",
       confirmed: true,
@@ -1426,12 +1381,10 @@ describe("renderer project selection state", () => {
   });
 
   it("summarizes migration preview hashes in stable source and target order", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
-      requiredConfirmations: [],
       changes: [
         {
           operation: "replace" as const,
@@ -1442,10 +1395,9 @@ describe("renderer project selection state", () => {
           diff: "+ Use tests.",
         },
       ],
-      warnings: [],
       sourceHashes: {
-        "asset-z": ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
-        "asset-a": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        [AssetIdSchema.parse("asset-z")]: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+        [AssetIdSchema.parse("asset-a")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
       },
       targetHashes: {
         "/workspace/.cursor/rules/generated.mdc": ContentHashSchema.parse(
@@ -1454,7 +1406,7 @@ describe("renderer project selection state", () => {
         "/workspace/.cursor/rules/new.mdc": null,
       },
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
 
     expect(migrationHashRowsForPreview(preview)).toEqual([
       {
@@ -1481,7 +1433,7 @@ describe("renderer project selection state", () => {
   });
 
   it("summarizes active migration differences from the preview plan", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "partial" as const,
@@ -1524,8 +1476,8 @@ describe("renderer project selection state", () => {
         },
       ],
       sourceHashes: {
-        "asset-create": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-        "asset-replace": ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        [AssetIdSchema.parse("asset-create")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        [AssetIdSchema.parse("asset-replace")]: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
       },
       targetHashes: {
         "/workspace/.cursor/rules/new.mdc": null,
@@ -1534,7 +1486,7 @@ describe("renderer project selection state", () => {
         ),
       },
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const state = reducer(initialState, { type: "preview", preview });
 
     expect(migrationDifferenceSummaryForState(state)).toEqual({
@@ -1655,12 +1607,10 @@ describe("renderer project selection state", () => {
   });
 
   it("detects source asset drift against the current indexed asset hashes", () => {
-    const preview = {
+    const preview = migrationPreviewFixture({
       planId: DeploymentPlanIdSchema.parse("deployment-plan-1"),
       planHash: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       compatibility: "full" as const,
-      fieldLosses: [],
-      requiredConfirmations: [],
       changes: [
         {
           operation: "create" as const,
@@ -1673,36 +1623,21 @@ describe("renderer project selection state", () => {
       ],
       warnings: [],
       sourceHashes: {
-        "asset-current": ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-        "asset-changed": ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
-        "asset-missing": ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
+        [AssetIdSchema.parse("asset-current")]: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
+        [AssetIdSchema.parse("asset-changed")]: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        [AssetIdSchema.parse("asset-missing")]: ContentHashSchema.parse(`sha256:${"c".repeat(64)}`),
       },
       targetHashes: {},
       expiresAt: "2026-06-28T08:10:00.000Z",
-    };
+    });
     const state = reducer(
       reducer(initialState, {
         type: "migrationSourceAssets",
         assets: [
+          migrationAssetFixture("asset-current", "AGENTS.md"),
           {
-            id: AssetIdSchema.parse("asset-current"),
-            toolKey: "codex",
-            resourceType: "rule",
-            scopeKind: "project",
-            logicalKey: "AGENTS.md",
-            contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-            status: "enabled",
-            diagnosticCounts: { info: 0, warning: 0, error: 0 },
-          },
-          {
-            id: AssetIdSchema.parse("asset-changed"),
-            toolKey: "codex",
-            resourceType: "rule",
-            scopeKind: "project",
-            logicalKey: "STALE.md",
+            ...migrationAssetFixture("asset-changed", "STALE.md"),
             contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
-            status: "enabled",
-            diagnosticCounts: { info: 0, warning: 0, error: 0 },
           },
         ],
       }),
@@ -1748,6 +1683,7 @@ function migrationAssetFixture(
     resourceType: overrides.resourceType ?? "rule",
     scopeKind: overrides.scopeKind ?? "project",
     logicalKey,
+    sourceSummary: fileSourceSummary(logicalKey.split("/").at(-1) ?? logicalKey),
     contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     status: overrides.status ?? "enabled",
     diagnosticCounts: { info: 0, warning: 0, error: 0 },

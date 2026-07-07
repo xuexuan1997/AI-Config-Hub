@@ -5,6 +5,7 @@ import type {
   DeploymentPlanId,
   DeploymentRecordId,
   DiagnosticSeverity,
+  DiagnosticId,
   PaginationCursor,
   ProjectId,
   ResourceKind,
@@ -16,9 +17,12 @@ import type {
   IsoDateTime,
 } from "@ai-config-hub/shared";
 
-import type { Asset } from "../domain/asset.js";
 import type { AssetDisablementMethod, AssetStatus } from "../domain/asset.js";
-import type { DeploymentPlan, DeploymentRecord } from "../domain/deployment.js";
+import type {
+  DeploymentOperationType,
+  DeploymentPlan,
+  DeploymentRecord,
+} from "../domain/deployment.js";
 import type { Diagnostic } from "../domain/diagnostic.js";
 import type { EffectiveConfig } from "../domain/effective-config.js";
 import type { ScanRunStatus, ScanRunSummary, TaskProgress } from "../domain/task.js";
@@ -83,6 +87,94 @@ export interface AssetsListRequest {
 
 export interface AssetGetRequest {
   readonly assetId: AssetId;
+}
+
+export type AssetSourceSummary =
+  | {
+      readonly kind: "file";
+      readonly fileName: string;
+      readonly mediaType: string;
+      readonly isText: boolean;
+    }
+  | {
+      readonly kind: "package";
+      readonly rootName: string;
+      readonly fileCount: number;
+      readonly folderCount: number;
+      readonly textCount: number;
+      readonly binaryCount: number;
+      readonly roleCounts: {
+        readonly primary: number;
+        readonly metadata: number;
+        readonly support: number;
+      };
+    };
+
+export interface AssetListItemResult {
+  readonly id: AssetId;
+  readonly toolKey: ToolId;
+  readonly resourceType: ResourceKind;
+  readonly scopeKind: "user" | "project" | "global";
+  readonly logicalKey: string;
+  readonly sourceDirectory?: string;
+  readonly sourceSummary: AssetSourceSummary;
+  readonly loadState?: "loaded" | "covered" | "disabled";
+  readonly coveredByAssetId?: AssetId;
+  readonly coveredByLogicalKey?: string;
+  readonly contentHash: ContentHash;
+  readonly status: AssetStatus;
+  readonly diagnosticCounts: {
+    readonly info: number;
+    readonly warning: number;
+    readonly error: number;
+  };
+}
+
+export interface AssetsListResult {
+  readonly items: readonly AssetListItemResult[];
+  readonly nextCursor: PaginationCursor | null;
+  readonly snapshotRevision: string;
+  readonly stale: boolean;
+}
+
+export interface AssetSourceFileViewResult {
+  readonly pathDisplay: string;
+  readonly relativePath: string;
+  readonly role: "primary" | "metadata" | "support";
+  readonly mediaType: string;
+  readonly isText: boolean;
+  readonly contentHash: ContentHash;
+}
+
+export interface AssetGetResult {
+  readonly asset: {
+    readonly id: AssetId;
+    readonly toolKey: ToolId;
+    readonly resourceType: ResourceKind;
+    readonly scopeId: ScopeId;
+    readonly logicalKey: string;
+    readonly status: AssetStatus;
+    readonly disablementOptions: readonly {
+      readonly method: AssetDisablementMethod;
+      readonly label: string;
+      readonly description: string;
+      readonly recommended: boolean;
+    }[];
+    readonly normalized?: unknown;
+    readonly references?: readonly string[];
+    readonly diagnosticIds?: readonly DiagnosticId[];
+  };
+  readonly source: {
+    readonly pathDisplay: string;
+    readonly contentHash: ContentHash;
+    readonly observedAt: IsoDateTime;
+    readonly sourceSummary: AssetSourceSummary;
+    readonly files: readonly AssetSourceFileViewResult[];
+  };
+  readonly redactions: readonly {
+    readonly pointer: string;
+    readonly reason: "secret" | "path" | "policy";
+  }[];
 }
 
 export interface AssetOpenSourceRequest {
@@ -173,6 +265,84 @@ export interface MigrationPreviewRequest {
   readonly targetRoot: AbsolutePath;
 }
 
+export interface MigrationFieldLossResult {
+  readonly assetId: AssetId;
+  readonly droppedFields: readonly string[];
+  readonly retainedFields: readonly string[];
+  readonly transformedFields: readonly {
+    readonly sourceField: string;
+    readonly targetField: string;
+    readonly reason: string;
+  }[];
+  readonly warnings: readonly string[];
+}
+
+export interface MigrationChangeResult {
+  readonly groupId: string;
+  readonly operation: DeploymentPlan["operations"][number]["kind"];
+  readonly deploymentType: DeploymentOperationType;
+  readonly pathDisplay: AbsolutePath;
+  readonly sourcePathDisplay?: AbsolutePath;
+  readonly beforeHash: ContentHash | null;
+  readonly afterHash: ContentHash | null;
+  readonly diff: string;
+}
+
+export interface MigrationChangeGroupResult {
+  readonly groupId: string;
+  readonly operation: "create" | "replace" | "delete" | "mixed";
+  readonly resourceType?: ResourceKind;
+  readonly sourceAssetId?: AssetId;
+  readonly targetRootPathDisplay: AbsolutePath;
+  readonly targetRootRelativePath: string;
+  readonly operationCount: number;
+  readonly createCount: number;
+  readonly replaceCount: number;
+  readonly deleteCount: number;
+  readonly generatedFileCount: number;
+  readonly copyCount: number;
+  readonly symlinkCount: number;
+  readonly changedTargetCount: number;
+  readonly targetPathSample: readonly string[];
+  readonly packageOutputCount?: number;
+  readonly packagePathSample?: readonly string[];
+  readonly visibleDetailCount: number;
+  readonly detailsTruncated: boolean;
+}
+
+export interface MigrationDifferenceSummaryResult {
+  readonly addedToTarget: number;
+  readonly overwrittenInTarget: number;
+  readonly unchangedPlannedTargetOutputs: number;
+  readonly conflictsOrWarnings: number;
+  readonly changedGroupCount: number;
+  readonly changedFileCount: number;
+}
+
+export interface MigrationPreviewResult {
+  readonly planId: DeploymentPlanId;
+  readonly planHash: ContentHash;
+  readonly compatibility: "full" | "partial";
+  readonly fieldLosses: readonly MigrationFieldLossResult[];
+  readonly changeGroups: readonly MigrationChangeGroupResult[];
+  readonly differenceSummary: MigrationDifferenceSummaryResult;
+  readonly changes: readonly MigrationChangeResult[];
+  readonly changesTruncated: boolean;
+  readonly changeDetailLimit: number;
+  readonly requiredConfirmations: DeploymentPlan["requiredConfirmations"];
+  readonly warnings: readonly {
+    readonly id: DiagnosticId;
+    readonly code: string;
+    readonly severity: "warning";
+    readonly message: string;
+    readonly suggestedAction: string;
+    readonly blocking: false;
+  }[];
+  readonly sourceHashes: Readonly<Record<AssetId, ContentHash>>;
+  readonly targetHashes: Readonly<Record<string, ContentHash | null>>;
+  readonly expiresAt: IsoDateTime;
+}
+
 export interface DeploymentExecuteRequest {
   readonly deploymentPlanId: DeploymentPlanId;
   readonly confirmedPlanHash: ContentHash;
@@ -207,8 +377,11 @@ export interface HistoryPlanResult {
 }
 
 export interface HistoryChangeResult {
+  readonly groupId: string;
   readonly operation: DeploymentPlan["operations"][number]["kind"];
+  readonly deploymentType: DeploymentOperationType;
   readonly pathDisplay: AbsolutePath;
+  readonly sourcePathDisplay?: AbsolutePath;
   readonly beforeHash: ContentHash | null;
   readonly afterHash: ContentHash | null;
   readonly diff: string;
@@ -217,7 +390,11 @@ export interface HistoryChangeResult {
 export interface HistoryGetResult {
   readonly entry: HistoryEntryResult;
   readonly plan: HistoryPlanResult;
+  readonly changeGroups: readonly MigrationChangeGroupResult[];
+  readonly differenceSummary: MigrationDifferenceSummaryResult;
   readonly changes: readonly HistoryChangeResult[];
+  readonly changesTruncated: boolean;
+  readonly changeDetailLimit: number;
 }
 
 export interface SettingsUpdateRequest {
@@ -260,8 +437,8 @@ export interface UseCaseContractMap {
   readonly "scan.start": { readonly input: StartScanRequest; readonly output: StartScanResult };
   readonly "scan.status": { readonly input: ScanStatusRequest; readonly output: ScanStatusResult };
   readonly "scan.cancel": { readonly input: ScanStatusRequest; readonly output: ScanCancelResult };
-  readonly "assets.list": { readonly input: AssetsListRequest; readonly output: Page<Asset> };
-  readonly "assets.get": { readonly input: AssetGetRequest; readonly output: Asset };
+  readonly "assets.list": { readonly input: AssetsListRequest; readonly output: AssetsListResult };
+  readonly "assets.get": { readonly input: AssetGetRequest; readonly output: AssetGetResult };
   readonly "assets.openSource": {
     readonly input: AssetOpenSourceRequest;
     readonly output: AssetOpenSourceResult;
@@ -288,7 +465,7 @@ export interface UseCaseContractMap {
   };
   readonly "migration.preview": {
     readonly input: MigrationPreviewRequest;
-    readonly output: DeploymentPlan;
+    readonly output: MigrationPreviewResult;
   };
   readonly "deployment.execute": {
     readonly input: DeploymentExecuteRequest;

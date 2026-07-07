@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
+import type * as ElectronUpdater from "electron-updater";
 
 const require = createRequire(import.meta.url);
-const electronUpdater = require("electron-updater") as typeof import("electron-updater");
+const electronUpdater = require("electron-updater") as typeof ElectronUpdater;
 
 export type UpdatePlatform = NodeJS.Platform;
 type UpdateEventName =

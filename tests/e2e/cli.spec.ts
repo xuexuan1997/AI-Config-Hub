@@ -27,7 +27,23 @@ interface MigrationPreviewData {
   readonly planId: string;
   readonly planHash: string;
   readonly requiredConfirmations: readonly string[];
-  readonly changes: readonly { readonly operation: string; readonly pathDisplay: string }[];
+  readonly changeGroups: readonly {
+    readonly groupId: string;
+    readonly operation: string;
+    readonly targetRootRelativePath: string;
+    readonly changedTargetCount: number;
+  }[];
+  readonly differenceSummary: {
+    readonly changedGroupCount: number;
+    readonly changedFileCount: number;
+  };
+  readonly changes: readonly {
+    readonly groupId: string;
+    readonly operation: string;
+    readonly pathDisplay: string;
+  }[];
+  readonly changesTruncated: boolean;
+  readonly changeDetailLimit: number;
 }
 
 interface DeploymentData {
@@ -136,8 +152,23 @@ test.describe("CLI end to end", () => {
       const plan = readMigrationPreviewData(preview.json);
       expect(preview.exitCode).toBe(0);
       expect(plan.requiredConfirmations).toContain("overwrite");
+      expect(plan.changeGroups).toEqual([
+        expect.objectContaining({
+          groupId: expect.any(String),
+          operation: "replace",
+          targetRootRelativePath: ".cursor/rules/agents.mdc",
+          changedTargetCount: 1,
+        }),
+      ]);
+      expect(plan.differenceSummary).toMatchObject({
+        changedGroupCount: 1,
+        changedFileCount: 1,
+      });
+      expect(plan.changesTruncated).toBe(false);
+      expect(plan.changeDetailLimit).toBe(50);
       expect(plan.changes).toEqual([
         expect.objectContaining({
+          groupId: plan.changeGroups[0]?.groupId,
           operation: "replace",
           pathDisplay: canonicalCursorRulePath,
         }),
@@ -287,13 +318,41 @@ function readMigrationPreviewData(response: CliJsonResponse): MigrationPreviewDa
   const planId = data["planId"];
   const planHash = data["planHash"];
   const requiredConfirmations = data["requiredConfirmations"];
+  const changeGroups = data["changeGroups"];
+  const differenceSummary = data["differenceSummary"];
   const changes = data["changes"];
+  const changesTruncated = data["changesTruncated"];
+  const changeDetailLimit = data["changeDetailLimit"];
   if (typeof planId !== "string") throw new TypeError("Preview response must contain planId");
   if (typeof planHash !== "string") throw new TypeError("Preview response must contain planHash");
   if (!Array.isArray(requiredConfirmations)) {
     throw new TypeError("Preview response must contain requiredConfirmations");
   }
+  if (!Array.isArray(changeGroups))
+    throw new TypeError("Preview response must contain changeGroups");
+  if (
+    typeof differenceSummary !== "object" ||
+    differenceSummary === null ||
+    Array.isArray(differenceSummary)
+  ) {
+    throw new TypeError("Preview response must contain differenceSummary");
+  }
   if (!Array.isArray(changes)) throw new TypeError("Preview response must contain changes");
+  if (typeof changesTruncated !== "boolean") {
+    throw new TypeError("Preview response must contain changesTruncated");
+  }
+  if (typeof changeDetailLimit !== "number") {
+    throw new TypeError("Preview response must contain changeDetailLimit");
+  }
+  const summary = differenceSummary as Record<string, unknown>;
+  const changedGroupCount = summary["changedGroupCount"];
+  const changedFileCount = summary["changedFileCount"];
+  if (typeof changedGroupCount !== "number") {
+    throw new TypeError("Preview differenceSummary needs changedGroupCount");
+  }
+  if (typeof changedFileCount !== "number") {
+    throw new TypeError("Preview differenceSummary needs changedFileCount");
+  }
   return {
     planId,
     planHash,
@@ -303,17 +362,41 @@ function readMigrationPreviewData(response: CliJsonResponse): MigrationPreviewDa
       }
       return confirmation;
     }),
+    changeGroups: changeGroups.map((group) => {
+      if (typeof group !== "object" || group === null || Array.isArray(group)) {
+        throw new TypeError("Preview change group must be an object");
+      }
+      const record = group as Record<string, unknown>;
+      const groupId = record["groupId"];
+      const operation = record["operation"];
+      const targetRootRelativePath = record["targetRootRelativePath"];
+      const changedTargetCount = record["changedTargetCount"];
+      if (typeof groupId !== "string") throw new TypeError("Preview group needs groupId");
+      if (typeof operation !== "string") throw new TypeError("Preview group needs operation");
+      if (typeof targetRootRelativePath !== "string") {
+        throw new TypeError("Preview group needs targetRootRelativePath");
+      }
+      if (typeof changedTargetCount !== "number") {
+        throw new TypeError("Preview group needs changedTargetCount");
+      }
+      return { groupId, operation, targetRootRelativePath, changedTargetCount };
+    }),
+    differenceSummary: { changedGroupCount, changedFileCount },
     changes: changes.map((change) => {
       if (typeof change !== "object" || change === null || Array.isArray(change)) {
         throw new TypeError("Preview change must be an object");
       }
       const record = change as Record<string, unknown>;
+      const groupId = record["groupId"];
       const operation = record["operation"];
       const pathDisplay = record["pathDisplay"];
+      if (typeof groupId !== "string") throw new TypeError("Preview change needs groupId");
       if (typeof operation !== "string") throw new TypeError("Preview change needs operation");
       if (typeof pathDisplay !== "string") throw new TypeError("Preview change needs pathDisplay");
-      return { operation, pathDisplay };
+      return { groupId, operation, pathDisplay };
     }),
+    changesTruncated,
+    changeDetailLimit,
   };
 }
 

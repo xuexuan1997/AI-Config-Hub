@@ -828,9 +828,67 @@ function renderMigrationPreview(data: Record<string, unknown>): string {
     `Plan hash: ${planHash}`,
   ];
 
-  lines.push("Source hashes:");
+  const differenceSummary =
+    typeof data.differenceSummary === "object" && data.differenceSummary !== null
+      ? (data.differenceSummary as Record<string, unknown>)
+      : undefined;
+  if (differenceSummary !== undefined) {
+    lines.push(
+      `Groups: ${numberValue(differenceSummary.changedGroupCount)}`,
+      `Files: ${numberValue(differenceSummary.changedFileCount)}`,
+      `Added: ${numberValue(differenceSummary.addedToTarget)}`,
+      `Overwritten: ${numberValue(differenceSummary.overwrittenInTarget)}`,
+      `Unchanged planned outputs: ${numberValue(differenceSummary.unchangedPlannedTargetOutputs)}`,
+      `Conflicts or warnings: ${numberValue(differenceSummary.conflictsOrWarnings)}`,
+    );
+  }
+
+  const changes = arrayValue(data.changes).filter(
+    (change): change is Record<string, unknown> => typeof change === "object" && change !== null,
+  );
+  for (const group of arrayValue(data.changeGroups)) {
+    if (typeof group !== "object" || group === null) continue;
+    const row = group as Record<string, unknown>;
+    const groupId = stringValue(row.groupId);
+    lines.push(
+      `${stringValue(row.operation)} ${stringValue(row.targetRootRelativePath)} (${formatFileCount(
+        numberValue(row.changedTargetCount),
+      )})`,
+    );
+    for (const change of changes.filter((item) => stringValue(item.groupId) === groupId)) {
+      lines.push(
+        `  ${stringValue(change.operation)} ${stringValue(change.pathDisplay)}`,
+        `    before: ${nullableHash(change.beforeHash)}`,
+        `    after: ${nullableHash(change.afterHash)}`,
+      );
+      const diff = stringValue(change.diff);
+      if (diff.length > 0) lines.push(diff);
+    }
+    if (row.detailsTruncated === true) {
+      lines.push(`  details truncated to ${numberValue(row.visibleDetailCount)} file(s)`);
+    }
+  }
+  if (data.changesTruncated === true) {
+    lines.push(`File details truncated to ${numberValue(data.changeDetailLimit)} item(s)`);
+  }
+
+  if (arrayValue(data.changeGroups).length === 0) {
+    for (const change of arrayValue(data.changes)) {
+      if (typeof change !== "object" || change === null) continue;
+      const row = change as Record<string, unknown>;
+      lines.push(
+        `${stringValue(row.operation)} ${stringValue(row.pathDisplay)}`,
+        `  before: ${nullableHash(row.beforeHash)}`,
+        `  after: ${nullableHash(row.afterHash)}`,
+      );
+      const diff = stringValue(row.diff);
+      if (diff.length > 0) lines.push(diff);
+    }
+  }
+
+  lines.push(`Source hashes (${hashRowCount(data.sourceHashes)}):`);
   appendHashRows(lines, data.sourceHashes);
-  lines.push("Target hashes:");
+  lines.push(`Target hashes (${hashRowCount(data.targetHashes)}):`);
   appendHashRows(lines, data.targetHashes);
 
   for (const loss of arrayValue(data.fieldLosses)) {
@@ -853,18 +911,6 @@ function renderMigrationPreview(data: Record<string, unknown>): string {
     for (const warning of arrayValue(row.warnings)) {
       lines.push(`  warning: ${String(warning)}`);
     }
-  }
-
-  for (const change of arrayValue(data.changes)) {
-    if (typeof change !== "object" || change === null) continue;
-    const row = change as Record<string, unknown>;
-    lines.push(
-      `${stringValue(row.operation)} ${stringValue(row.pathDisplay)}`,
-      `  before: ${nullableHash(row.beforeHash)}`,
-      `  after: ${nullableHash(row.afterHash)}`,
-    );
-    const diff = stringValue(row.diff);
-    if (diff.length > 0) lines.push(diff);
   }
 
   return `${lines.join("\n")}\n`;
@@ -973,15 +1019,34 @@ function renderEffective(data: Record<string, unknown>): string {
 function renderHistoryDetail(data: Record<string, unknown>): string {
   const entry = data.entry as Record<string, unknown>;
   const changes = arrayValue(data.changes);
-  return [
+  const differenceSummary =
+    typeof data.differenceSummary === "object" && data.differenceSummary !== null
+      ? (data.differenceSummary as Record<string, unknown>)
+      : undefined;
+  const lines = [
     `${stringValue(entry.kind)} ${stringValue(entry.id)} ${stringValue(entry.status)}`,
-    `Changes: ${changes.length}`,
-  ]
-    .join("\n")
-    .concat("\n");
+    differenceSummary === undefined
+      ? `Changes: ${changes.length}`
+      : `Changes: ${numberValue(differenceSummary.changedGroupCount)} group(s), ${numberValue(
+          differenceSummary.changedFileCount,
+        )} file(s)`,
+  ];
+  for (const group of arrayValue(data.changeGroups)) {
+    if (typeof group !== "object" || group === null) continue;
+    const row = group as Record<string, unknown>;
+    lines.push(
+      `${stringValue(row.operation)} ${stringValue(row.targetRootRelativePath)} (${formatFileCount(
+        numberValue(row.changedTargetCount),
+      )})`,
+    );
+  }
+  if (data.changesTruncated === true) {
+    lines.push(`File details truncated to ${numberValue(data.changeDetailLimit)} item(s)`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
-function appendHashRows(lines: string[], hashes: unknown): void {
+function appendHashRows(lines: string[], hashes: unknown, limit = 20): void {
   if (typeof hashes !== "object" || hashes === null || Array.isArray(hashes)) {
     lines.push("  none");
     return;
@@ -993,9 +1058,19 @@ function appendHashRows(lines: string[], hashes: unknown): void {
     lines.push("  none");
     return;
   }
-  for (const [label, hash] of entries) {
+  for (const [label, hash] of entries.slice(0, limit)) {
     lines.push(`  ${label}: ${nullableHash(hash)}`);
   }
+  if (entries.length > limit) lines.push(`  ... ${entries.length - limit} more`);
+}
+
+function hashRowCount(hashes: unknown): number {
+  if (typeof hashes !== "object" || hashes === null || Array.isArray(hashes)) return 0;
+  return Object.keys(hashes).length;
+}
+
+function formatFileCount(count: number): string {
+  return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
 function renderHistory(items: readonly unknown[]): string {

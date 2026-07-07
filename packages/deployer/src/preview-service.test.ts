@@ -1006,6 +1006,111 @@ describe("DeploymentPreviewService", () => {
     expect(result.record.resultingHashes).toEqual({});
   });
 
+  it("groups multi-output Skill previews by target package folder", async () => {
+    const source = asset("skill-release", {
+      kind: "skill",
+      data: {
+        name: "release",
+        description: "Release safely",
+        instructions: "Run the release checklist.",
+        references: ["references/checklist.md"],
+        extensions: {},
+      },
+    });
+    const skillText =
+      "---\nname: release\ndescription: Release safely\n---\nRun the release checklist.\n";
+    const supportText = "Checklist.\n";
+    const context = fixture(
+      {
+        "/target/.agents/skills/release/SKILL.md": skillText,
+      },
+      {
+        registry: registryWithConvertedOutputs([
+          generatedOutput({
+            relativePath: ".agents/skills/release/SKILL.md",
+            text: skillText,
+          }),
+          generatedOutput({
+            relativePath: ".agents/skills/release/references/checklist.md",
+            text: supportText,
+          }),
+        ]),
+      },
+    );
+
+    const result = await context.service.preview({
+      ...request([source]),
+      target: { toolId: "codex", resourceKind: "skill", targetSchemaVersion: "1.0.0" },
+    });
+
+    expect(result.plan.operations.map(({ targetPath }) => targetPath)).toEqual([
+      "/target/.agents/skills/release/references/checklist.md",
+    ]);
+    expect(result.plan.operationGroups).toEqual([
+      expect.objectContaining({
+        groupId: "group:skill-release:skill:.agents/skills/release",
+        sourceAssetId: "skill-release",
+        resourceKind: "skill",
+        targetRootPath: "/target/.agents/skills/release",
+        targetRootRelativePath: ".agents/skills/release",
+        operation: "create",
+        operationCount: 1,
+        createCount: 1,
+        replaceCount: 0,
+        deleteCount: 0,
+        generatedFileCount: 1,
+        copyCount: 0,
+        symlinkCount: 0,
+        targetPaths: ["/target/.agents/skills/release/references/checklist.md"],
+        packageOutputCount: 2,
+        packagePathSample: [
+          ".agents/skills/release/SKILL.md",
+          ".agents/skills/release/references/checklist.md",
+        ],
+      }),
+    ]);
+  });
+
+  it("keeps single-output Skill previews as one-file groups", async () => {
+    const source = asset("skill-single", {
+      kind: "skill",
+      data: {
+        name: "single",
+        description: "Single file skill",
+        instructions: "Use one file.",
+        references: [],
+        extensions: {},
+      },
+    });
+    const skillText = "---\nname: single\ndescription: Single file skill\n---\nUse one file.\n";
+    const context = fixture(
+      {},
+      {
+        registry: registryWithConvertedOutputs([
+          generatedOutput({
+            relativePath: ".agents/skills/single/SKILL.md",
+            text: skillText,
+          }),
+        ]),
+      },
+    );
+
+    const result = await context.service.preview({
+      ...request([source]),
+      target: { toolId: "codex", resourceKind: "skill", targetSchemaVersion: "1.0.0" },
+    });
+
+    expect(result.plan.operationGroups).toEqual([
+      expect.objectContaining({
+        targetRootPath: "/target/.agents/skills/single/SKILL.md",
+        targetRootRelativePath: ".agents/skills/single/SKILL.md",
+        operationCount: 1,
+        targetPaths: ["/target/.agents/skills/single/SKILL.md"],
+      }),
+    ]);
+    expect(result.plan.operationGroups?.[0]).not.toHaveProperty("packageOutputCount");
+  });
+
   it("requires partial-conversion confirmation and records adapter warnings", async () => {
     const partial = asset("asset-partial", {
       kind: "rule",
@@ -1022,6 +1127,13 @@ describe("DeploymentPreviewService", () => {
     expect(result.conversions[0]?.level).toBe("partial");
     expect(result.plan.requiredConfirmations).toContain("partial_conversion");
     expect(result.plan.warnings).toEqual(expect.arrayContaining([expect.any(String)]));
+    expect(result.plan.issueSummary).toMatchObject({
+      planWarningCount: 0,
+      conversionWarningCount: result.plan.warnings.length,
+      partialConversionCount: 1,
+    });
+    expect(result.plan.issueSummary?.droppedFieldCount).toBeGreaterThanOrEqual(0);
+    expect(result.plan.issueSummary?.transformedFieldCount).toBeGreaterThanOrEqual(0);
   });
 
   it("rejects redacted MCP values before persistence", async () => {

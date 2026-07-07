@@ -1,6 +1,7 @@
 import {
   AbsolutePathSchema,
   AdapterIdSchema,
+  AssetIdSchema,
   ContentHashSchema,
   ConversionResultIdSchema,
   CorrelationIdSchema,
@@ -15,8 +16,17 @@ import { z } from "zod";
 import { DiagnosticSchema } from "./diagnostic.js";
 import { DeploymentStatusSchema } from "./task.js";
 
+export const CHANGE_DETAIL_LIMIT = 50;
+export const GROUP_TARGET_PATH_SAMPLE_LIMIT = 10;
+export const PACKAGE_PATH_SAMPLE_LIMIT = 10;
+export const HASH_SAMPLE_LIMIT = 20;
+
 export const DeploymentOperationTypeSchema = z.enum(["copy", "symlink", "generated_file"]);
 export type DeploymentOperationType = z.infer<typeof DeploymentOperationTypeSchema>;
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 const operationMetadataShape = {
   deploymentType: DeploymentOperationTypeSchema.default("generated_file"),
@@ -148,6 +158,47 @@ export const DeploymentDiffSchema = z
   .strict()
   .readonly();
 
+const OperationCountSchema = z.number().int().nonnegative();
+
+export const DeploymentOperationGroupSchema = z
+  .object({
+    groupId: z.string().trim().min(1),
+    sourceAssetId: AssetIdSchema.optional(),
+    resourceKind: ResourceKindSchema.optional(),
+    targetRootPath: AbsolutePathSchema,
+    targetRootRelativePath: z.string().trim().min(1).optional(),
+    operation: z.enum(["create", "replace", "delete", "mixed"]),
+    operationCount: z.number().int().min(1),
+    createCount: OperationCountSchema,
+    replaceCount: OperationCountSchema,
+    deleteCount: OperationCountSchema,
+    generatedFileCount: OperationCountSchema,
+    copyCount: OperationCountSchema,
+    symlinkCount: OperationCountSchema,
+    targetPaths: z.array(AbsolutePathSchema).min(1).readonly(),
+    packageOutputCount: OperationCountSchema.optional(),
+    packagePathSample: z
+      .array(z.string().trim().min(1))
+      .max(PACKAGE_PATH_SAMPLE_LIMIT)
+      .readonly()
+      .optional(),
+  })
+  .strict()
+  .readonly();
+export type DeploymentOperationGroup = z.infer<typeof DeploymentOperationGroupSchema>;
+
+export const DeploymentIssueSummarySchema = z
+  .object({
+    planWarningCount: OperationCountSchema,
+    conversionWarningCount: OperationCountSchema,
+    partialConversionCount: OperationCountSchema,
+    droppedFieldCount: OperationCountSchema,
+    transformedFieldCount: OperationCountSchema,
+  })
+  .strict()
+  .readonly();
+export type DeploymentIssueSummary = z.infer<typeof DeploymentIssueSummarySchema>;
+
 const BackupPolicySchema = z
   .object({
     mode: z.literal("required"),
@@ -169,6 +220,7 @@ export const DeploymentPlanSchema = z
     deploymentPlanId: DeploymentPlanIdSchema,
     conversionResultIds: z.array(ConversionResultIdSchema).min(1).readonly(),
     operations: z.array(DeploymentOperationSchema).min(1).readonly(),
+    operationGroups: z.array(DeploymentOperationGroupSchema).readonly().optional(),
     diffs: z.array(DeploymentDiffSchema).readonly(),
     expectedSourceHashes: z.record(z.string().min(1), ContentHashSchema).readonly(),
     expectedTargetHashes: z
@@ -180,6 +232,7 @@ export const DeploymentPlanSchema = z
       .array(z.enum(["partial_conversion", "overwrite", "delete"]))
       .readonly(),
     warnings: z.array(z.string().trim().min(1)).readonly(),
+    issueSummary: DeploymentIssueSummarySchema.optional(),
     planHash: ContentHashSchema,
     adapterId: AdapterIdSchema,
     adapterVersion: SemVerSchema,
@@ -196,9 +249,234 @@ export const DeploymentPlanSchema = z
         path: ["operations"],
       });
     }
+    if (plan.operationGroups !== undefined) {
+      validateOperationGroups(
+        { operations: plan.operations, operationGroups: plan.operationGroups },
+        context,
+      );
+    }
+    if (
+      plan.issueSummary !== undefined &&
+      plan.issueSummary.planWarningCount + plan.issueSummary.conversionWarningCount !==
+        plan.warnings.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Deployment issue summary warning counts must match plan warnings",
+        path: ["issueSummary"],
+      });
+    }
   })
   .readonly();
 export type DeploymentPlan = z.infer<typeof DeploymentPlanSchema>;
+
+export function operationGroupsForPlan(plan: DeploymentPlan): readonly DeploymentOperationGroup[] {
+  if (plan.operationGroups !== undefined) return plan.operationGroups;
+  return plan.operations.map((operation) => fallbackOperationGroup(operation));
+}
+
+function validateOperationGroups(
+  plan: {
+    readonly operations: readonly ParsedDeploymentOperation[];
+    readonly operationGroups: readonly DeploymentOperationGroup[] | undefined;
+  },
+  context: z.RefinementCtx,
+): void {
+  const operationsByTarget = new Map(
+    plan.operations.map((operation) => [operation.targetPath, operation]),
+  );
+  const groupedTargets = new Set<string>();
+
+  for (const [groupIndex, group] of (plan.operationGroups ?? []).entries()) {
+    const groupOperations: ParsedDeploymentOperation[] = [];
+
+    for (const [targetIndex, targetPath] of group.targetPaths.entries()) {
+      const operation = operationsByTarget.get(targetPath);
+      if (operation === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Operation group target paths must reference deployment operations",
+          path: ["operationGroups", groupIndex, "targetPaths", targetIndex],
+        });
+        continue;
+      }
+      if (groupedTargets.has(targetPath)) {
+        context.addIssue({
+          code: "custom",
+          message: "Operation group target paths must be unique across groups",
+          path: ["operationGroups", groupIndex, "targetPaths", targetIndex],
+        });
+      }
+      groupedTargets.add(targetPath);
+      groupOperations.push(operation);
+    }
+
+    validateGroupCounts(group, groupOperations, groupIndex, context);
+    validatePackageContext(group, groupIndex, context);
+  }
+
+  for (const [operationIndex, operation] of plan.operations.entries()) {
+    if (!groupedTargets.has(operation.targetPath)) {
+      context.addIssue({
+        code: "custom",
+        message: "Every deployment operation must appear in exactly one operation group",
+        path: ["operations", operationIndex, "targetPath"],
+      });
+    }
+  }
+}
+
+function validateGroupCounts(
+  group: DeploymentOperationGroup,
+  operations: readonly ParsedDeploymentOperation[],
+  groupIndex: number,
+  context: z.RefinementCtx,
+): void {
+  if (group.targetPaths.length !== group.operationCount) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group target path count must equal operationCount",
+      path: ["operationGroups", groupIndex, "operationCount"],
+    });
+  }
+  if (operations.length !== group.targetPaths.length) return;
+
+  const createCount = operations.filter(({ kind }) => kind === "create").length;
+  const replaceCount = operations.filter(({ kind }) => kind === "replace").length;
+  const deleteCount = operations.filter(({ kind }) => kind === "delete").length;
+  const generatedFileCount = operations.filter(
+    (operation) => deploymentTypeFor(operation) === "generated_file",
+  ).length;
+  const copyCount = operations.filter(
+    (operation) => deploymentTypeFor(operation) === "copy",
+  ).length;
+  const symlinkCount = operations.filter(
+    (operation) => deploymentTypeFor(operation) === "symlink",
+  ).length;
+  const operationKinds = [...new Set(operations.map(({ kind }) => kind))];
+  const expectedOperation = operationKinds.length === 1 ? operationKinds[0] : "mixed";
+
+  assertGroupCount(group.createCount, createCount, groupIndex, "createCount", context);
+  assertGroupCount(group.replaceCount, replaceCount, groupIndex, "replaceCount", context);
+  assertGroupCount(group.deleteCount, deleteCount, groupIndex, "deleteCount", context);
+  assertGroupCount(
+    group.generatedFileCount,
+    generatedFileCount,
+    groupIndex,
+    "generatedFileCount",
+    context,
+  );
+  assertGroupCount(group.copyCount, copyCount, groupIndex, "copyCount", context);
+  assertGroupCount(group.symlinkCount, symlinkCount, groupIndex, "symlinkCount", context);
+
+  if (group.createCount + group.replaceCount + group.deleteCount !== group.operationCount) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group kind counts must equal operationCount",
+      path: ["operationGroups", groupIndex, "operationCount"],
+    });
+  }
+  if (group.generatedFileCount + group.copyCount + group.symlinkCount !== group.operationCount) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group deployment type counts must equal operationCount",
+      path: ["operationGroups", groupIndex, "operationCount"],
+    });
+  }
+  if (group.operation !== expectedOperation) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group operation must match grouped operation kinds",
+      path: ["operationGroups", groupIndex, "operation"],
+    });
+  }
+}
+
+function assertGroupCount(
+  actual: number,
+  expected: number,
+  groupIndex: number,
+  field: keyof Pick<
+    DeploymentOperationGroup,
+    | "createCount"
+    | "replaceCount"
+    | "deleteCount"
+    | "generatedFileCount"
+    | "copyCount"
+    | "symlinkCount"
+  >,
+  context: z.RefinementCtx,
+): void {
+  if (actual === expected) return;
+  context.addIssue({
+    code: "custom",
+    message: "Operation group counts must match grouped operations",
+    path: ["operationGroups", groupIndex, field],
+  });
+}
+
+function validatePackageContext(
+  group: DeploymentOperationGroup,
+  groupIndex: number,
+  context: z.RefinementCtx,
+): void {
+  if (group.packageOutputCount !== undefined && group.packageOutputCount < group.operationCount) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group packageOutputCount must be at least operationCount",
+      path: ["operationGroups", groupIndex, "packageOutputCount"],
+    });
+  }
+
+  if (group.packagePathSample === undefined) return;
+  const uniqueSample = new Set(group.packagePathSample);
+  if (uniqueSample.size !== group.packagePathSample.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group packagePathSample entries must be unique",
+      path: ["operationGroups", groupIndex, "packagePathSample"],
+    });
+  }
+  const sortedSample = [...group.packagePathSample].sort(compareText);
+  if (sortedSample.some((item, index) => item !== group.packagePathSample?.[index])) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group packagePathSample entries must be stable sorted",
+      path: ["operationGroups", groupIndex, "packagePathSample"],
+    });
+  }
+  if (
+    group.packageOutputCount !== undefined &&
+    group.packagePathSample.length > group.packageOutputCount
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Operation group packagePathSample cannot exceed packageOutputCount",
+      path: ["operationGroups", groupIndex, "packagePathSample"],
+    });
+  }
+}
+
+function fallbackOperationGroup(operation: ParsedDeploymentOperation): DeploymentOperationGroup {
+  const deploymentType = deploymentTypeFor(operation);
+  return {
+    groupId: `group:operation:${encodeURIComponent(operation.targetPath)}`,
+    targetRootPath: operation.targetPath,
+    operation: operation.kind,
+    operationCount: 1,
+    createCount: operation.kind === "create" ? 1 : 0,
+    replaceCount: operation.kind === "replace" ? 1 : 0,
+    deleteCount: operation.kind === "delete" ? 1 : 0,
+    generatedFileCount: deploymentType === "generated_file" ? 1 : 0,
+    copyCount: deploymentType === "copy" ? 1 : 0,
+    symlinkCount: deploymentType === "symlink" ? 1 : 0,
+    targetPaths: [operation.targetPath],
+  };
+}
+
+function deploymentTypeFor(operation: ParsedDeploymentOperation): DeploymentOperationType {
+  return operation.deploymentType ?? "generated_file";
+}
 
 export const VerificationResultSchema = z.discriminatedUnion("status", [
   z

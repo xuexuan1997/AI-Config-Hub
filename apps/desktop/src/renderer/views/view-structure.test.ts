@@ -422,7 +422,7 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain("Counts reflect only the inspected asset");
     expect(selectedAssetHtml).toContain('class="asset-detail-diagnostics"');
     expect(selectedAssetHtml).toContain("<h3>Diagnostics</h3>");
-    expect(selectedAssetHtml).toContain("<th>Source directory</th>");
+    expect(selectedAssetHtml).toContain("<th>Source</th>");
     expect(selectedAssetHtml).toContain("<th>Will load</th>");
     expect(selectedAssetHtml).toContain(
       '<td class="asset-source-cell" title="/workspace">/workspace</td>',
@@ -767,17 +767,18 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Target tool");
     expect(html).toContain("Cursor");
     expect(html).toContain("Source asset");
-    expect(html).toContain("Hash change");
+    expect(html).toContain("Preview target folder");
+    expect(html).toContain("Changed files");
     expect(html).toContain('class="target-change-row is-replace"');
-    expect(html).toContain('class="target-change-row is-existing"');
-    expect(html).toContain("2 assets");
+    expect(html).not.toContain('class="target-change-row is-existing"');
+    expect(html).toContain("1 asset");
     expect(html).toContain("Rule");
     expect(html).toContain("<strong>Agent</strong><span>0 differences</span>");
     expect(html).toContain("<strong>Skill</strong><span>0 differences</span>");
     expect(html).toContain("<strong>MCP</strong><span>0 differences</span>");
     expect(html).toContain("1 difference");
     expect(html).toContain("rule:AGENTS");
-    expect(html).toContain("rule:.cursor/rules/local.mdc");
+    expect(html).not.toContain("rule:.cursor/rules/local.mdc");
     expect(html).toContain(".cursor/rules/agents.mdc");
     expect(html).not.toContain("rule:codex-only");
     expect(html).not.toContain("skill:release");
@@ -981,6 +982,7 @@ function assetSummaryFixture(
     scopeKind: overrides.scopeKind ?? "project",
     logicalKey,
     sourceDirectory: overrides.sourceDirectory ?? "/workspace",
+    sourceSummary: fileSourceSummary(logicalKey.split("/").at(-1) ?? logicalKey),
     loadState: overrides.loadState ?? "loaded",
     contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
     status: overrides.status ?? "enabled",
@@ -1016,6 +1018,7 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       pathDisplay: "/workspace/AGENTS.md",
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
       observedAt: "2026-06-28T08:00:00.000Z",
+      sourceSummary: fileSourceSummary("AGENTS.md"),
       files: [
         {
           pathDisplay: "/workspace/AGENTS.md",
@@ -1043,6 +1046,7 @@ function previewFixture(
     requiredConfirmations,
     changes: [
       {
+        groupId: "group-1",
         operation: "replace",
         deploymentType: "generated_file",
         pathDisplay: ".cursor/rules/agents.mdc",
@@ -1051,6 +1055,36 @@ function previewFixture(
         diff: "+ Use local TypeScript conventions.",
       },
     ],
+    changeGroups: [
+      {
+        groupId: "group-1",
+        operation: "replace",
+        resourceType: "rule",
+        targetRootPathDisplay: ".cursor/rules",
+        targetRootRelativePath: ".cursor/rules",
+        operationCount: 1,
+        createCount: 0,
+        replaceCount: 1,
+        deleteCount: 0,
+        generatedFileCount: 1,
+        copyCount: 0,
+        symlinkCount: 0,
+        changedTargetCount: 1,
+        targetPathSample: [".cursor/rules/agents.mdc"],
+        visibleDetailCount: 1,
+        detailsTruncated: false,
+      },
+    ],
+    differenceSummary: {
+      addedToTarget: 0,
+      overwrittenInTarget: 1,
+      unchangedPlannedTargetOutputs: 0,
+      conflictsOrWarnings: 0,
+      changedGroupCount: 1,
+      changedFileCount: 1,
+    },
+    changesTruncated: false,
+    changeDetailLimit: 50,
     warnings: [],
     sourceHashes: {
       [AssetIdSchema.parse(sourceAssetId)]: ContentHashSchema.parse(`sha256:${"1".repeat(64)}`),
@@ -1058,4 +1092,8 @@ function previewFixture(
     targetHashes: {},
     expiresAt: "2026-06-28T08:10:00.000Z",
   };
+}
+
+function fileSourceSummary(fileName: string): AppState["assets"][number]["sourceSummary"] {
+  return { kind: "file", fileName, mediaType: "text/markdown", isText: true };
 }

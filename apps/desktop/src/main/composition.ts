@@ -5,7 +5,13 @@ import { homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
-import { DeploymentStatusSchema, EffectiveConfigSchema } from "@ai-config-hub/core";
+import {
+  CHANGE_DETAIL_LIMIT,
+  GROUP_TARGET_PATH_SAMPLE_LIMIT,
+  DeploymentStatusSchema,
+  EffectiveConfigSchema,
+  operationGroupsForPlan,
+} from "@ai-config-hub/core";
 import type {
   AdapterLogger,
   AdapterEffectiveConfigDraft,
@@ -15,6 +21,7 @@ import type {
   ConversionResult,
   DeploymentFilePort,
   DeploymentOperation,
+  DeploymentOperationGroup,
   DeploymentOperationType,
   DeploymentPlan,
   DeploymentRecord,
@@ -420,6 +427,7 @@ function createServices(
           scopeKind: scopeKinds.get(asset.scopeId) ?? "project",
           logicalKey: asset.locator,
           sourceDirectory: dirname(asset.canonicalSourcePath),
+          sourceSummary: assetSourceSummary(asset),
           ...assetLoadStateFields(loadStates.get(asset.assetId)),
           contentHash: asset.contentHash,
           status: asset.status,
@@ -455,6 +463,7 @@ function createServices(
           pathDisplay: asset.canonicalSourcePath,
           contentHash: asset.contentHash,
           observedAt: asset.discoveredAt,
+          sourceSummary: assetSourceSummary(asset),
           files: sourceFileViews(asset),
         },
         redactions: [],
@@ -1742,6 +1751,48 @@ function sourceFileViews(asset: Asset) {
   }));
 }
 
+function assetSourceSummary(asset: Asset) {
+  const primary = asset.sourceFiles.find(({ role }) => role === "primary") ?? asset.sourceFiles[0];
+  if (primary === undefined) {
+    throw new AppError({
+      code: "VALIDATION_FAILED",
+      message: `Asset has no source files: ${asset.assetId}`,
+      retryable: false,
+      suggestedActions: ["Run a fresh scan before reviewing this asset"],
+    });
+  }
+  if (asset.sourceFiles.length === 1) {
+    return {
+      kind: "file" as const,
+      fileName: basename(primary.path),
+      mediaType: primary.mediaType,
+      isText: primary.isText,
+    };
+  }
+
+  const roleCounts = { primary: 0, metadata: 0, support: 0 };
+  let textCount = 0;
+  const folders = new Set<string>();
+  for (const sourceFile of asset.sourceFiles) {
+    roleCounts[sourceFile.role] += 1;
+    if (sourceFile.isText) textCount += 1;
+    const segments = sourceFile.relativePath.split(/[\\/]/).slice(0, -1);
+    for (let index = 1; index <= segments.length; index += 1) {
+      folders.add(segments.slice(0, index).join("/"));
+    }
+  }
+
+  return {
+    kind: "package" as const,
+    rootName: asset.nativeIdentity.directoryName ?? basename(dirname(primary.path)),
+    fileCount: asset.sourceFiles.length,
+    folderCount: folders.size,
+    textCount,
+    binaryCount: asset.sourceFiles.length - textCount,
+    roleCounts,
+  };
+}
+
 function compareSourceFiles(
   left: Asset["sourceFiles"][number],
   right: Asset["sourceFiles"][number],
@@ -2261,6 +2312,19 @@ function migrationPreviewResponse(
   conversions: readonly ConversionResult[],
   generatedAt: string,
 ) {
+  const groups = operationGroupsForPlan(plan);
+  const operationGroupIds = groupIdsByTargetPath(groups);
+  const boundedOperations = plan.operations.slice(0, CHANGE_DETAIL_LIMIT);
+  const changes = boundedOperations.map((operation) => {
+    const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
+    return plannedChangeView(
+      operation,
+      diff?.unifiedText ?? "",
+      operationGroupIds.get(operation.targetPath) ??
+        `group:operation:${encodeURIComponent(operation.targetPath)}`,
+    );
+  });
+  const visibleDetailsByGroup = visibleDetailCounts(changes);
   return {
     planId: plan.deploymentPlanId,
     planHash: plan.planHash,
@@ -2279,11 +2343,14 @@ function migrationPreviewResponse(
         transformedFields: conversion.transformedFields,
         warnings: conversion.warnings,
       })),
+    changeGroups: groups.map((group) =>
+      migrationChangeGroupView(group, visibleDetailsByGroup.get(group.groupId) ?? 0),
+    ),
+    differenceSummary: migrationDifferenceSummary(plan, groups),
     requiredConfirmations: plan.requiredConfirmations,
-    changes: plan.operations.map((operation) => {
-      const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return plannedChangeView(operation, diff?.unifiedText ?? "");
-    }),
+    changes,
+    changesTruncated: plan.operations.length > CHANGE_DETAIL_LIMIT,
+    changeDetailLimit: CHANGE_DETAIL_LIMIT,
     warnings: plan.warnings.map((warning, index) => ({
       id: DiagnosticIdSchema.parse(`diagnostic:migration:${index}`),
       code: "PARTIAL_CONVERSION",
@@ -2302,6 +2369,88 @@ function migrationPreviewResponse(
     expiresAt:
       plan.expiresAt ??
       IsoDateTimeSchema.parse(new Date(Date.parse(generatedAt) + 10 * 60 * 1_000).toISOString()),
+  };
+}
+
+function groupIdsByTargetPath(
+  groups: readonly DeploymentOperationGroup[],
+): ReadonlyMap<string, string> {
+  return new Map(
+    groups.flatMap((group) => group.targetPaths.map((targetPath) => [targetPath, group.groupId])),
+  );
+}
+
+function visibleDetailCounts(
+  changes: readonly ReturnType<typeof plannedChangeView>[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const change of changes) {
+    if (change.groupId === undefined) continue;
+    counts.set(change.groupId, (counts.get(change.groupId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function migrationChangeGroupView(group: DeploymentOperationGroup, visibleDetailCount: number) {
+  return {
+    groupId: group.groupId,
+    operation: group.operation,
+    ...(group.resourceKind === undefined ? {} : { resourceType: group.resourceKind }),
+    ...(group.sourceAssetId === undefined ? {} : { sourceAssetId: group.sourceAssetId }),
+    targetRootPathDisplay: group.targetRootPath,
+    targetRootRelativePath: group.targetRootRelativePath ?? group.targetRootPath,
+    operationCount: group.operationCount,
+    createCount: group.createCount,
+    replaceCount: group.replaceCount,
+    deleteCount: group.deleteCount,
+    generatedFileCount: group.generatedFileCount,
+    copyCount: group.copyCount,
+    symlinkCount: group.symlinkCount,
+    changedTargetCount: group.targetPaths.length,
+    targetPathSample: targetPathSampleForGroup(group),
+    ...(group.packageOutputCount === undefined
+      ? {}
+      : { packageOutputCount: group.packageOutputCount }),
+    ...(group.packagePathSample === undefined
+      ? {}
+      : { packagePathSample: group.packagePathSample }),
+    visibleDetailCount,
+    detailsTruncated: visibleDetailCount < group.operationCount,
+  };
+}
+
+function targetPathSampleForGroup(group: DeploymentOperationGroup): readonly string[] {
+  return [...group.targetPaths]
+    .sort()
+    .slice(0, GROUP_TARGET_PATH_SAMPLE_LIMIT)
+    .map((targetPath) => displayPathForGroupTarget(group, targetPath));
+}
+
+function displayPathForGroupTarget(group: DeploymentOperationGroup, targetPath: string): string {
+  if (group.targetRootRelativePath === undefined) return targetPath;
+  const suffix = relative(group.targetRootPath, targetPath);
+  return suffix === "" ? group.targetRootRelativePath : join(group.targetRootRelativePath, suffix);
+}
+
+function migrationDifferenceSummary(
+  plan: DeploymentPlan,
+  groups: readonly DeploymentOperationGroup[],
+) {
+  const operationTargets = new Set(plan.operations.map(({ targetPath }) => targetPath));
+  const issueSummary = plan.issueSummary ?? {
+    planWarningCount: plan.warnings.length,
+    conversionWarningCount: 0,
+    partialConversionCount: plan.requiredConfirmations.includes("partial_conversion") ? 1 : 0,
+  };
+  return {
+    addedToTarget: groups.reduce((sum, group) => sum + group.createCount, 0),
+    overwrittenInTarget: groups.reduce((sum, group) => sum + group.replaceCount, 0),
+    unchangedPlannedTargetOutputs: Object.entries(plan.expectedTargetHashes).filter(
+      ([targetPath, hash]) => hash !== "absent" && !operationTargets.has(targetPath),
+    ).length,
+    conflictsOrWarnings: issueSummary.planWarningCount + issueSummary.partialConversionCount,
+    changedGroupCount: groups.length,
+    changedFileCount: plan.operations.length,
   };
 }
 
@@ -2423,6 +2572,19 @@ function historyDetail(
   plan: DeploymentPlan,
   snapshot: SnapshotMetadata | undefined,
 ) {
+  const groups = operationGroupsForPlan(plan);
+  const operationGroupIds = groupIdsByTargetPath(groups);
+  const boundedOperations = plan.operations.slice(0, CHANGE_DETAIL_LIMIT);
+  const changes = boundedOperations.map((operation) => {
+    const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
+    return plannedChangeView(
+      operation,
+      diff?.unifiedText ?? "",
+      operationGroupIds.get(operation.targetPath) ??
+        `group:operation:${encodeURIComponent(operation.targetPath)}`,
+    );
+  });
+  const visibleDetailsByGroup = visibleDetailCounts(changes);
   return {
     entry: historyEntry(record, snapshot),
     plan: {
@@ -2430,16 +2592,20 @@ function historyDetail(
       planHash: plan.planHash,
       requiredConfirmations: plan.requiredConfirmations,
     },
-    changes: plan.operations.map((operation) => {
-      const diff = plan.diffs.find(({ targetPath }) => targetPath === operation.targetPath);
-      return plannedChangeView(operation, diff?.unifiedText ?? "");
-    }),
+    changeGroups: groups.map((group) =>
+      migrationChangeGroupView(group, visibleDetailsByGroup.get(group.groupId) ?? 0),
+    ),
+    differenceSummary: migrationDifferenceSummary(plan, groups),
+    changes,
+    changesTruncated: plan.operations.length > CHANGE_DETAIL_LIMIT,
+    changeDetailLimit: CHANGE_DETAIL_LIMIT,
   };
 }
 
-function plannedChangeView(operation: DeploymentOperation, diff: string) {
+function plannedChangeView(operation: DeploymentOperation, diff: string, groupId?: string) {
   const deploymentType = operation.deploymentType ?? "generated_file";
   return {
+    ...(groupId === undefined ? {} : { groupId }),
     operation: operation.kind,
     deploymentType,
     pathDisplay: operation.targetPath,

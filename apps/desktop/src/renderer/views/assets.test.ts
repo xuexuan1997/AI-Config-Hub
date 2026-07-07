@@ -98,7 +98,7 @@ describe("AssetsView", () => {
     expect(html).toContain(">Claude Code</button>");
     expect(html).toContain(">Codex</button>");
     expect(html).toContain("<th>Logical key</th>");
-    expect(html).toContain("<th>Source directory</th>");
+    expect(html).toContain("<th>Source</th>");
     expect(html).toContain("<th>Will load</th>");
     expect(html).toContain("<th>Diagnostics</th>");
     expect(html).toContain("<th>Detail</th>");
@@ -109,6 +109,30 @@ describe("AssetsView", () => {
     expect(html).toContain("No, covered by mcp:docs");
     expect(html).toContain(">Yes</span>");
     expect(html).not.toContain("/workspace/.codex");
+  });
+
+  it("summarizes multi-file skill rows by package folder", () => {
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture("asset-skill", "skill:release", {
+          resourceType: "skill",
+          sourceDirectory: "/workspace/.codex/skills/release",
+          sourceSummary: sourcePackageSummaryFixture({
+            rootName: "release",
+            fileCount: 2,
+            folderCount: 1,
+            textCount: 1,
+            binaryCount: 1,
+          }),
+        }),
+      ],
+    });
+
+    expect(html).toContain("<th>Source</th>");
+    expect(html).toContain("release/");
+    expect(html).toContain("2 files");
+    expect(html).toContain("1 folder");
+    expect(html).not.toContain("/workspace/.codex/skills/release</td>");
   });
 
   it("labels zero diagnostics as normal in the Simplified Chinese review table", () => {
@@ -184,13 +208,26 @@ describe("AssetsView", () => {
 
   it("renders package member source files for multi-file assets", () => {
     const detail = assetDetailFixture("asset-1", "skill:release");
+    const sourceSummary = sourcePackageSummaryFixture({
+      rootName: "release",
+      fileCount: 2,
+      folderCount: 1,
+      textCount: 1,
+      binaryCount: 1,
+    });
     const html = renderAssets({
-      assets: [assetSummaryFixture("asset-1", "skill:release", { resourceType: "skill" })],
+      assets: [
+        assetSummaryFixture("asset-1", "skill:release", {
+          resourceType: "skill",
+          sourceSummary,
+        }),
+      ],
       assetDetail: {
         ...detail,
         asset: { ...detail.asset, resourceType: "skill" },
         source: {
           ...detail.source,
+          sourceSummary,
           files: [
             {
               pathDisplay: "/workspace/.codex/skills/release/SKILL.md",
@@ -213,7 +250,13 @@ describe("AssetsView", () => {
       },
     });
 
-    expect(html).toContain("Source package folder");
+    expect(html).toContain("Source package summary");
+    expect(html).toContain("Package root</dt><dd>release/</dd>");
+    expect(html).toContain("Files</dt><dd>2 files</dd>");
+    expect(html).toContain("Folders</dt><dd>1 folder</dd>");
+    expect(html).toContain("Text files</dt><dd>1 text file</dd>");
+    expect(html).toContain("Binary files</dt><dd>1 binary file</dd>");
+    expect(html).toContain("<summary>Source package files</summary>");
     expect(html).toContain('class="asset-source-tree"');
     expect(html).toContain("release/");
     expect(html).toContain("SKILL.md");
@@ -597,6 +640,7 @@ function assetSummaryFixture(
       | "loadState"
       | "coveredByLogicalKey"
       | "status"
+      | "sourceSummary"
     >
   > = {},
   diagnosticCounts: AppState["diagnosticCounts"] = { info: 0, warning: 1, error: 0 },
@@ -612,6 +656,14 @@ function assetSummaryFixture(
     ...(overrides.sourceDirectory === undefined
       ? {}
       : { sourceDirectory: overrides.sourceDirectory }),
+    sourceSummary:
+      overrides.sourceSummary ??
+      ({
+        kind: "file",
+        fileName: "AGENTS.md",
+        mediaType: "text/markdown",
+        isText: true,
+      } as const),
     ...(overrides.loadState === undefined ? {} : { loadState: overrides.loadState }),
     ...(overrides.coveredByLogicalKey === undefined
       ? {}
@@ -649,6 +701,12 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       pathDisplay: "/workspace/AGENTS.md",
       contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
       observedAt: "2026-06-28T08:00:00.000Z",
+      sourceSummary: {
+        kind: "file",
+        fileName: "AGENTS.md",
+        mediaType: "text/markdown",
+        isText: true,
+      },
       files: [
         {
           pathDisplay: "/workspace/AGENTS.md",
@@ -661,5 +719,21 @@ function assetDetailFixture(id: string, logicalKey: string): NonNullable<AppStat
       ],
     },
     redactions: [],
+  };
+}
+
+function sourcePackageSummaryFixture(
+  overrides: Partial<
+    Extract<AppState["assets"][number]["sourceSummary"], { kind: "package" }>
+  > = {},
+): Extract<AppState["assets"][number]["sourceSummary"], { kind: "package" }> {
+  return {
+    kind: "package",
+    rootName: overrides.rootName ?? "release",
+    fileCount: overrides.fileCount ?? 2,
+    folderCount: overrides.folderCount ?? 1,
+    textCount: overrides.textCount ?? 2,
+    binaryCount: overrides.binaryCount ?? 0,
+    roleCounts: overrides.roleCounts ?? { primary: 1, metadata: 0, support: 1 },
   };
 }
