@@ -6,7 +6,11 @@ import { createDesktopCommandServices, type DesktopCommandServiceRuntime } from 
 import { createProjectDialogPort } from "./dialog.js";
 import { registerIpcHandlers } from "./ipc.js";
 import { createElectronUpdaterPort, createUpdateService, type UpdateService } from "./updates.js";
-import { createSecureWindowOptions } from "./window-options.js";
+import {
+  applyDesktopDockIcon,
+  createSecureWindowOptions,
+  resolveDesktopWindowIconPath,
+} from "./window-options.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | undefined;
@@ -18,7 +22,9 @@ let stopAutomaticUpdateChecks: (() => void) | undefined;
 async function createMainWindow(): Promise<void> {
   const preloadPath = resolve(currentDir, "../preload/preload.cjs");
   const rendererPath = resolve(currentDir, "../../renderer/index.html");
-  const window = new BrowserWindow(createSecureWindowOptions(preloadPath));
+  const iconPath = resolveDesktopWindowIconPath(currentDir);
+  applyDesktopDockIcon({ dock: app.dock, iconPath, platform: process.platform });
+  const window = new BrowserWindow(createSecureWindowOptions(preloadPath, iconPath));
   mainWindow = window;
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
