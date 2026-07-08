@@ -60,8 +60,10 @@ export function MigrationView(props: {
   const requiredConfirmations = preview?.requiredConfirmations ?? [];
   const grantedConfirmations = new Set(props.state.deploymentConfirmationGrants);
   const stateActiveTask = props.state.activeTask;
+  const hasSourceProject = (props.state.migration.sourceProjectRoot?.trim().length ?? 0) > 0;
   const activeTask = stateActiveTask?.taskKind === "deployment" ? stateActiveTask : undefined;
-  const scanTask = stateActiveTask?.taskKind === "scan" ? stateActiveTask : undefined;
+  const scanTask =
+    stateActiveTask?.taskKind === "scan" && hasSourceProject ? stateActiveTask : undefined;
   const targetRows = useMemo(
     () => targetRowsForState(props.state, activeResourceType),
     [props.state, activeResourceType],
@@ -156,11 +158,17 @@ export function MigrationView(props: {
             ariaLabel={t(locale, "Source scan status")}
             heading={t(locale, "Source scan")}
             locale={locale}
-            message={props.state.scanStatus === "error" ? props.state.message : undefined}
+            message={
+              hasSourceProject && props.state.scanStatus === "error"
+                ? props.state.message
+                : undefined
+            }
             task={scanTask}
           />
           <div className="migration-asset-list">
-            {activeGroup === undefined ? (
+            {!hasSourceProject ? (
+              <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
+            ) : activeGroup === undefined ? (
               <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
             ) : activeGroup.assets.length === 0 ? (
               <p>{t(locale, "No differences for this asset type.")}</p>

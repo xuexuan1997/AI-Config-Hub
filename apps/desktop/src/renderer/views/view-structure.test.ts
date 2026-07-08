@@ -134,6 +134,10 @@ describe("desktop renderer view structure", () => {
       createElement(MigrationView, {
         state: {
           ...initialState,
+          migration: {
+            ...initialState.migration,
+            sourceProjectRoot: "/workspace/source",
+          },
           activeTask: {
             taskId: "task:scan:migration",
             taskKind: "scan",
@@ -159,6 +163,43 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="scan-task-modal"');
     expect(html).toContain("Scanning migration assets");
     expect(html).toContain("4 items");
+  });
+
+  it("keeps asset review scan status out of migration before a source project is selected", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          scanStatus: "error",
+          message: "Review scan failed.",
+          activeTask: {
+            taskId: "task:scan:asset-review",
+            taskKind: "scan",
+            phase: "completed",
+            status: "succeeded",
+            recoveryLock: false,
+            progress: { phase: "completed", completed: 6, total: 6, unit: "items" },
+            message: "Scan complete: 6 succeeded.",
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+        onSelectSourceProject: vi.fn(),
+        onSelectTargetProject: vi.fn(),
+        onSwapProjects: vi.fn(),
+      }),
+    );
+
+    expect(html).not.toContain("Source scan");
+    expect(html).not.toContain("Scanning migration assets");
+    expect(html).not.toContain("Scan complete: 6 succeeded.");
+    expect(html).not.toContain("Review scan failed.");
+    expect(html).toContain("Scan a source project before creating a migration preview.");
   });
 
   it("binds the scroll container identity to the active route", () => {

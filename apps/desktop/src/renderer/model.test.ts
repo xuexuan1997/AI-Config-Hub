@@ -269,6 +269,22 @@ describe("renderer project selection state", () => {
     expect(previewRequestForState(withAssets)).toBeUndefined();
   });
 
+  it("ignores migration source asset refreshes until a source project is selected", () => {
+    const withReviewAssets = reducer(initialState, {
+      type: "assets",
+      assets: [migrationAssetFixture("asset-review", "review/AGENTS.md")],
+    });
+    const withoutSourceProject = reducer(withReviewAssets, {
+      type: "migrationSourceAssets",
+      assets: [migrationAssetFixture("asset-review", "review/AGENTS.md")],
+    });
+
+    expect(withoutSourceProject.migration.sourceProjectRoot).toBeUndefined();
+    expect(withoutSourceProject.migrationSourceAssets).toEqual([]);
+    expect(withoutSourceProject.migration.sourceAssetIds).toEqual([]);
+    expect(previewRequestForState(withoutSourceProject)).toBeUndefined();
+  });
+
   it("builds migration previews from independent source and target project selections", () => {
     const withSourceProject = reducer(initialState, {
       type: "migrationSourceProject",
@@ -1688,16 +1704,22 @@ describe("renderer project selection state", () => {
       expiresAt: "2026-06-28T08:10:00.000Z",
     });
     const state = reducer(
-      reducer(initialState, {
-        type: "migrationSourceAssets",
-        assets: [
-          migrationAssetFixture("asset-current", "AGENTS.md"),
-          {
-            ...migrationAssetFixture("asset-changed", "STALE.md"),
-            contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
-          },
-        ],
-      }),
+      reducer(
+        reducer(initialState, {
+          type: "migrationSourceProject",
+          sourceProjectRoot: "/workspace/source",
+        }),
+        {
+          type: "migrationSourceAssets",
+          assets: [
+            migrationAssetFixture("asset-current", "AGENTS.md"),
+            {
+              ...migrationAssetFixture("asset-changed", "STALE.md"),
+              contentHash: ContentHashSchema.parse(`sha256:${"f".repeat(64)}`),
+            },
+          ],
+        },
+      ),
       { type: "preview", preview },
     );
 

@@ -460,9 +460,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "migrationSourceAssets": {
       const actionSourceProjectRoot = normalizedProjectRoot(action.sourceProjectRoot);
+      const stateSourceProjectRoot = normalizedProjectRoot(state.migration.sourceProjectRoot);
+      if (stateSourceProjectRoot === undefined) {
+        return state;
+      }
       if (
         actionSourceProjectRoot !== undefined &&
-        actionSourceProjectRoot !== normalizedProjectRoot(state.migration.sourceProjectRoot)
+        actionSourceProjectRoot !== stateSourceProjectRoot
       ) {
         return state;
       }
