@@ -16,7 +16,7 @@ import {
   type MigrationConflictPolicy,
   type MigrationTargetToolKey,
 } from "../model.js";
-import { ScanTaskPanel } from "./scan-task-panel.js";
+import { ScanTaskModal, ScanTaskPanel } from "./scan-task-panel.js";
 
 export function MigrationView(props: {
   readonly state: AppState;
@@ -78,6 +78,11 @@ export function MigrationView(props: {
 
   return (
     <>
+      <ScanTaskModal
+        heading={t(locale, "Scanning migration assets")}
+        locale={locale}
+        task={scanTask}
+      />
       <section className="page-heading">
         <div>
           <h1>{t(locale, "Asset Migration")}</h1>

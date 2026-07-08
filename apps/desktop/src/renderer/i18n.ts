@@ -12,6 +12,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Asset detail": "资产详情",
   "Asset detail is unavailable.": "资产详情不可用。",
   "Asset resource types": "资产资源类型",
+  "Active scan status": "当前扫描状态",
   "Completed deployments and rollback records will appear here.":
     "已完成的部署和回滚记录会显示在这里。",
   "Confirm that this writes verified config files.": "确认这会写入已验证的配置文件。",
@@ -38,6 +39,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   Close: "关闭",
   "Configuration manager overview": "配置管理总览",
   "Configuration asset workbench": "配置资产工作台",
+  "Keep this window open while AI Config Hub scans your assets.":
+    "AI Config Hub 扫描资产时请保持此窗口打开。",
   "Counts reflect every indexed asset in this project.": "计数包含此项目中所有已索引资产。",
   "Counts reflect only the inspected asset.": "计数仅包含当前检查的资产。",
   "Deploy with confirmation": "确认后部署",
@@ -137,6 +140,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Scan status": "扫描状态",
   "Scans automatically after project selection.": "选择项目后自动扫描。",
   "Scanning assets": "正在扫描资产",
+  "Scanning migration assets": "正在扫描迁移资产",
   Settings: "设置",
   "Selected project folder": "已选择的项目文件夹",
   "Select an asset to inspect its source, problems, and effective config.":

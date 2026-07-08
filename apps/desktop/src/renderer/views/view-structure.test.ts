@@ -66,6 +66,101 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("Use typed path");
   });
 
+  it("shows a modal with live scan status during asset review scans", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:scan:review",
+            taskKind: "scan",
+            phase: "reading",
+            status: "running",
+            recoveryLock: false,
+            progress: { phase: "reading", completed: 12, total: 80, unit: "files" },
+          },
+        },
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+        onSelectProject: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="scan-task-modal"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("Scanning assets");
+    expect(html).toContain("12/80 files");
+  });
+
+  it("localizes scan modal progress units in Simplified Chinese", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          settings: {
+            ...initialState.settings,
+            values: { ...initialState.settings.values, language: "zh-CN" },
+          },
+          activeTask: {
+            taskId: "task:scan:review-zh",
+            taskKind: "scan",
+            phase: "reading",
+            status: "running",
+            recoveryLock: false,
+            progress: { phase: "reading", completed: 12, total: 80, unit: "files" },
+          },
+        },
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+        onSelectProject: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("正在扫描资产");
+    expect(html).toContain("12/80 个文件");
+    expect(html).not.toContain("12/80 files");
+  });
+
+  it("shows a modal with live scan status during migration source scans", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:scan:migration",
+            taskKind: "scan",
+            phase: "discovering",
+            status: "running",
+            recoveryLock: false,
+            progress: { phase: "discovering", completed: 4, total: null, unit: "items" },
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+        onSelectSourceProject: vi.fn(),
+        onSelectTargetProject: vi.fn(),
+        onSwapProjects: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="scan-task-modal"');
+    expect(html).toContain("Scanning migration assets");
+    expect(html).toContain("4 items");
+  });
+
   it("binds the scroll container identity to the active route", () => {
     const html = renderToStaticMarkup(
       createElement(AppShell, {

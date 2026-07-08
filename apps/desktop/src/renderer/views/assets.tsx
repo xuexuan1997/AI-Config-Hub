@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import type { AppState, AssetDisablementMethod } from "../model.js";
-import { ScanTaskPanel } from "./scan-task-panel.js";
+import { ScanTaskModal, ScanTaskPanel } from "./scan-task-panel.js";
 
 type AssetSourceSummary = AppState["assets"][number]["sourceSummary"];
 
@@ -84,6 +84,7 @@ export function AssetsView(props: {
 
   return (
     <>
+      <ScanTaskModal heading={t(locale, "Scanning assets")} locale={locale} task={scanTask} />
       <section className="page-heading">
         <div>
           <h1>{t(locale, "Asset Review")}</h1>
