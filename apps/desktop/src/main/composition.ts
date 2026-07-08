@@ -297,7 +297,7 @@ function createServices(
         },
       });
       await runtime.repositories.tasks.finish(summary.summary);
-      recordScanItemFailures(runtime, taskEvents, taskId, summary.itemFailures);
+      await recordScanItemFailures(runtime, taskEvents, taskId, summary.itemFailures);
       await syncFileWatcher(runtime, allowedRoots, services);
       taskEvents.record({
         taskId,
@@ -994,25 +994,36 @@ async function directoryHasEntries(path: AbsolutePath): Promise<boolean> {
   }
 }
 
-function recordScanItemFailures(
+async function recordScanItemFailures(
   runtime: DesktopRuntime,
   taskEvents: DesktopTaskEvents,
   taskId: string,
   itemFailures: readonly ScanItemFailure[],
-): void {
+): Promise<void> {
   for (const failure of itemFailures) {
+    const diagnostic = await runtime.repositories.index.getDiagnostic(failure.diagnosticId);
     taskEvents.record({
       taskId,
       emittedAt: now(runtime),
       type: "item.failed",
       payload: {
-        itemRef: failure.itemRef,
+        itemRef:
+          diagnostic === undefined || diagnostic.severity !== "error"
+            ? failure.itemRef
+            : diagnosticItemRef(diagnostic),
         diagnosticId: failure.diagnosticId,
         errorCode: failure.errorCode,
         retryable: failure.retryable,
       },
     });
   }
+}
+
+function diagnosticItemRef(diagnostic: Diagnostic): string {
+  if (diagnostic.location?.path !== undefined) return diagnostic.location.path;
+  const sourcePath = diagnostic.evidence.sourcePath;
+  if (typeof sourcePath === "string" && sourcePath.trim().length > 0) return sourcePath;
+  return diagnostic.diagnosticId;
 }
 
 export class DesktopTaskEvents implements DesktopTaskEventPort {
