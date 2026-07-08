@@ -729,7 +729,27 @@ describe("renderer project selection state", () => {
       })!,
     });
 
-    expect(secondFailure.activeTask?.failures).toEqual([
+    const completed = reducer(secondFailure, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:detailed-failures"),
+        sequence: 4,
+        emittedAt: "2026-06-28T08:00:03.000Z",
+        type: "completed",
+        payload: {
+          status: "partially_succeeded",
+          succeededCount: 3,
+          failedCount: 2,
+          skippedCount: 1,
+          resultRef: "scan:detailed-failures",
+          systemRecoveryLock: false,
+        },
+      })!,
+    });
+
+    expect(completed.activeTask?.failures).toEqual([
       {
         itemRef: "/workspace/.cursor/rules/broken.mdc",
         errorCode: "SCAN_READ_FAILED",
@@ -741,6 +761,12 @@ describe("renderer project selection state", () => {
         retryable: false,
       },
     ]);
+    expect(completed.activeTask).toMatchObject({
+      phase: "completed",
+      status: "partially_succeeded",
+      progress: { phase: "completed", completed: 5, total: 6, unit: "items" },
+      message: "Scan partially complete: 3 succeeded, 2 failed, 1 skipped.",
+    });
   });
 
   it("stores loaded desktop settings and builds optimistic update requests", () => {

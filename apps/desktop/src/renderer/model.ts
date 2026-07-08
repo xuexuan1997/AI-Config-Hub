@@ -1236,12 +1236,19 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
     };
   }
   if (event.type === "completed") {
+    const completed = event.payload.succeededCount + event.payload.failedCount;
     return {
       taskId: event.taskId,
       taskKind,
       phase: "completed",
       status: event.payload.status,
       recoveryLock: event.payload.systemRecoveryLock,
+      progress: {
+        phase: "completed",
+        completed,
+        total: completed + event.payload.skippedCount,
+        unit: taskKind === "scan" ? "items" : "operations",
+      },
       message: formatTaskCompletionMessage(taskKind, event.payload),
     };
   }

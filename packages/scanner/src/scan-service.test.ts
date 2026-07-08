@@ -387,6 +387,14 @@ describe("ScanService", () => {
       succeededCount: 1,
       failedCount: 1,
     });
+    expect(first.itemFailures).toEqual([
+      {
+        itemRef: "/project/broken.md",
+        diagnosticId: expect.stringMatching(/^diagnostic:/),
+        errorCode: "ADAPTER_PARSE_INVALID",
+        retryable: false,
+      },
+    ]);
     expect(firstRepository.calls).toHaveLength(1);
     expect(firstRepository.calls[0]?.effectiveConfigs).toHaveLength(1);
 

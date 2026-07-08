@@ -968,6 +968,43 @@ describe("desktop command service composition", () => {
     });
   });
 
+  it("records scan item failures before partial scan completion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-scan-failures-"));
+    temporaryDirectories.push(root);
+    const project = join(root, "project");
+    const userData = join(root, "user-data");
+    await mkdir(join(project, ".codex", "agents"), { recursive: true });
+    await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
+    await writeFile(join(project, ".codex", "agents", "broken.toml"), "not = [valid\n", "utf8");
+    const runtime = await createDesktopCommandServices({
+      appVersion: "0.2.0-test",
+      cwd: project,
+      now: () => "2026-06-28T08:00:00.000Z",
+      userDataPath: userData,
+    });
+
+    try {
+      const scan = await runtime.services["scan.start"]({ mode: "full", roots: [project] });
+      const events: TaskEvent[] = [];
+      runtime.taskEvents.subscribe(String(scan.taskId), 0, (event) => events.push(event));
+
+      const itemFailures = events.filter((event) => event.type === "item.failed");
+      expect(itemFailures).toHaveLength(1);
+      expect(itemFailures[0]).toMatchObject({
+        payload: {
+          itemRef: await realpath(join(project, ".codex", "agents", "broken.toml")),
+          errorCode: "ADAPTER_PARSE_INVALID",
+        },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "completed",
+        payload: { status: "partially_succeeded", succeededCount: 3, failedCount: 1 },
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("records scan cancellation requests in the task event stream", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-scan-cancel-"));
     temporaryDirectories.push(root);

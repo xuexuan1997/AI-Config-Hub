@@ -67,6 +67,13 @@ export interface ScanInput {
   readonly onPhase?: (phase: ScanPhase) => void;
 }
 
+export interface ScanItemFailure {
+  readonly itemRef: AbsolutePath;
+  readonly diagnosticId: Diagnostic["diagnosticId"];
+  readonly errorCode: Diagnostic["code"];
+  readonly retryable: boolean;
+}
+
 interface WorkItem {
   readonly adapter: ToolAdapter;
   readonly tool: ToolInstallation;
@@ -93,9 +100,11 @@ export class ScanService {
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
-  async scan(
-    input: ScanInput,
-  ): Promise<{ readonly summary: ScanRunSummary; readonly revision: string }> {
+  async scan(input: ScanInput): Promise<{
+    readonly summary: ScanRunSummary;
+    readonly revision: string;
+    readonly itemFailures: readonly ScanItemFailure[];
+  }> {
     const scanRunId = ScanRunIdSchema.parse(input.scanRunId);
     const createdAt = IsoDateTimeSchema.parse(this.now());
     this.phase(input, "discovering");
@@ -323,6 +332,7 @@ export class ScanService {
     const diagnostics = uniqueAdapterDiagnostics(allAdapterDiagnostics).map((diagnostic) =>
       normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
     );
+    const itemFailures = scanItemFailures({ parsedItems, scanRunId, createdAt });
     const assetsWithDiagnosticSummaries = summarizeAssetDiagnostics(assetsForCommit, diagnostics);
     const succeededCount = parsedItems.filter(({ status }) => status === "parsed").length;
     const failedCount = parsedItems.length - succeededCount;
@@ -365,13 +375,53 @@ export class ScanService {
       diagnosticIds: diagnostics.map(({ diagnosticId }) => DiagnosticIdSchema.parse(diagnosticId)),
     });
     this.phase(input, "completed");
-    return { summary, revision: committed.revision };
+    return { summary, revision: committed.revision, itemFailures };
   }
 
   private phase(input: ScanInput, phase: ScanPhase): void {
     input.signal.throwIfAborted();
     input.onPhase?.(phase);
   }
+}
+
+function scanItemFailures(input: {
+  readonly parsedItems: readonly ParsedItem[];
+  readonly scanRunId: string;
+  readonly createdAt: string;
+}): readonly ScanItemFailure[] {
+  return input.parsedItems.flatMap((item) => {
+    if (item.status !== "rejected") return [];
+    const diagnostic = item.diagnostics.find(({ severity }) => severity === "error");
+    if (diagnostic === undefined) {
+      return [
+        {
+          itemRef: item.candidate.sourcePath,
+          diagnosticId: DiagnosticIdSchema.parse(
+            stableId("diagnostic", [
+              input.scanRunId,
+              "SCAN_ITEM_REJECTED",
+              item.candidate.sourcePath,
+            ]),
+          ),
+          errorCode: "SCAN_ITEM_REJECTED",
+          retryable: false,
+        },
+      ];
+    }
+    const normalized = normalizeAdapterDiagnostic({
+      diagnostic: withDiagnosticOwnership(diagnostic, item),
+      scanRunId: input.scanRunId,
+      createdAt: input.createdAt,
+    });
+    return [
+      {
+        itemRef: item.candidate.sourcePath,
+        diagnosticId: normalized.diagnosticId,
+        errorCode: normalized.code,
+        retryable: !normalized.blocking,
+      },
+    ];
+  });
 }
 
 function withDiagnosticOwnership(

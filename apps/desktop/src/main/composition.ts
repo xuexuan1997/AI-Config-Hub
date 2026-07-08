@@ -46,6 +46,7 @@ import {
   NodeFileWatcher,
   ScanService,
   WatchService,
+  type ScanItemFailure,
   type WatchBatch,
 } from "@ai-config-hub/scanner";
 import {
@@ -296,6 +297,7 @@ function createServices(
         },
       });
       await runtime.repositories.tasks.finish(summary.summary);
+      recordScanItemFailures(runtime, taskEvents, taskId, summary.itemFailures);
       await syncFileWatcher(runtime, allowedRoots, services);
       taskEvents.record({
         taskId,
@@ -989,6 +991,27 @@ async function directoryHasEntries(path: AbsolutePath): Promise<boolean> {
       return false;
     }
     throw error;
+  }
+}
+
+function recordScanItemFailures(
+  runtime: DesktopRuntime,
+  taskEvents: DesktopTaskEvents,
+  taskId: string,
+  itemFailures: readonly ScanItemFailure[],
+): void {
+  for (const failure of itemFailures) {
+    taskEvents.record({
+      taskId,
+      emittedAt: now(runtime),
+      type: "item.failed",
+      payload: {
+        itemRef: failure.itemRef,
+        diagnosticId: failure.diagnosticId,
+        errorCode: failure.errorCode,
+        retryable: failure.retryable,
+      },
+    });
   }
 }
 
