@@ -27,6 +27,7 @@
 | [测试策略](development/testing-strategy.md) | 哪些测试与质量门禁保证交付？ | 测试与应用工程师 | MVP 技术基线 |
 | [构建、发布与兼容性](operations/build-release-and-compatibility.md) | 三平台产物如何可靠发布？ | 发布工程师 | MVP 技术基线 |
 | [可观测性与恢复](operations/observability-and-recovery.md) | 如何诊断、备份和恢复本地故障？ | 支持与运维工程师 | MVP 技术基线 |
+| [桌面端 UX 重设计](desktop-app/ux/README.md) | 桌面端工作流、屏幕、状态、组件和落地路线如何重新组织？ | 产品、设计、桌面工程师 | UX 重设计方案 |
 | [PRD 阶段实现状态](implementation/phase-status.md) | PRD 第三至第六阶段当前完成到哪里？ | 产品、工程与测试负责人 | 实现证据索引 |
 | [Phase 3 证据](implementation/phase-3-evidence.md) | 诊断阶段由哪些测试和命令证明？ | 测试与应用工程师 | 实现证据 |
 | [Phase 4 证据](implementation/phase-4-evidence.md) | 转换和部署阶段由哪些测试和命令证明？ | 测试与应用工程师 | 实现证据 |
