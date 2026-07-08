@@ -307,7 +307,7 @@ export function App(props: { readonly api: DesktopApi }) {
     await runAction("Preview migration", async () => {
       const blockers = migrationPreviewBlockersForState(state);
       if (blockers.length > 0) {
-        dispatch({ type: "message", message: t(locale, blockers[0] ?? "") });
+        dispatch({ type: "message", message: localizeUiMessage(locale, blockers[0] ?? "") });
         return;
       }
       const request = previewRequestForState(state);

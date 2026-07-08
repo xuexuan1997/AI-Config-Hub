@@ -848,6 +848,18 @@ export function migrationPreviewBlockersForState(state: AppState): readonly stri
   if (new Set(selectedAssets.map((asset) => asset.resourceType)).size > 1) {
     blockers.push("Select source assets from one resource type.");
   }
+  const selectedKeys = new Set<string>();
+  const duplicateSelectedAsset = selectedAssets.find((asset) => {
+    const key = migrationAssetComparisonKey(asset);
+    if (selectedKeys.has(key)) return true;
+    selectedKeys.add(key);
+    return false;
+  });
+  if (duplicateSelectedAsset !== undefined) {
+    blockers.push(
+      `Cannot migrate duplicate source assets with the same name: ${duplicateSelectedAsset.logicalKey}.`,
+    );
+  }
   return blockers;
 }
 

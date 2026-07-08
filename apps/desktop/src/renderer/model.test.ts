@@ -18,6 +18,7 @@ import {
   initialState,
   migrationDifferenceSummaryForState,
   migrationHashRowsForPreview,
+  migrationPreviewBlockersForState,
   migrationSourceDriftRowsForState,
   openSourceRequestForState,
   projectIdForRoot,
@@ -351,6 +352,36 @@ describe("renderer project selection state", () => {
     });
     expect(switchedReviewProject.migration.sourceProjectRoot).toBe("/home/user/source-workspace");
     expect(switchedReviewProject.migration.targetScopeId).toBe("/home/user/target-workspace");
+  });
+
+  it("blocks migration previews when selected source assets have duplicate names", () => {
+    const withSourceProject = reducer(initialState, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/home/user/source-workspace",
+    });
+    const withTargetProject = reducer(withSourceProject, {
+      type: "migrationTargetProject",
+      targetScopeId: "/home/user/target-workspace",
+    });
+    const withAssets = reducer(withTargetProject, {
+      type: "migrationSourceAssets",
+      assets: [
+        migrationAssetFixture("asset-1", "AGENTS.md"),
+        migrationAssetFixture("asset-2", "AGENTS.md", {
+          contentHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        }),
+      ],
+    });
+    const withDuplicateSelected = reducer(withAssets, {
+      type: "migrationSource",
+      assetId: AssetIdSchema.parse("asset-2"),
+      selected: true,
+    });
+
+    expect(migrationPreviewBlockersForState(withDuplicateSelected)).toContain(
+      "Cannot migrate duplicate source assets with the same name: AGENTS.md.",
+    );
+    expect(previewRequestForState(withDuplicateSelected)).toBeUndefined();
   });
 
   it("builds migration previews from explicit migration selections", () => {

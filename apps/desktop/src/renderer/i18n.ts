@@ -147,6 +147,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Select source assets from one resource type.": "请选择同一种资源类型的源资产。",
   "Select project": "选择项目",
   "Select migration source project": "选择迁移源项目",
+  "Cannot migrate duplicate source assets with the same name: {name}.":
+    "存在同名源资产，无法迁移：{name}。",
   "Select migration target project": "选择迁移目标项目",
   "Selected migration sources changed after the rescan; create a new preview.":
     "重新扫描后，已选择的迁移来源发生变化；请创建新的预览。",
@@ -464,6 +466,14 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
 
   const exact = ZH_CN[message];
   if (exact !== undefined) return exact;
+
+  const duplicateMigrationSource =
+    /^Cannot migrate duplicate source assets with the same name: (.+)\.$/.exec(message);
+  if (duplicateMigrationSource !== null) {
+    return t(locale, "Cannot migrate duplicate source assets with the same name: {name}.", {
+      name: duplicateMigrationSource[1] ?? "",
+    });
+  }
 
   const queued = /^Queued (.+)$/.exec(message);
   if (queued !== null) return `已加入队列 ${queued[1]}`;

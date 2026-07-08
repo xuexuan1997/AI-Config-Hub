@@ -7,6 +7,31 @@ import { initialState, type AppState } from "../model.js";
 import { MigrationView } from "./migration.js";
 
 describe("MigrationView", () => {
+  it("localizes duplicate selected source asset blockers in Chinese", () => {
+    const html = renderMigration({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [
+          AssetIdSchema.parse("asset-source-codex"),
+          AssetIdSchema.parse("asset-source-cursor"),
+        ],
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-source-codex", "rule:AGENTS", { toolKey: "codex" }),
+        assetSummaryFixture("asset-source-cursor", "rule:AGENTS", { toolKey: "cursor" }),
+      ],
+    });
+
+    expect(html).toContain("存在同名源资产，无法迁移：rule:AGENTS。");
+    expect(html).not.toContain("Cannot migrate duplicate source assets with the same name");
+  });
+
   it("highlights refreshed source and target list differences before preview", () => {
     const html = renderMigration({
       migration: {

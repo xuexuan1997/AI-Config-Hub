@@ -260,7 +260,7 @@ export function MigrationView(props: {
           {previewBlockers.length === 0 ? null : (
             <ul className="migration-blockers">
               {previewBlockers.map((blocker) => (
-                <li key={blocker}>{t(locale, blocker)}</li>
+                <li key={blocker}>{localizeUiMessage(locale, blocker)}</li>
               ))}
             </ul>
           )}
