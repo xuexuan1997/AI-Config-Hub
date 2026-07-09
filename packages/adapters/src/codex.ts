@@ -86,7 +86,7 @@ function parseAgent(context: ParseContext): ParseResult {
     const description = stringValue(document["description"]);
     const instructions = stringValue(document["developer_instructions"]);
     if (name === undefined || instructions === undefined) {
-      throw new TypeError("Codex agent requires name and developer_instructions");
+      throw new TypeError("Codex Agent requires name and developer_instructions");
     }
     const resource = NormalizedResourceSchema.parse({
       kind: "agent",
@@ -108,7 +108,7 @@ function parseAgent(context: ParseContext): ParseResult {
         ? [
             nativeDiagnostic({
               code: "AGENT_DESCRIPTION_REQUIRED",
-              message: "Codex agent is missing required description metadata",
+              message: "Codex Agent is missing required description metadata",
               blocking: true,
               location: { path: context.candidate.sourcePath },
               evidence: { field: "description" },

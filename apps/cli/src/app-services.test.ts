@@ -91,7 +91,16 @@ async function writeUserConfigFixtures(home: string): Promise<void> {
   );
   await writeFile(
     join(home, "opencode.jsonc"),
-    '{"mcp":{"docs":{"type":"remote","url":"https://example.test/mcp"}}}',
+    JSON.stringify({
+      agent: {
+        planner: {
+          description: "Plans work",
+          prompt: "Plan carefully.",
+          disable: false,
+        },
+      },
+      mcp: { docs: { type: "remote", url: "https://example.test/mcp" } },
+    }),
     "utf8",
   );
 }
@@ -159,6 +168,22 @@ describe("CLI command service composition", () => {
         new Set(["rule", "agent", "skill", "mcp"]),
       );
       expect(new Set(assets.items.map(({ scopeKind }) => scopeKind))).toEqual(new Set(["user"]));
+      const opencodeAgent = assets.items.find(
+        (asset) => asset.toolKey === "opencode" && asset.logicalKey === "agent:planner",
+      );
+      if (opencodeAgent === undefined) throw new Error("Expected scanned OpenCode Agent asset");
+      expect(
+        (await runtime.services["assets.get"]({ assetId: opencodeAgent.id })).asset
+          .disablementOptions,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "native",
+            label: "Set OpenCode Agent disable to true",
+            description: "Write disable=true for this Agent in the OpenCode configuration.",
+          }),
+        ]),
+      );
     } finally {
       runtime.close();
     }
@@ -439,6 +464,15 @@ describe("CLI command service composition", () => {
 
       const detail = await runtime.services["assets.get"]({ assetId: source.id });
 
+      expect(detail.asset.disablementOptions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "move_file",
+            description:
+              "Move the Skill package directory into the AI Config Hub disabled-assets area.",
+          }),
+        ]),
+      );
       expect(detail.source.sourceSummary).toEqual(source.sourceSummary);
       expect(detail.source.files.map((file) => [file.role, file.relativePath])).toEqual([
         ["primary", "SKILL.md"],

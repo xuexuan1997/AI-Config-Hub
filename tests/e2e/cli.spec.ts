@@ -188,7 +188,7 @@ test.describe("CLI end to end", () => {
       expect(deploy.exitCode).toBe(0);
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
-      expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor rule.");
+      expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor Rule.");
 
       const history = await runCli(workspace.userData, ["history", "--json"]);
       expect(readHistoryItems(history.json)).toEqual(
@@ -210,7 +210,7 @@ test.describe("CLI end to end", () => {
       const rollbackRecord = readRollbackData(rollback.json);
       expect(rollback.exitCode).toBe(0);
       expect(rollbackRecord.rollbackId).toMatch(/^rollback-record:/);
-      expect(await readFile(cursorRulePath, "utf8")).toBe("Existing Cursor rule.\n");
+      expect(await readFile(cursorRulePath, "utf8")).toBe("Existing Cursor Rule.\n");
     } finally {
       await workspace.dispose();
     }
@@ -231,7 +231,7 @@ async function createFixtureWorkspace(): Promise<{
     encoding: "utf8",
     flag: "wx",
   });
-  await writeFile(join(projectRoot, ".cursor", "rules", "agents.mdc"), "Existing Cursor rule.\n", {
+  await writeFile(join(projectRoot, ".cursor", "rules", "agents.mdc"), "Existing Cursor Rule.\n", {
     encoding: "utf8",
     flag: "wx",
   });

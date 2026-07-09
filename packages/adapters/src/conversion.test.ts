@@ -243,7 +243,7 @@ describe("built-in conversion matrix", () => {
     });
   });
 
-  it("renders Codex agent descriptions and falls back partially when missing", async () => {
+  it("renders Codex Agent descriptions and falls back partially when missing", async () => {
     const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
     const withDescription = await adapter.convert({
       asset: asset({
@@ -280,7 +280,7 @@ describe("built-in conversion matrix", () => {
     );
   });
 
-  it("reports Codex agent tool restrictions as partial because they are not expressible", async () => {
+  it("reports Codex Agent tool restrictions as partial because they are not expressible", async () => {
     const adapter = codexRegistration.create({ logger: { debug() {}, warn() {} } });
     const result = await adapter.convert({
       asset: asset(resources[1]),

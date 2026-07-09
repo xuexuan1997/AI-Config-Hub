@@ -168,11 +168,24 @@ export function unsupportedNativeFieldDiagnostics(
     .map((field) =>
       nativeDiagnostic({
         code: unsupportedDiagnosticCodes[kind],
-        message: `${kind} native field is preserved but not represented in the normalized schema: ${field}`,
+        message: `${nativeFieldKindLabel(kind)} native field is preserved but not represented in the normalized schema: ${field}`,
         location: { path },
         evidence: { field },
       }),
     );
+}
+
+function nativeFieldKindLabel(kind: keyof typeof unsupportedDiagnosticCodes): string {
+  switch (kind) {
+    case "agent":
+      return "Agent";
+    case "rule":
+      return "Rule";
+    case "mcp":
+      return "MCP";
+    case "skill":
+      return "Skill";
+  }
 }
 
 export function mcpResource(name: string, value: unknown) {

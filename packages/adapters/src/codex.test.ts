@@ -89,6 +89,8 @@ describe("Codex adapter read path", () => {
         expect.objectContaining({
           code: "AGENT_UNSUPPORTED_NATIVE_FIELD",
           blocking: false,
+          message:
+            "Agent native field is preserved but not represented in the normalized schema: sandbox_mode",
           evidence: expect.objectContaining({ field: "sandbox_mode" }) as unknown,
         }),
       ]),
@@ -98,7 +100,7 @@ describe("Codex adapter read path", () => {
     expect(JSON.stringify(results)).toContain("$REMOTE_TOKEN");
   });
 
-  it("diagnoses Codex agents that omit required descriptions", async () => {
+  it("diagnoses Codex Agents that omit required descriptions", async () => {
     const read = memoryReadApi({
       "/project/.codex/agents/reviewer.toml": `
 name = "reviewer"
@@ -115,7 +117,7 @@ developer_instructions = "Review carefully."
     const candidate = discovery.candidates.find(
       ({ sourcePath }) => sourcePath === "/project/.codex/agents/reviewer.toml",
     );
-    if (candidate === undefined) throw new Error("Expected Codex agent candidate");
+    if (candidate === undefined) throw new Error("Expected Codex Agent candidate");
 
     const result = await adapter.parse({
       tool,

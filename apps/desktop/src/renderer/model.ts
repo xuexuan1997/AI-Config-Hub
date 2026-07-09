@@ -102,6 +102,7 @@ export interface MigrationSourceDriftRow {
 export interface ActiveTaskState {
   readonly taskId: string;
   readonly taskKind: "scan" | "deployment" | "rollback";
+  readonly scanScope?: ScanTaskScope;
   readonly phase: TaskPhase;
   readonly status:
     | "running"
@@ -133,10 +134,13 @@ export interface ActiveTaskState {
 export type ActiveTaskUpdate = Partial<ActiveTaskState> &
   Pick<ActiveTaskState, "taskId" | "taskKind">;
 
+export type ScanTaskScope = "asset-review" | "migration-source" | "migration-target";
+
 export interface AppState {
   readonly route: Route;
   readonly projectRoot?: string;
   readonly scanStatus: "idle" | "queued" | "complete" | "error";
+  readonly scanScope?: ScanTaskScope;
   readonly assets: CommandResponse<"assets.list">["items"];
   readonly migrationSourceAssets: CommandResponse<"assets.list">["items"];
   readonly migrationTargetAssets: CommandResponse<"assets.list">["items"];
@@ -157,7 +161,12 @@ export type AppAction =
   | { readonly type: "route"; readonly route: Route }
   | { readonly type: "project"; readonly root: string | undefined }
   | { readonly type: "message"; readonly message: string | undefined }
-  | { readonly type: "scan"; readonly status: AppState["scanStatus"]; readonly message?: string }
+  | {
+      readonly type: "scan";
+      readonly status: AppState["scanStatus"];
+      readonly scanScope?: ScanTaskScope;
+      readonly message?: string;
+    }
   | { readonly type: "assets"; readonly assets: AppState["assets"] }
   | {
       readonly type: "migrationSourceAssets";
@@ -392,6 +401,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         return clearProjectDetails({
           route: state.route,
           scanStatus: state.scanStatus,
+          ...(state.scanScope === undefined ? {} : { scanScope: state.scanScope }),
           assets: state.assets,
           migrationSourceAssets: state.migrationSourceAssets,
           migrationTargetAssets: state.migrationTargetAssets,
@@ -409,6 +419,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return clearProjectDetails({
         route: state.route,
         scanStatus: state.scanStatus,
+        ...(state.scanScope === undefined ? {} : { scanScope: state.scanScope }),
         assets: state.assets,
         migrationSourceAssets: state.migrationSourceAssets,
         migrationTargetAssets: state.migrationTargetAssets,
@@ -427,6 +438,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ? {
             route: state.route,
             scanStatus: state.scanStatus,
+            ...(state.scanScope === undefined ? {} : { scanScope: state.scanScope }),
             assets: state.assets,
             migrationSourceAssets: state.migrationSourceAssets,
             migrationTargetAssets: state.migrationTargetAssets,
@@ -443,12 +455,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
             ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
           }
         : { ...state, message: action.message };
-    case "scan":
+    case "scan": {
+      const { scanScope: discardedScanScope, ...withoutScanScope } = state;
+      void discardedScanScope;
       return {
-        ...state,
+        ...withoutScanScope,
         scanStatus: action.status,
+        ...(action.scanScope === undefined ? {} : { scanScope: action.scanScope }),
         ...(action.message === undefined ? {} : { message: action.message }),
       };
+    }
     case "assets": {
       const refreshed = {
         ...state,
@@ -1121,15 +1137,19 @@ export function deploymentConfirmationLabel(confirmation: DeploymentConfirmation
   }
 }
 
-export function scanActionForTaskEvent(event: TaskEvent): AppAction | undefined {
+export function scanActionForTaskEvent(
+  event: TaskEvent,
+  scanScope?: ScanTaskScope,
+): AppAction | undefined {
   if (event.type === "accepted") {
-    return { type: "scan", status: "queued" };
+    return { type: "scan", status: "queued", ...(scanScope === undefined ? {} : { scanScope }) };
   }
   if (event.type !== "completed") return undefined;
   const status = event.payload.status === "failed" ? "error" : "complete";
   return {
     type: "scan",
     status,
+    ...(scanScope === undefined ? {} : { scanScope }),
   };
 }
 
@@ -1174,10 +1194,15 @@ function taskCompletionStatusLabel(
   }
 }
 
-export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | undefined {
+export function taskActionForTaskEvent(
+  event: TaskEvent,
+  scanScope?: ScanTaskScope,
+): ActiveTaskUpdate | undefined {
+  const withScanScope = (update: ActiveTaskUpdate): ActiveTaskUpdate =>
+    update.taskKind === "scan" && scanScope !== undefined ? { ...update, scanScope } : update;
   if (event.type === "cursor.reset") return undefined;
   if (event.type === "snapshot") {
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind: event.payload.taskKind,
       phase: event.payload.phase,
@@ -1185,28 +1210,28 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
       progress: event.payload.progress,
       recoveryLock: event.payload.status === "failed",
       message: `${event.payload.taskKind} ${event.payload.status}: restored from event snapshot.`,
-    };
+    });
   }
   const taskKind =
     event.type === "accepted" ? event.payload.taskKind : taskKindForTaskId(event.taskId);
   if (taskKind === undefined) return undefined;
   if (event.type === "accepted") {
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind,
       phase: "queued",
       status: "running",
       recoveryLock: false,
       message: `Queued ${taskKind} ${event.taskId}`,
-    };
+    });
   }
   if (event.type === "phase.changed") {
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind,
       phase: event.payload.to,
       ...(event.payload.to === "completed" ? {} : { status: "running" }),
-    };
+    });
   }
   if (event.type === "progress") {
     const total = event.payload.total;
@@ -1216,14 +1241,14 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
       total,
       unit: event.payload.unit,
     };
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind,
       phase: event.payload.phase,
       progress,
       status: "running",
       message: `${taskKind} ${event.payload.phase}: ${event.payload.completed}/${total ?? "?"} ${event.payload.unit}`,
-    };
+    });
   }
   if (event.type === "item.failed") {
     const failure = {
@@ -1231,17 +1256,17 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
       errorCode: event.payload.errorCode,
       retryable: event.payload.retryable,
     };
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind,
       failure,
       failures: [failure],
       message: `${taskKind} failed: ${event.payload.errorCode}`,
-    };
+    });
   }
   if (event.type === "completed") {
     const completed = event.payload.succeededCount + event.payload.failedCount;
-    return {
+    return withScanScope({
       taskId: event.taskId,
       taskKind,
       phase: "completed",
@@ -1254,7 +1279,7 @@ export function taskActionForTaskEvent(event: TaskEvent): ActiveTaskUpdate | und
         unit: taskKind === "scan" ? "items" : "operations",
       },
       message: formatTaskCompletionMessage(taskKind, event.payload),
-    };
+    });
   }
   return undefined;
 }
@@ -1284,6 +1309,7 @@ function mergeActiveTask(
     phase: merged.phase ?? base.phase,
     status: merged.status ?? base.status,
     recoveryLock: merged.recoveryLock ?? base.recoveryLock,
+    ...(merged.scanScope === undefined ? {} : { scanScope: merged.scanScope }),
     ...(merged.progress === undefined ? {} : { progress: merged.progress }),
     ...(merged.message === undefined ? {} : { message: merged.message }),
     ...(merged.failure === undefined ? {} : { failure: merged.failure }),

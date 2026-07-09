@@ -6,7 +6,6 @@ const ZH_CN: Partial<Record<string, string>> = {
   Assets: "资产",
   "Asset Migration": "资产迁移",
   "Asset Review": "资产审查",
-  Agent: "代理",
   "All diagnostics": "全部诊断",
   "All diagnostic codes": "全部诊断码",
   "Asset detail": "资产详情",
@@ -122,14 +121,17 @@ const ZH_CN: Partial<Record<string, string>> = {
   References: "引用",
   "Review filters": "审查筛选",
   "Review and migration are sibling workflows.": "审查和迁移是平级功能。",
-  Rule: "规则",
   "{resource} assets": "{resource}资产",
   "{visible} shown of {total}": "显示 {visible} / {total}",
   "Restart required": "需要重启",
   "Revision {revision}": "修订版本 {revision}",
   Saving: "正在保存",
   Scan: "扫描",
+  "Scan cancelled": "扫描已取消",
+  "Scan complete": "扫描完成",
   "Scan source": "扫描源项目",
+  "Scan failed": "扫描失败",
+  "Scan partially complete": "扫描部分完成",
   "Scan AI tool configuration, inspect normalized assets, preview conversions, deploy with confirmation, and roll back verified changes.":
     "扫描 AI 工具配置，检查标准化资产，预览转换，确认后部署，并回滚已验证的更改。",
   "Scan a project before creating a migration preview.": "请先扫描项目再创建迁移预览。",
@@ -217,7 +219,6 @@ const ZH_CN: Partial<Record<string, string>> = {
   Status: "状态",
   Scope: "范围",
   Observed: "观察时间",
-  Skill: "技能",
   Tool: "工具",
   User: "用户",
   Global: "全局",
@@ -250,6 +251,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Target project path": "目标项目路径",
   "Target impact": "目标影响",
   "Target assets": "\u76ee\u6807\u8d44\u4ea7",
+  "Target scan": "目标扫描",
+  "Target scan status": "目标扫描状态",
   "Target tool": "目标工具",
   "Target asset": "\u76ee\u6807\u8d44\u4ea7",
   "Asset type": "\u8d44\u4ea7\u7c7b\u578b",
@@ -412,6 +415,20 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Database migration backups, deployment backups, and disabled asset recovery files are retained.":
     "数据库迁移备份、部署备份和已禁用资产恢复文件会被保留。",
   "Select local data and confirm clearing before continuing.": "请选择本地数据并确认后再继续清理。",
+  "Software updates": "软件更新",
+  "Current version {version}": "当前版本 {version}",
+  "Updates are only available in packaged Windows and Linux builds.":
+    "更新仅适用于已打包的 Windows 和 Linux 版本。",
+  "Check for updates": "检查更新",
+  "Download update": "下载更新",
+  "Restart and install": "重启并安装",
+  "Updates are ready to check.": "可以检查更新。",
+  "Checking for updates.": "正在检查更新。",
+  "You are on the latest version.": "当前已是最新版本。",
+  "Version {version} is available.": "版本 {version} 可用。",
+  "Downloading update: {percent}%.": "正在下载更新：{percent}%。",
+  "Version {version} is ready to install.": "版本 {version} 已可安装。",
+  "Update failed: {message}": "更新失败：{message}",
   "{action} failed: {detail}": "{action}失败：{detail}",
   "{action} failed: the system file chooser is unavailable; check desktop file picker permissions and try again. ({detail})":
     "{action}失败：系统文件选择器不可用；请检查桌面文件选择权限后重试。（{detail}）",
@@ -479,11 +496,17 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
     });
   }
 
+  const queuedTask = /^Queued (scan|deployment|migration|rollback) (.+)$/.exec(message);
+  if (queuedTask !== null) {
+    const taskKind = taskKindMessageLabel(locale, queuedTask[1] ?? "");
+    return `${taskKind}已加入队列：${queuedTask[2] ?? ""}`;
+  }
+
   const queued = /^Queued (.+)$/.exec(message);
-  if (queued !== null) return `已加入队列 ${queued[1]}`;
+  if (queued !== null) return `已加入队列：${queued[1]}`;
 
   const completion =
-    /^(Scan|Deployment|Rollback) (complete|partially complete|failed|cancelled|rolled back)(?:: (.*))?\.$/.exec(
+    /^(Scan|Deployment|Migration|Rollback) (complete|partially complete|failed|cancelled|rolled back)(?:: (.*))?\.$/.exec(
       message,
     );
   if (completion !== null) {
@@ -494,9 +517,10 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
     return `${taskKind}${status}${counts}。`;
   }
 
-  const snapshot = /^(scan|deployment|rollback) ([a-z_]+): restored from event snapshot\.$/.exec(
-    message,
-  );
+  const snapshot =
+    /^(scan|deployment|migration|rollback) ([a-z_]+): restored from event snapshot\.$/.exec(
+      message,
+    );
   if (snapshot !== null) {
     const taskKind = taskKindMessageLabel(locale, snapshot[1] ?? "");
     const status = taskStatusMessageLabel(locale, snapshot[2] ?? "");
@@ -504,7 +528,7 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
   }
 
   const progress =
-    /^(scan|deployment|rollback) ([a-z_]+): (\d+\/(?:\d+|\?)) (files|operations|items)$/.exec(
+    /^(scan|deployment|migration|rollback) ([a-z_]+): (\d+\/(?:\d+|\?)) (files|operations|items)$/.exec(
       message,
     );
   if (progress !== null) {
@@ -515,7 +539,7 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
     return `${taskKind}${phase}：${amount} ${unit}`;
   }
 
-  const failed = /^(scan|deployment|rollback) failed: (.+)$/.exec(message);
+  const failed = /^(scan|deployment|migration|rollback) failed: (.+)$/.exec(message);
   if (failed !== null) {
     const taskKind = taskKindMessageLabel(locale, failed[1] ?? "");
     return `${taskKind}失败：${failed[2]}`;
@@ -551,6 +575,8 @@ function taskKindMessageLabel(locale: DesktopLocale, taskKind: string): string {
       return t(locale, "Scan");
     case "deployment":
       return t(locale, "Deployment");
+    case "migration":
+      return t(locale, "Migration");
     case "rollback":
       return t(locale, "Rollback");
     default:

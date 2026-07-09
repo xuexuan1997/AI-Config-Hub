@@ -1384,7 +1384,7 @@ function disablementOptionsForAsset(asset: Asset): readonly AssetDisablementOpti
         ? {
             label: "Move package out of the tool load path",
             description:
-              "Move the skill package directory into the AI Config Hub disabled-assets area.",
+              "Move the Skill package directory into the AI Config Hub disabled-assets area.",
           }
         : {
             label: "Move file out of the tool load path",
@@ -1403,8 +1403,8 @@ function nativeDisablementOption(
   if (asset.resource.kind === "agent") {
     return {
       method: "native",
-      label: "Set OpenCode agent disable to true",
-      description: "Write disable=true for this agent in the OpenCode configuration.",
+      label: "Set OpenCode Agent disable to true",
+      description: "Write disable=true for this Agent in the OpenCode configuration.",
     };
   }
   if (asset.resource.kind === "mcp") {

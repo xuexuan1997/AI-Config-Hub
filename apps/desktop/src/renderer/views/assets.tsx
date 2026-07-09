@@ -30,7 +30,16 @@ export function AssetsView(props: {
   const detail = props.state.assetDetail;
   const diagnosticScope = diagnosticScopeFor(locale, detail);
   const activeTask = props.state.activeTask;
-  const scanTask = activeTask?.taskKind === "scan" ? activeTask : undefined;
+  const scanTask =
+    activeTask?.taskKind === "scan" &&
+    (activeTask.scanScope === undefined || activeTask.scanScope === "asset-review")
+      ? activeTask
+      : undefined;
+  const scanMessage =
+    props.state.scanStatus === "error" &&
+    (props.state.scanScope === undefined || props.state.scanScope === "asset-review")
+      ? props.state.message
+      : undefined;
   const assetsById = new Map(props.state.assets.map((asset) => [asset.id, asset]));
   const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
   const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
@@ -114,7 +123,7 @@ export function AssetsView(props: {
         ariaLabel={t(locale, "Scan status")}
         heading={t(locale, "Scanning assets")}
         locale={locale}
-        message={props.state.scanStatus === "error" ? props.state.message : undefined}
+        message={scanMessage}
         task={scanTask}
       />
       <section className="review-workspace">
@@ -611,19 +620,8 @@ function toolLabel(toolKey: string): string {
 }
 
 function resourceTypeLabel(locale: DesktopLocale, resourceType: string): string {
-  if (locale === "zh-CN" && isResourceKeyword(resourceType)) {
-    return resourceKeywordLabel(resourceType);
-  }
   if (resourceType.toLowerCase() === "mcp") return "MCP";
   return t(locale, titleizeIdentifier(resourceType));
-}
-
-function isResourceKeyword(resourceType: string): boolean {
-  return ["agent", "mcp", "rule", "skill"].includes(resourceType.toLowerCase());
-}
-
-function resourceKeywordLabel(resourceType: string): string {
-  return resourceType.toLowerCase() === "mcp" ? "MCP" : resourceType;
 }
 
 function scopeKindLabel(locale: DesktopLocale, scopeKind: string): string {
@@ -656,18 +654,33 @@ function sentenceCaseIdentifier(identifier: string): string {
   const words = identifier
     .split(/[\s_-]+/)
     .filter((word) => word.length > 0)
-    .map((word) => word.toLowerCase());
+    .map((word) => properNounIdentifierWord(word) ?? word.toLowerCase());
   const firstWord = words[0];
   if (firstWord === undefined) return identifier;
   const remainingWords = words.slice(1);
   return [firstWord[0]?.toUpperCase() + firstWord.slice(1), ...remainingWords].join(" ");
 }
 
+function properNounIdentifierWord(word: string): string | undefined {
+  switch (word.toLowerCase()) {
+    case "agent":
+      return "Agent";
+    case "rule":
+      return "Rule";
+    case "mcp":
+      return "MCP";
+    case "skill":
+      return "Skill";
+    default:
+      return undefined;
+  }
+}
+
 const ZH_DIAGNOSTIC_CODE_LABELS: Readonly<Record<string, string>> = {
   ADAPTER_DIAGNOSTIC: "适配器诊断",
   ADAPTER_PARSE_INVALID: "配置解析失败",
   ADAPTER_WRITE_CAPABILITY_UNAVAILABLE: "适配器写入能力不可用",
-  CURSOR_LEGACY_RULE_FORMAT: "Cursor 旧版规则格式",
+  CURSOR_LEGACY_RULE_FORMAT: "Cursor 旧版 Rule 格式",
   DEPLOYMENT_DELETE_NOT_APPLIED: "部署删除未生效",
   DEPLOYMENT_TARGET_HASH_MISMATCH: "部署目标哈希不匹配",
   DEPLOYMENT_TARGET_SEMANTIC_INVALID: "部署目标语义无效",
@@ -682,7 +695,7 @@ const ZH_DIAGNOSTIC_CODE_LABELS: Readonly<Record<string, string>> = {
   RESOURCE_OUTSIDE_CONFIG_ROOT: "资源位于配置根目录外",
   SCAN_READ_FAILED: "扫描读取失败",
   STALE_INDEX: "索引已过期",
-  UNRESOLVED_SKILL_REFERENCE: "技能引用未解析",
+  UNRESOLVED_SKILL_REFERENCE: "未解析的 Skill 引用",
   VALIDATION_FAILED: "校验失败",
 };
 
@@ -696,7 +709,7 @@ const ZH_DIAGNOSTIC_MESSAGES: Readonly<Record<string, string>> = {
     "MCP 配置似乎包含明文密钥；建议改用环境变量引用。",
   "MCP configuration contains non-deployable secret values": "MCP 配置包含不可部署的密钥值。",
   "Review the diagnostic": "查看此诊断。",
-  "Skill reference could not be resolved": "技能引用无法解析。",
+  "Skill reference could not be resolved": "Skill 引用无法解析。",
   "The .cursorrules format is deprecated": ".cursorrules 格式已弃用。",
   "The configuration file could not be parsed": "配置文件无法解析。",
   "The configuration file could not be read safely": "无法安全读取配置文件。",
@@ -753,14 +766,14 @@ function localizeDiagnosticPattern(text: string): string | undefined {
 
   const unresolvedSkill = /^Skill reference could not be resolved from (.+)$/.exec(text);
   if (unresolvedSkill !== null) {
-    return `无法从 ${unresolvedSkill[1] ?? ""} 解析技能引用。`;
+    return `无法从 ${unresolvedSkill[1] ?? ""} 解析 Skill 引用。`;
   }
 
   const emptyInstructions = /^(.+) resource has empty instructions after trimming whitespace$/.exec(
     text,
   );
   if (emptyInstructions !== null) {
-    return `${emptyInstructions[1] ?? ""} 资源去除空白后指令为空。`;
+    return `${diagnosticResourceTypeLabel(emptyInstructions[1] ?? "")} 资源去除空白后指令为空。`;
   }
 
   const ignored = /^Resource (.+) is ignored by the effective configuration resolution$/.exec(text);
@@ -791,6 +804,10 @@ function localizeDiagnosticPattern(text: string): string | undefined {
   }
 
   return undefined;
+}
+
+function diagnosticResourceTypeLabel(resourceType: string): string {
+  return properNounIdentifierWord(resourceType) ?? resourceType;
 }
 
 function diagnosticScopeFor(locale: DesktopLocale, detail: AppState["assetDetail"]) {

@@ -141,7 +141,7 @@ export abstract class BaseToolAdapter implements ToolAdapter {
           adapterDiagnostic(
             "RESOURCE_INSTRUCTIONS_EMPTY",
             "error",
-            `${asset.resource.kind} resource has empty instructions after trimming whitespace`,
+            `${resourceKindDiagnosticLabel(asset.resource.kind)} resource has empty instructions after trimming whitespace`,
             true,
             { path: asset.canonicalSourcePath },
           ),
@@ -396,7 +396,9 @@ export abstract class BaseToolAdapter implements ToolAdapter {
             diagnostics.push(
               verificationDiagnostic(
                 "DEPLOYMENT_TARGET_SEMANTIC_INVALID",
-                `Deployment target could not be parsed as ${operation.targetResourceKind}: ${operation.targetPath}`,
+                `Deployment target could not be parsed as ${resourceKindDiagnosticLabel(
+                  operation.targetResourceKind,
+                )}: ${operation.targetPath}`,
                 operation.targetPath,
               ),
             );
@@ -408,7 +410,9 @@ export abstract class BaseToolAdapter implements ToolAdapter {
             diagnostics.push(
               verificationDiagnostic(
                 "DEPLOYMENT_TARGET_SEMANTIC_KIND_MISMATCH",
-                `Deployment target did not produce a ${operation.targetResourceKind} resource: ${operation.targetPath}`,
+                `Deployment target did not produce a ${resourceKindDiagnosticLabel(
+                  operation.targetResourceKind,
+                )} resource: ${operation.targetPath}`,
                 operation.targetPath,
               ),
             );
@@ -565,6 +569,21 @@ function resourceInstructions(
 ): string | undefined {
   if (resource.kind === "mcp") return undefined;
   return resource.data.instructions;
+}
+
+function resourceKindDiagnosticLabel(
+  resourceKind: Parameters<typeof resolveAssetsByScope>[0]["assets"][number]["resource"]["kind"],
+): string {
+  switch (resourceKind) {
+    case "agent":
+      return "Agent";
+    case "rule":
+      return "Rule";
+    case "mcp":
+      return "MCP";
+    case "skill":
+      return "Skill";
+  }
 }
 
 function hasLiteralMcpSecretRisk(

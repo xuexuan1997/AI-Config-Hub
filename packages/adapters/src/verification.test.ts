@@ -157,6 +157,7 @@ describe("adapter deployment verification", () => {
         expect.objectContaining({
           code: "DEPLOYMENT_TARGET_SEMANTIC_INVALID",
           blocking: true,
+          message: `Deployment target could not be parsed as Agent: ${agentPath}`,
           location: { path: agentPath },
         }),
       ]),
@@ -266,6 +267,7 @@ describe("adapter deployment verification", () => {
         expect.objectContaining({
           code: "DEPLOYMENT_TARGET_SEMANTIC_KIND_MISMATCH",
           blocking: true,
+          message: `Deployment target did not produce a Rule resource: ${target}`,
           location: { path: target },
         }),
       ]),
@@ -457,6 +459,7 @@ describe("adapter baseline diagnostics", () => {
           code: "RESOURCE_INSTRUCTIONS_EMPTY",
           severity: "error",
           blocking: true,
+          message: "Rule resource has empty instructions after trimming whitespace",
           location: { path: "/project/blank.md" },
         }),
         expect.objectContaining({

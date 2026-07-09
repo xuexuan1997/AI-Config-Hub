@@ -51,13 +51,17 @@ export function ScanTaskPanel(props: {
   const progress = props.task?.progress;
   const failures =
     props.task?.failures ?? (props.task?.failure === undefined ? [] : [props.task.failure]);
+  const heading =
+    props.task === undefined
+      ? props.heading
+      : scanTaskHeading(props.locale, props.heading, props.task);
 
   return (
     <section className="scan-task-panel" aria-label={props.ariaLabel}>
       <header className="scan-task-heading">
         <div>
           <span className="eyebrow">{t(props.locale, "Scan status")}</span>
-          <h2 id={props.titleId}>{props.heading}</h2>
+          <h2 id={props.titleId}>{heading}</h2>
         </div>
         {props.task === undefined ? null : (
           <span className={`scan-task-state ${props.task.status}`}>
@@ -111,6 +115,24 @@ export function ScanTaskPanel(props: {
       )}
     </section>
   );
+}
+
+function scanTaskHeading(locale: DesktopLocale, activeHeading: string, task: ScanTask): string {
+  if (task.status === "running" && task.phase !== "completed") return activeHeading;
+  switch (task.status) {
+    case "succeeded":
+      return t(locale, "Scan complete");
+    case "partially_succeeded":
+      return t(locale, "Scan partially complete");
+    case "failed":
+      return t(locale, "Scan failed");
+    case "cancelled":
+      return t(locale, "Scan cancelled");
+    case "rolled_back":
+      return t(locale, "Scan status");
+    case "running":
+      return activeHeading;
+  }
 }
 
 function phaseLabel(locale: DesktopLocale, phase: ScanTask["phase"]): string {

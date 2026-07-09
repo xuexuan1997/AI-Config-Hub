@@ -85,10 +85,14 @@ describe("OpenCode adapter read path", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: "AGENT_UNSUPPORTED_NATIVE_FIELD",
+          message:
+            "Agent native field is preserved but not represented in the normalized schema: mode",
           evidence: expect.objectContaining({ field: "mode" }) as unknown,
         }),
         expect.objectContaining({
           code: "MCP_UNSUPPORTED_NATIVE_FIELD",
+          message:
+            "MCP native field is preserved but not represented in the normalized schema: enabled",
           evidence: expect.objectContaining({ field: "enabled" }) as unknown,
         }),
       ]),

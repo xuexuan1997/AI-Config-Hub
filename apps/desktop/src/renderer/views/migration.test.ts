@@ -7,6 +7,34 @@ import { initialState, type AppState } from "../model.js";
 import { MigrationView } from "./migration.js";
 
 describe("MigrationView", () => {
+  it("keeps resource type labels consistent with English in Simplified Chinese", () => {
+    const html = renderMigration({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-rule", "rule:AGENTS", { resourceType: "rule" }),
+        assetSummaryFixture("asset-agent", "agent:reviewer", { resourceType: "agent" }),
+        assetSummaryFixture("asset-mcp", "mcp:docs", { resourceType: "mcp" }),
+        assetSummaryFixture("asset-skill", "skill:release", { resourceType: "skill" }),
+      ],
+    });
+
+    expect(html).toContain("<strong>Rule</strong>");
+    expect(html).toContain("<strong>Agent</strong>");
+    expect(html).toContain("<strong>MCP</strong>");
+    expect(html).toContain("<strong>Skill</strong>");
+    expect(html).not.toContain("<strong>规则</strong>");
+    expect(html).not.toContain("<strong>代理</strong>");
+    expect(html).not.toContain("<strong>技能</strong>");
+  });
+
   it("localizes duplicate selected source asset blockers in Chinese", () => {
     const html = renderMigration({
       settings: {

@@ -129,6 +129,35 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("12/80 files");
   });
 
+  it("does not keep the scanning heading after asset review scans complete", () => {
+    const html = renderToStaticMarkup(
+      createElement(AssetsView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:scan:review-complete",
+            taskKind: "scan",
+            phase: "completed",
+            status: "succeeded",
+            recoveryLock: false,
+            progress: { phase: "completed", completed: 7, total: 7, unit: "items" },
+            message: "Scan complete: 7 succeeded.",
+          },
+        },
+        onInspect: vi.fn(),
+        onLoadEffective: vi.fn(),
+        onOpenSource: vi.fn(),
+        onToggleAssetStatus: vi.fn(),
+        onCloseInspect: vi.fn(),
+        onLocateDiagnostic: vi.fn(),
+        onSelectProject: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("Scan complete");
+    expect(html).not.toContain("<h2>Scanning assets</h2>");
+  });
+
   it("shows a modal with live scan status during migration source scans", () => {
     const html = renderToStaticMarkup(
       createElement(MigrationView, {
@@ -141,6 +170,7 @@ describe("desktop renderer view structure", () => {
           activeTask: {
             taskId: "task:scan:migration",
             taskKind: "scan",
+            scanScope: "migration-source",
             phase: "discovering",
             status: "running",
             recoveryLock: false,
@@ -200,6 +230,51 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("Scan complete: 6 succeeded.");
     expect(html).not.toContain("Review scan failed.");
     expect(html).toContain("Scan a source project before creating a migration preview.");
+  });
+
+  it("renders target scan status in the target panel without labeling it as source status", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          migration: {
+            ...initialState.migration,
+            sourceProjectRoot: "/workspace/source",
+            targetScopeId: "/workspace/target",
+          },
+          scanStatus: "error",
+          scanScope: "migration-target",
+          message: "Target scan failed.",
+          activeTask: {
+            taskId: "task:scan:migration-target",
+            taskKind: "scan",
+            scanScope: "migration-target",
+            phase: "reading",
+            status: "failed",
+            recoveryLock: false,
+            progress: { phase: "reading", completed: 2, total: 9, unit: "files" },
+            message: "Scan failed: 2 succeeded, 1 failed.",
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+        onSelectSourceProject: vi.fn(),
+        onSelectTargetProject: vi.fn(),
+        onSwapProjects: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('aria-label="Target scan status"');
+    expect(html).toContain("Target scan");
+    expect(html).toContain("2/9 files");
+    expect(html).toContain("Target scan failed.");
+    expect(html).not.toContain('aria-label="Source scan status"');
+    expect(html).not.toContain("<h2>Source scan</h2>");
   });
 
   it("binds the scroll container identity to the active route", () => {
@@ -368,6 +443,12 @@ describe("desktop renderer view structure", () => {
     const settingsHtml = renderToStaticMarkup(
       createElement(SettingsView, {
         state: zhState,
+        updateStatus: {
+          enabled: false,
+          status: "unsupported",
+          currentVersion: "0.2.12",
+          reason: "Updates are only available in packaged Windows and Linux builds.",
+        },
         onThemeChange: vi.fn(),
         onLanguageChange: vi.fn(),
         onReload: vi.fn(),
@@ -387,6 +468,14 @@ describe("desktop renderer view structure", () => {
     expect(settingsHtml).toContain("<h1>设置</h1>");
     expect(settingsHtml).toContain('value="zh-CN" selected="">简体中文</option>');
     expect(settingsHtml).toContain("修订版本 3");
+    expect(settingsHtml).toContain("软件更新");
+    expect(settingsHtml).toContain("当前版本 0.2.12");
+    expect(settingsHtml).toContain("更新仅适用于已打包的 Windows 和 Linux 版本。");
+    expect(settingsHtml).toContain("检查更新");
+    expect(settingsHtml).not.toContain("Software updates");
+    expect(settingsHtml).not.toContain("Current version 0.2.12");
+    expect(settingsHtml).not.toContain("Updates are only available");
+    expect(settingsHtml).not.toContain("Check for updates");
   });
 
   it("renders primary workflow views in Simplified Chinese", () => {
@@ -499,9 +588,202 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="task-status-summary"');
     expect(html).toContain("Status: Completed");
     expect(html).toContain("1/1 operations");
-    expect(html).toContain("Deployment complete: 1 succeeded.");
+    expect(html).toContain("Migration complete: 1 succeeded.");
+    expect(html).not.toContain("Deployment complete: 1 succeeded.");
     expect(html).not.toContain('<section class="task-status">');
     expect(html).not.toContain("<p>completed ");
+  });
+
+  it("does not show stale migration confirmation controls after completion retires the preview", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:deployment:completed-no-preview",
+            taskKind: "deployment",
+            phase: "completed",
+            status: "succeeded",
+            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+            message: "Deployment complete: 1 succeeded.",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("Migration complete: 1 succeeded.");
+    expect(html).toContain('class="migration-run-status"');
+    expect(html).not.toContain("I understand this writes verified config files.");
+    expect(html).not.toContain("Execute migration");
+    expect(html).not.toContain("Create a migration preview before migrating.");
+  });
+
+  it("labels running deployment task messages as migration copy in the migration workflow", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          settings: {
+            ...initialState.settings,
+            values: { ...initialState.settings.values, language: "zh-CN" },
+          },
+          preview: previewFixture([]),
+          activeTask: {
+            taskId: "task:deployment:running",
+            taskKind: "deployment",
+            phase: "writing",
+            status: "running",
+            progress: { phase: "writing", completed: 2, total: 3, unit: "operations" },
+            message: "deployment writing: 2/3 operations",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("迁移正在写入：2/3 项操作");
+    expect(html).not.toContain("部署正在写入");
+  });
+
+  it("labels queued deployment task messages as migration copy in the migration workflow", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          preview: previewFixture([]),
+          activeTask: {
+            taskId: "task:deployment:queued",
+            taskKind: "deployment",
+            phase: "queued",
+            status: "running",
+            message: "Queued deployment task:deployment:queued",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("Queued migration task:deployment:queued");
+    expect(html).not.toContain("Queued deployment task:deployment:queued");
+  });
+
+  it("localizes queued deployment task messages as migration copy in Simplified Chinese", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          settings: {
+            ...initialState.settings,
+            values: { ...initialState.settings.values, language: "zh-CN" },
+          },
+          preview: previewFixture([]),
+          activeTask: {
+            taskId: "task:deployment:queued",
+            taskKind: "deployment",
+            phase: "queued",
+            status: "running",
+            message: "Queued deployment task:deployment:queued",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("迁移已加入队列：task:deployment:queued");
+    expect(html).not.toContain("已加入队列 migration task:deployment:queued");
+    expect(html).not.toContain("部署已加入队列");
+  });
+
+  it("labels failed deployment task messages as migration copy in the migration workflow", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          preview: previewFixture([]),
+          activeTask: {
+            taskId: "task:deployment:failed",
+            taskKind: "deployment",
+            phase: "completed",
+            status: "failed",
+            message: "deployment failed: VALIDATION_FAILED",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("migration failed: VALIDATION_FAILED");
+    expect(html).not.toContain("deployment failed: VALIDATION_FAILED");
+  });
+
+  it("localizes migration execution progress units in Simplified Chinese", () => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          settings: {
+            ...initialState.settings,
+            values: { ...initialState.settings.values, language: "zh-CN" },
+          },
+          preview: previewFixture([]),
+          activeTask: {
+            taskId: "task:deployment:zh",
+            taskKind: "deployment",
+            phase: "completed",
+            status: "succeeded",
+            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+            message: "Deployment complete: 1 succeeded.",
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("1/1 项操作");
+    expect(html).not.toContain("1/1 operations");
   });
 
   it("states whether asset diagnostics are scoped to the workspace or inspected asset", () => {
@@ -941,6 +1223,7 @@ describe("desktop renderer view structure", () => {
           activeTask: {
             taskId: "task:scan:migration-source",
             taskKind: "scan",
+            scanScope: "migration-source",
             phase: "parsing",
             status: "partially_succeeded",
             progress: { phase: "parsing", completed: 99, total: 100, unit: "files" },

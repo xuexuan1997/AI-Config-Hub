@@ -681,6 +681,55 @@ describe("renderer project selection state", () => {
     });
   });
 
+  it("attaches scan scope to scan status and task updates", () => {
+    const acceptedEvent = {
+      apiVersion: 1,
+      eventVersion: 1,
+      taskId: TaskIdSchema.parse("task:scan:migration-target"),
+      sequence: 1,
+      emittedAt: "2026-06-28T08:00:00.000Z",
+      type: "accepted",
+      payload: {
+        taskKind: "scan",
+        phase: "queued",
+        acceptedAt: "2026-06-28T08:00:00.000Z",
+      },
+    } as const;
+    const progressEvent = {
+      apiVersion: 1,
+      eventVersion: 1,
+      taskId: TaskIdSchema.parse("task:scan:migration-target"),
+      sequence: 2,
+      emittedAt: "2026-06-28T08:00:01.000Z",
+      type: "progress",
+      payload: {
+        phase: "reading",
+        completed: 3,
+        total: 8,
+        unit: "files",
+      },
+    } as const;
+
+    expect(scanActionForTaskEvent(acceptedEvent, "migration-target")).toEqual({
+      type: "scan",
+      status: "queued",
+      scanScope: "migration-target",
+    });
+
+    const accepted = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent(acceptedEvent, "migration-target")!,
+    });
+    const progressed = reducer(accepted, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent(progressEvent, "migration-target")!,
+    });
+
+    expect(accepted.activeTask?.scanScope).toBe("migration-target");
+    expect(progressed.activeTask?.scanScope).toBe("migration-target");
+    expect(progressed.activeTask?.message).toBe("scan reading: 3/8 files");
+  });
+
   it("clears transient messages when navigating to another workspace route", () => {
     const withMessage = reducer(initialState, {
       type: "message",

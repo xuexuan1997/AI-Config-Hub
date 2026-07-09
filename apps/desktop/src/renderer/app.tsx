@@ -24,6 +24,7 @@ import {
   settingsUpdateRequestForState,
   taskActionForTaskEvent,
   type AssetDisablementMethod,
+  type ScanTaskScope,
 } from "./model.js";
 import { AssetsView } from "./views/assets.js";
 import { MigrationView } from "./views/migration.js";
@@ -72,7 +73,7 @@ export function App(props: { readonly api: DesktopApi }) {
         type: "migrationTargetProject",
         targetScopeId,
       });
-      await refreshMigrationProjectAssets("target", targetScopeId);
+      await scanMigrationTargetProject(targetScopeId);
     });
   }
 
@@ -182,13 +183,14 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
+        scanScope: "asset-review",
         ...(response.ok ? {} : { message: localizeUiMessage(locale, response.error.message) }),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {
-          const action = scanActionForTaskEvent(event);
+          const action = scanActionForTaskEvent(event, "asset-review");
           if (action !== undefined) dispatch(action);
-          const taskAction = taskActionForTaskEvent(event);
+          const taskAction = taskActionForTaskEvent(event, "asset-review");
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
             void refreshAssets(props.api).then((assets) => dispatch({ type: "assets", assets }));
@@ -219,13 +221,14 @@ export function App(props: { readonly api: DesktopApi }) {
       dispatch({
         type: "scan",
         status: response.ok ? "queued" : "error",
+        scanScope: "migration-source",
         ...(response.ok ? {} : { message: localizeUiMessage(locale, response.error.message) }),
       });
       if (response.ok) {
         subscribeTask(response.data.taskId, (event) => {
-          const action = scanActionForTaskEvent(event);
+          const action = scanActionForTaskEvent(event, "migration-source");
           if (action !== undefined) dispatch(action);
-          const taskAction = taskActionForTaskEvent(event);
+          const taskAction = taskActionForTaskEvent(event, "migration-source");
           if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
           if (event.type === "completed") {
             void refreshMigrationProjectAssets("source", root);
@@ -233,6 +236,35 @@ export function App(props: { readonly api: DesktopApi }) {
         });
       }
       await refreshMigrationProjectAssets("source", root);
+    });
+  }
+
+  async function scanMigrationTargetProject(root: string) {
+    await runAction("Start target scan", async () => {
+      const projectId = await projectIdForRoot(root);
+      const response = await props.api.invoke("scan.start", {
+        mode: "full",
+        roots: [root],
+        projectId,
+      });
+      dispatch({
+        type: "scan",
+        status: response.ok ? "queued" : "error",
+        scanScope: "migration-target",
+        ...(response.ok ? {} : { message: localizeUiMessage(locale, response.error.message) }),
+      });
+      if (response.ok) {
+        subscribeTask(response.data.taskId, (event) => {
+          const action = scanActionForTaskEvent(event, "migration-target");
+          if (action !== undefined) dispatch(action);
+          const taskAction = taskActionForTaskEvent(event, "migration-target");
+          if (taskAction !== undefined) dispatch({ type: "taskEvent", action: taskAction });
+          if (event.type === "completed") {
+            void refreshMigrationProjectAssets("target", root);
+          }
+        });
+      }
+      await refreshMigrationProjectAssets("target", root);
     });
   }
 
@@ -352,9 +384,9 @@ export function App(props: { readonly api: DesktopApi }) {
     props.api.subscribeTask(taskId, 0, onEvent);
   }
 
-  function subscribeOperationTask(taskId: string): void {
+  function subscribeOperationTask(taskId: string, scanScope?: ScanTaskScope): void {
     subscribeTask(taskId, (event) => {
-      const action = taskActionForTaskEvent(event);
+      const action = taskActionForTaskEvent(event, scanScope);
       if (action !== undefined) dispatch({ type: "taskEvent", action });
     });
   }

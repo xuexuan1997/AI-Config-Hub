@@ -61,9 +61,21 @@ export function MigrationView(props: {
   const grantedConfirmations = new Set(props.state.deploymentConfirmationGrants);
   const stateActiveTask = props.state.activeTask;
   const hasSourceProject = (props.state.migration.sourceProjectRoot?.trim().length ?? 0) > 0;
+  const hasTargetProject = (props.state.migration.targetScopeId?.trim().length ?? 0) > 0;
   const activeTask = stateActiveTask?.taskKind === "deployment" ? stateActiveTask : undefined;
-  const scanTask =
-    stateActiveTask?.taskKind === "scan" && hasSourceProject ? stateActiveTask : undefined;
+  const sourceScanTask =
+    stateActiveTask?.taskKind === "scan" &&
+    stateActiveTask.scanScope === "migration-source" &&
+    hasSourceProject
+      ? stateActiveTask
+      : undefined;
+  const targetScanTask =
+    stateActiveTask?.taskKind === "scan" &&
+    stateActiveTask.scanScope === "migration-target" &&
+    hasTargetProject
+      ? stateActiveTask
+      : undefined;
+  const scanTask = sourceScanTask ?? targetScanTask;
   const targetRows = useMemo(
     () => targetRowsForState(props.state, activeResourceType),
     [props.state, activeResourceType],
@@ -159,11 +171,13 @@ export function MigrationView(props: {
             heading={t(locale, "Source scan")}
             locale={locale}
             message={
-              hasSourceProject && props.state.scanStatus === "error"
+              hasSourceProject &&
+              props.state.scanStatus === "error" &&
+              props.state.scanScope === "migration-source"
                 ? props.state.message
                 : undefined
             }
-            task={scanTask}
+            task={sourceScanTask}
           />
           <div className="migration-asset-list">
             {!hasSourceProject ? (
@@ -290,6 +304,19 @@ export function MigrationView(props: {
             <dt>{t(locale, "Target tool")}</dt>
             <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
           </dl>
+          <ScanTaskPanel
+            ariaLabel={t(locale, "Target scan status")}
+            heading={t(locale, "Target scan")}
+            locale={locale}
+            message={
+              hasTargetProject &&
+              props.state.scanStatus === "error" &&
+              props.state.scanScope === "migration-target"
+                ? props.state.message
+                : undefined
+            }
+            task={targetScanTask}
+          />
           <div className="migration-asset-list">
             {props.state.migration.targetScopeId === undefined ? (
               <p>{t(locale, "Choose a target project to see target assets.")}</p>
@@ -834,11 +861,11 @@ function MigrationExecutionPanel(props: {
               })}
             </span>
             {props.activeTask.progress === undefined ? null : (
-              <span>{progressLabel(props.activeTask)}</span>
+              <span>{progressLabel(props.locale, props.activeTask)}</span>
             )}
           </p>
           {props.activeTask.message === undefined ? null : (
-            <p>{localizeUiMessage(props.locale, props.activeTask.message)}</p>
+            <p>{migrationTaskMessage(props.locale, props.activeTask)}</p>
           )}
           {props.activeTask.recoveryLock ? (
             <div className="recovery-lock">
@@ -847,46 +874,50 @@ function MigrationExecutionPanel(props: {
           ) : null}
         </section>
       )}
-      <section
-        className="migration-confirmation-panel"
-        aria-label={t(props.locale, "Migration confirmations")}
-      >
-        <label className="confirmation-item">
-          <input
-            checked={props.deploymentConfirmed}
-            type="checkbox"
-            onChange={(event) => props.onConfirmMigration(event.currentTarget.checked)}
-          />
-          <span>{t(props.locale, "I understand this writes verified config files.")}</span>
-        </label>
-        {props.requiredConfirmations.length === 0 ? null : (
-          <fieldset className="confirmation-list">
-            <legend>{t(props.locale, "Required confirmations")}</legend>
-            {props.requiredConfirmations.map((confirmation) => (
-              <label key={confirmation} className="confirmation-item">
-                <input
-                  checked={props.grantedConfirmations.has(confirmation)}
-                  type="checkbox"
-                  onChange={(event) =>
-                    props.onConfirmRequirement(confirmation, event.currentTarget.checked)
-                  }
-                />
-                <span>{t(props.locale, deploymentConfirmationLabel(confirmation))}</span>
-              </label>
-            ))}
-          </fieldset>
-        )}
-      </section>
-      <div className="migration-action-row">
-        <button
-          type="button"
-          disabled={props.deploymentBlockers.length > 0}
-          onClick={props.onExecuteMigration}
+      {props.preview === undefined ? null : (
+        <section
+          className="migration-confirmation-panel"
+          aria-label={t(props.locale, "Migration confirmations")}
         >
-          {t(props.locale, "Execute migration")}
-        </button>
-      </div>
-      {props.deploymentBlockers.length === 0 ? null : (
+          <label className="confirmation-item">
+            <input
+              checked={props.deploymentConfirmed}
+              type="checkbox"
+              onChange={(event) => props.onConfirmMigration(event.currentTarget.checked)}
+            />
+            <span>{t(props.locale, "I understand this writes verified config files.")}</span>
+          </label>
+          {props.requiredConfirmations.length === 0 ? null : (
+            <fieldset className="confirmation-list">
+              <legend>{t(props.locale, "Required confirmations")}</legend>
+              {props.requiredConfirmations.map((confirmation) => (
+                <label key={confirmation} className="confirmation-item">
+                  <input
+                    checked={props.grantedConfirmations.has(confirmation)}
+                    type="checkbox"
+                    onChange={(event) =>
+                      props.onConfirmRequirement(confirmation, event.currentTarget.checked)
+                    }
+                  />
+                  <span>{t(props.locale, deploymentConfirmationLabel(confirmation))}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+        </section>
+      )}
+      {props.preview === undefined ? null : (
+        <div className="migration-action-row">
+          <button
+            type="button"
+            disabled={props.deploymentBlockers.length > 0}
+            onClick={props.onExecuteMigration}
+          >
+            {t(props.locale, "Execute migration")}
+          </button>
+        </div>
+      )}
+      {props.preview === undefined || props.deploymentBlockers.length === 0 ? null : (
         <ul className="blocker-panel">
           {props.deploymentBlockers.map((blocker) => (
             <li key={blocker}>
@@ -900,6 +931,22 @@ function MigrationExecutionPanel(props: {
         </ul>
       )}
     </section>
+  );
+}
+
+function migrationTaskMessage(
+  locale: DesktopLocale,
+  activeTask: NonNullable<AppState["activeTask"]>,
+): string {
+  const message = activeTask.message;
+  if (message === undefined) return "";
+  if (activeTask.taskKind !== "deployment") return localizeUiMessage(locale, message);
+  return localizeUiMessage(
+    locale,
+    message
+      .replace(/^Queued deployment /, "Queued migration ")
+      .replace(/^Deployment /, "Migration ")
+      .replace(/^deployment /, "migration "),
   );
 }
 
@@ -985,12 +1032,30 @@ function phaseLabel(
   }
 }
 
-function progressLabel(task: NonNullable<AppState["activeTask"]>): string {
+function progressLabel(locale: DesktopLocale, task: NonNullable<AppState["activeTask"]>): string {
   const progress = task.progress;
   if (progress === undefined) return "";
+  const unit = progressUnitLabel(locale, progress.unit);
   return progress.total === null
-    ? `${progress.completed} ${progress.unit}`
-    : `${progress.completed}/${progress.total} ${progress.unit}`;
+    ? `${progress.completed} ${unit}`
+    : `${progress.completed}/${progress.total} ${unit}`;
+}
+
+function progressUnitLabel(
+  locale: DesktopLocale,
+  unit: NonNullable<NonNullable<AppState["activeTask"]>["progress"]>["unit"],
+): string {
+  if (locale === "zh-CN") {
+    switch (unit) {
+      case "files":
+        return "个文件";
+      case "operations":
+        return "项操作";
+      case "items":
+        return "项";
+    }
+  }
+  return unit;
 }
 
 function FieldLossDetail(props: {

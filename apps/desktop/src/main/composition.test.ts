@@ -765,7 +765,16 @@ describe("desktop command service composition", () => {
     await writeFile(
       configPath,
       JSON.stringify(
-        { mcp: { docs: { command: ["node", "server.js"], enabled: false } } },
+        {
+          agent: {
+            reviewer: {
+              description: "Reviews code",
+              prompt: "Review carefully.",
+              disable: false,
+            },
+          },
+          mcp: { docs: { command: ["node", "server.js"], enabled: false } },
+        },
         null,
         2,
       ),
@@ -786,8 +795,21 @@ describe("desktop command service composition", () => {
       });
       const assets = await runtime.services["assets.list"]({ toolKeys: ["opencode"], limit: 50 });
       const source = assets.items.find((asset) => asset.logicalKey === "mcp:docs");
+      const agent = assets.items.find((asset) => asset.logicalKey === "agent:reviewer");
       if (source === undefined) throw new Error("Expected scanned OpenCode MCP asset");
+      if (agent === undefined) throw new Error("Expected scanned OpenCode Agent asset");
       expect(source.status).toBe("disabled");
+      expect(
+        (await runtime.services["assets.get"]({ assetId: agent.id })).asset.disablementOptions,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "native",
+            label: "Set OpenCode Agent disable to true",
+            description: "Write disable=true for this Agent in the OpenCode configuration.",
+          }),
+        ]),
+      );
 
       expect(await runtime.services["assets.enable"]({ assetId: source.id })).toEqual({
         assetId: source.id,
@@ -1220,7 +1242,7 @@ describe("desktop command service composition", () => {
     await mkdir(cursorRules, { recursive: true });
     const canonicalProject = await realpath(project);
     await writeFile(join(project, "AGENTS.md"), "Use local TypeScript conventions.\n", "utf8");
-    await writeFile(join(project, ".cursor", "rules", "agents.mdc"), "Existing Cursor rule.\n", {
+    await writeFile(join(project, ".cursor", "rules", "agents.mdc"), "Existing Cursor Rule.\n", {
       encoding: "utf8",
       flag: "wx",
     });
@@ -1278,7 +1300,7 @@ describe("desktop command service composition", () => {
         }),
       ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
       await expect(readFile(join(project, ".cursor", "rules", "agents.mdc"), "utf8")).resolves.toBe(
-        "Existing Cursor rule.\n",
+        "Existing Cursor Rule.\n",
       );
 
       const deployment = await runtime.services["deployment.execute"]({
@@ -1330,7 +1352,7 @@ describe("desktop command service composition", () => {
       ).resolves.toContain("Use local TypeScript conventions.");
       await expect(
         readFile(join(project, ".cursor", "rules", "agents.mdc"), "utf8"),
-      ).resolves.not.toContain("Existing Cursor rule.");
+      ).resolves.not.toContain("Existing Cursor Rule.");
 
       await writeFile(
         join(project, ".cursor", "rules", "agents.mdc"),
@@ -1569,6 +1591,17 @@ describe("desktop command service composition", () => {
       );
       if (rule === undefined) throw new Error("Expected scanned Codex rule asset");
       if (skill === undefined) throw new Error("Expected scanned Codex skill asset");
+      expect(
+        (await runtime.services["assets.get"]({ assetId: skill.id })).asset.disablementOptions,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "move_file",
+            description:
+              "Move the Skill package directory into the AI Config Hub disabled-assets area.",
+          }),
+        ]),
+      );
 
       await runtime.services["migration.preview"]({
         sourceAssetIds: [rule.id, skill.id],

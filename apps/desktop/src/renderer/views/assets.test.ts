@@ -416,7 +416,7 @@ describe("AssetsView", () => {
     );
   });
 
-  it("keeps resource type keywords untranslated in Simplified Chinese", () => {
+  it("keeps resource type proper nouns untranslated in Simplified Chinese", () => {
     const html = renderAssets({
       settings: {
         ...initialState.settings,
@@ -426,12 +426,17 @@ describe("AssetsView", () => {
         assetSummaryFixture("asset-rule", "rule:AGENTS", { resourceType: "rule" }),
         assetSummaryFixture("asset-agent", "agent:reviewer", { resourceType: "agent" }),
         assetSummaryFixture("asset-mcp", "mcp:docs", { resourceType: "mcp" }),
+        assetSummaryFixture("asset-skill", "skill:release", { resourceType: "skill" }),
       ],
     });
 
-    expect(html).toContain("<strong>rule</strong>");
-    expect(html).toContain("<strong>agent</strong>");
+    expect(html).toContain("<strong>Rule</strong>");
+    expect(html).toContain("<strong>Agent</strong>");
     expect(html).toContain("<strong>MCP</strong>");
+    expect(html).toContain("<strong>Skill</strong>");
+    expect(html).not.toContain("<strong>规则</strong>");
+    expect(html).not.toContain("<strong>代理</strong>");
+    expect(html).not.toContain("<strong>技能</strong>");
   });
 
   it("localizes workspace diagnostic text in Simplified Chinese", () => {
@@ -460,6 +465,62 @@ describe("AssetsView", () => {
     expect(html).not.toContain("Scan read failed");
     expect(html).not.toContain("The configuration file could not be read safely");
     expect(html).not.toContain("Check file permissions and retry the scan");
+  });
+
+  it("preserves resource type proper noun casing in English diagnostic labels", () => {
+    const html = renderAssets({
+      diagnostics: [
+        diagnosticFixture("diagnostic-mcp", "MCP_LITERAL_SECRET_RISK", "error"),
+        diagnosticFixture("diagnostic-rule", "CURSOR_LEGACY_RULE_FORMAT", "warning"),
+        diagnosticFixture("diagnostic-skill", "UNRESOLVED_SKILL_REFERENCE", "warning"),
+      ],
+      diagnosticCounts: { info: 0, warning: 2, error: 1 },
+    });
+
+    expect(html).toContain("<strong>MCP literal secret risk</strong>");
+    expect(html).toContain("<strong>Cursor legacy Rule format</strong>");
+    expect(html).toContain("<strong>Unresolved Skill reference</strong>");
+    expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
+    expect(html).not.toContain("<strong>Cursor legacy rule format</strong>");
+    expect(html).not.toContain("<strong>Unresolved skill reference</strong>");
+  });
+
+  it("preserves resource type proper nouns in Simplified Chinese diagnostics", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-rule"),
+          code: "CURSOR_LEGACY_RULE_FORMAT",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-rule"),
+          message: "rule resource has empty instructions after trimming whitespace",
+          suggestedAction: "Review the source configuration and scan again",
+          blocking: true,
+        },
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-skill"),
+          code: "UNRESOLVED_SKILL_REFERENCE",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-skill"),
+          message: "Skill reference could not be resolved from skill:release",
+          suggestedAction: "Create the referenced file or remove the reference",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 2, error: 0 },
+    });
+
+    expect(html).toContain("<strong>Cursor 旧版 Rule 格式</strong>");
+    expect(html).toContain("<strong>未解析的 Skill 引用</strong>");
+    expect(html).toContain("Rule 资源去除空白后指令为空。");
+    expect(html).toContain("无法从 skill:release 解析 Skill 引用。");
+    expect(html).not.toContain("旧版规则格式");
+    expect(html).not.toContain("技能引用");
+    expect(html).not.toContain("rule 资源去除空白后指令为空。");
   });
 
   it("renders workspace diagnostic filters by severity and diagnostic code", () => {
@@ -535,7 +596,7 @@ describe("AssetsView", () => {
     );
 
     expect(html).toContain('<span class="diagnostic-severity-pill error">Error</span>');
-    expect(html).toContain("<strong>Mcp literal secret risk</strong>");
+    expect(html).toContain("<strong>MCP literal secret risk</strong>");
     expect(html).not.toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
     expect(html).not.toContain("<strong>Scan read failed</strong>");
   });

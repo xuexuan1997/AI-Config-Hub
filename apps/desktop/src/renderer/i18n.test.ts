@@ -4,7 +4,10 @@ import { formatLocalizedUiError, localeForLanguageSetting, localizeUiMessage, t 
 
 describe("renderer i18n", () => {
   it("localizes generated task and action error messages in Simplified Chinese", () => {
-    expect(localizeUiMessage("zh-CN", "Queued task:scan:1")).toBe("已加入队列 task:scan:1");
+    expect(localizeUiMessage("zh-CN", "Queued task:scan:1")).toBe("已加入队列：task:scan:1");
+    expect(localizeUiMessage("zh-CN", "Queued migration task:deployment:1")).toBe(
+      "迁移已加入队列：task:deployment:1",
+    );
     expect(localizeUiMessage("zh-CN", "Deployment complete: 1 succeeded.")).toBe(
       "部署已完成：1 项成功。",
     );
@@ -27,8 +30,9 @@ describe("renderer i18n", () => {
     expect(t("zh-CN", "No, covered by {asset}", { asset: "mcp:docs" })).toBe(
       "否，已被 mcp:docs 覆盖",
     );
-    expect(t("zh-CN", "Agent")).toBe("代理");
-    expect(t("zh-CN", "Rule")).toBe("规则");
+    expect(t("zh-CN", "Agent")).toBe("Agent");
+    expect(t("zh-CN", "Rule")).toBe("Rule");
+    expect(t("zh-CN", "Skill")).toBe("Skill");
   });
 
   it("localizes asset status failure messages from the desktop service", () => {
