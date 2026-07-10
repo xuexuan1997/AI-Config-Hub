@@ -18,13 +18,17 @@ It is not a simple file sync tool. Before writing, AI Config Hub surfaces target
 
 ### Current Experience
 
-The desktop app is the most complete UX entry point today. Its sidebar has three workspaces:
+The current code version is `0.2.18`. The Electron desktop app is the most complete UX entry point, with three workspaces in its sidebar:
 
-- **Asset Review**: select a current project and scan automatically; filter Rules, Agents, Skills, and MCP assets by tool and resource type; review logical keys, source directories, load state, diagnostic counts, and asset detail.
-- **Asset Migration**: choose source and target projects independently, select source assets, target tool, and conflict policy, create a write preview, then confirm hashes, field loss, overwrite/delete risks, and execute the migration.
-- **Settings**: configure theme and language, including system, light, dark, English, and Simplified Chinese.
+- **Asset Review**: select a current project and scan automatically; browse Rules, Agents, Skills, and MCP by tool and resource type; inspect scope, source, loaded/covered/disabled state, and diagnostic counts. Workspace diagnostics can be filtered by severity and diagnostic code, then located back to the associated asset.
+- **Asset Migration**: choose or swap source and target projects independently, compare both sides, and select source assets, a target tool, and a `fail`, `replace`, or `merge` conflict policy. Every migration must create a preview before hashes, field loss, and overwrite/delete risks are confirmed for execution.
+- **Settings**: configure system/light/dark theme and English/Simplified Chinese language; selectively clear scan cache, deployment history, or preferences without deleting project configuration or recovery backups. Packaged Windows and Linux builds can also check for, download, and restart to install updates.
 
-The asset detail dialog can open the source file, enable or disable an asset, load effective configuration, and show normalized content, references, contributors, ignored assets, and effective diagnostics. The migration page shows difference summaries, target file changes, retained/dropped/transformed fields, source drift, source/target hash snapshots, and task execution status.
+The asset detail dialog can open a source, choose an appropriate enable/disable method, inspect normalized content and references, and load effective configuration. Effective resolution explains inherited, merged, and overridden contributors; ignored assets and covering relationships; diagnostics; and the snapshot revision.
+
+Skills are handled as complete directory packages rather than only as a `SKILL.md` file. Asset Review summarizes file, folder, text, and binary counts and shows the package tree. Migration generates the target `SKILL.md`, copies text and binary support files, and checks package-wide hashes and drift. The move-file disablement method moves the entire Skill directory package and allows it to be restored.
+
+Scans report phases, progress, and item failures, and can be cancelled before the index commit begins. The desktop app watches scanned roots by default and incrementally refreshes the index; changes affecting either side of a migration retire stale previews. After a renderer reload, the app also attempts to reconnect to active scan, deployment, or rollback tasks.
 
 ### Visual Overview
 
@@ -34,11 +38,13 @@ The asset detail dialog can open the source file, enable or disable an asset, lo
 
 #### Current Desktop Workflow
 
-The screenshots come from the desktop review and migration flow and are cropped so the local path bar is not shown.
+The screenshots use a sanitized demo project and one shared English dark-theme capture set.
 
-| Asset review                                                                                 | Migration preview                                                                                            | Settings                                                                                   |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset review interface" width="300"> | <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Migration preview interface" width="300"> | <img src="./docs/readme/assets/desktop-settings.png" alt="Settings interface" width="300"> |
+| Asset review and diagnostics                                                                                                         | Skill package detail                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset review, Skill package summary, and workspace diagnostics" width="420"> | <img src="./docs/readme/assets/desktop-skill-package.png" alt="Skill package summary and file tree" width="420"> |
+| **Migration preview**                                                                                                                | **Settings and local data**                                                                                      |
+| <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Skill package migration preview" width="420">                     | <img src="./docs/readme/assets/desktop-settings.png" alt="Settings and local-data clearing" width="420">         |
 
 #### Architecture Overview
 
@@ -46,41 +52,55 @@ The screenshots come from the desktop review and migration flow and are cropped 
 
 ### Implemented Capabilities
 
-- Multi-tool scanning for Claude Code, Cursor, Codex, and OpenCode Rules, Agents, Skills, and MCP assets.
-- Unified asset model that normalizes tool-specific files into `rule`, `agent`, `skill`, and `mcp` resources while preserving source, scope, hash, and diagnostic evidence.
-- Asset review by tool, resource type, scope, and diagnostics, with source opening, enable/disable controls, and diagnostic location.
-- Effective configuration explanation for contributors, inheritance, merge, override, ignored assets, and effective diagnostics.
-- Diagnostics and reports for parsing, compatibility, permissions, conflicts, literal secret risk, drift, deployment, and verification; the CLI can export diagnostics.
-- Migration previews with plans, diffs, compatibility results, field loss, source/target hashes, and target impact.
-- Controlled deployment from a fresh preview plan hash, with required confirmations for overwrite, partial conversion, and delete risks.
-- Recovery evidence through CLI and API support for deployment/rollback history, rollback execution, task events, and local Git snapshot evidence.
-- Settings and localization for desktop theme, language, settings revisions, English, and Simplified Chinese.
-- Multiple entry points: the desktop app for the main interactive workflow, the CLI for automation and audit, and the local Web UI for Local API connection, scanning, asset listing, and task events.
+| Capability                | Current implementation                                                                                                                                                                                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-tool model          | Built-in adapters for Claude Code, Cursor, Codex, and OpenCode normalize tool-specific files into `rule`, `agent`, `skill`, and `mcp`, preserving user/project/directory scope, native identity, source files, content hashes, and diagnostic evidence.                 |
+| Scanning and indexing     | Full and incremental scans, tool filters, path-boundary and symlink-escape protection, cancellation, phase progress, partial-success summaries, file watching, and automatic incremental refresh. Scanning does not execute Skills, MCP servers, or referenced scripts. |
+| Asset review              | Logical keys, scopes, source summaries, load state, diagnostic counts, and detail; external-editor opening; severity/code diagnostic filters and location; normalized content, references, and complete Skill package trees.                                            |
+| Effective configuration   | Tool-specific precedence resolution returns final configuration, inherited/merged/overridden contributors, ignored or covered assets, effective diagnostics, and a snapshot revision.                                                                                   |
+| Asset enablement          | Depending on the asset and tool, disable through a native switch, move a file or whole Skill package, remove a configuration entry, or ignore only in the Hub; persist recovery records and enable again.                                                               |
+| Diagnostics and reports   | Parsing, Skill metadata/reference/size limits, compatibility, permission, conflict, literal-secret risk, drift, deployment, and verification diagnostics. CLI/API reports support project, tool, severity, and time filters with JSON or Markdown export.               |
+| Migration preview         | Cross-tool compatibility and retained/transformed/dropped fields; package-grouped file changes, diffs, source/target hashes, difference summaries, required confirmations, and expiry. Plans support generated-file, copy, and symlink operations.                      |
+| Controlled writes         | Only fresh previews with a matching plan hash execute; source/target drift and overwrite/partial-conversion/delete confirmations are rechecked. Execution uses path locks, backups, atomic writes, rescan verification, and compensation on failure.                    |
+| History and recovery      | CLI/API deployment and rollback history, detail, rollback execution, task events, and local Git snapshot evidence. Rollback checks current targets and backup integrity. Unsafe failures activate a recovery lock that blocks later deployment.                         |
+| Settings and distribution | Theme, language, revision-conflict protection, and controlled local-data clearing; Windows x64 NSIS, macOS x64/arm64 DMG, and Linux x64 AppImage packaging with checksums, SBOMs, and release evidence. Linux retains a glibc 2.28 compatibility audit.                 |
 
-See [docs/implementation/phase-status.md](./docs/implementation/phase-status.md) for the current implementation status. Diagnostics, conversion, deployment, the central asset library, Git asset repository primitives, Local API, local Web UI, and three-platform packaging are covered for the current tracked scope; team identity, approval flows, hosted collaboration services, and online sharing markets remain outside the MVP boundary.
+#### Entry-point coverage and boundaries
+
+- **Desktop**: asset review, effective configuration, migration preview/deployment, and settings. There is currently no History workspace in the sidebar; rollback and complete history queries are primarily exposed through CLI/API.
+- **CLI**: scanning and status lookup, asset query and enablement, effective configuration, diagnostics/export, migration preview, deployment, history, and rollback for automation, CI, and audit.
+- **Local API / Web UI**: `packages/local-api` is an embeddable local HTTP/SSE server library. It binds to loopback by default and enforces Bearer authentication, Origin restrictions, and no-store responses. `apps/web` is currently a lightweight client for connecting to an already-running Local API, scanning, listing assets, and viewing task events; the repository does not yet provide a standalone Local API launch command.
+- **Library-level capabilities**: `packages/asset-library` implements a personal central asset library, source tracking, and Preset preview/application. `packages/git` implements remote Git asset-repository primitives. These are tested foundation libraries, but are not yet wired into desktop or CLI user workflows.
+
+The normalized model currently excludes other tool asset families such as Hooks, Commands, and Plugins, and conversion is not guaranteed to preserve every field losslessly. Fields that cannot be represented are reported as partial compatibility, transformations, or dropped-field evidence in the preview. Team identity, approval flows, hosted collaboration services, and online sharing markets remain outside the MVP boundary.
+
+See [docs/implementation/phase-status.md](./docs/implementation/phase-status.md) for implementation evidence. “Complete” there refers to the tracked code/test scope, not to every capability having a complete user interface.
 
 ### CLI
 
-The CLI exposes the same core use cases as the desktop app and is useful for scripting, CI checks, and audit:
+The CLI exposes shared core use cases and is useful for scripting, CI checks, and audit:
 
 ```bash
 ai-config-hub scan <roots...>
+ai-config-hub scan status <task-id>
 ai-config-hub assets list --tool claude-code
 ai-config-hub assets get <asset-id> --include normalized --include diagnostics
+ai-config-hub assets disable <asset-id> --method move_file
+ai-config-hub assets enable <asset-id>
 ai-config-hub effective --tool claude-code --project <project-id> --scope <scope-id>
-ai-config-hub diagnose --severity error
+ai-config-hub diagnose --severity error --code <diagnostic-code>
 ai-config-hub diagnose export --format markdown
 ai-config-hub migrate --dry-run --asset <asset-id> --to cursor --scope <target-scope>
-ai-config-hub deploy <plan-id> --plan-hash <hash> --yes
+ai-config-hub deploy <plan-id> --plan-hash <hash> --confirm overwrite --yes
 ai-config-hub history --kind deployment
 ai-config-hub rollback <deployment-id> --yes
 ```
 
-All major CLI commands support `--json`. `migrate` only creates a preview plan; actual writes must be explicitly confirmed through `deploy`.
+All major CLI commands support `--json`. `migrate` only creates a preview plan; actual writes must be explicitly confirmed through `deploy`. Pass each value returned in `requiredConfirmations` through `--confirm`; possible values are `partial_conversion`, `overwrite`, and `delete`. The sample uses `overwrite` only to illustrate a plan with overwrite risk.
 
 ### Local API And Web UI
 
-`packages/local-api` provides a local HTTP/SSE API with authentication and origin restrictions. `apps/web` is a lightweight Local API client for entering a local API URL and token, starting scans, refreshing assets, and viewing task events. The complete review and migration workflow lives in the desktop app.
+`packages/local-api` provides an embeddable local HTTP/SSE API with authentication and origin restrictions. `apps/web` is a lightweight Local API client for entering the URL and token of an already-running server, starting scans, refreshing assets, and viewing task events. The repository currently has no standalone Local API server launch command; the complete review and migration workflow lives in the desktop app.
 
 ### Design Principles
 
