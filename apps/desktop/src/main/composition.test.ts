@@ -526,6 +526,7 @@ describe("desktop command service composition", () => {
         cwd: sourceProject,
         now: () => "2026-06-28T08:00:00.000Z",
         userDataPath: userData,
+        fileWatcherFactory: () => ({ start: () => Promise.resolve(), close() {} }),
       });
 
       try {
@@ -592,6 +593,7 @@ describe("desktop command service composition", () => {
         cwd: sourceProject,
         now: () => "2026-06-28T08:00:00.000Z",
         userDataPath: userData,
+        fileWatcherFactory: () => ({ start: () => Promise.resolve(), close() {} }),
       });
 
       try {
