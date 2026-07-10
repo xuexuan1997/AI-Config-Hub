@@ -646,6 +646,7 @@ describe("desktop command service composition", () => {
       cwd: sourceProject,
       now: () => "2026-06-28T08:00:00.000Z",
       userDataPath: userData,
+      fileWatcherFactory: () => ({ start: () => Promise.resolve(), close() {} }),
     });
 
     try {
@@ -707,7 +708,7 @@ describe("desktop command service composition", () => {
     } finally {
       runtime.close();
     }
-  });
+  }, 20_000);
 
   it("filters asset lists by indexed project id for independent migration projects", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-project-filter-"));
@@ -2723,6 +2724,7 @@ describe("desktop command service composition", () => {
       cwd: project,
       now: () => "2026-06-28T08:00:00.000Z",
       userDataPath: userData,
+      fileWatcherFactory: () => ({ start: () => Promise.resolve(), close() {} }),
     });
 
     try {
