@@ -29,12 +29,24 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertEffectiveResponseArrayBound,
-  createDesktopCommandServices,
+  createDesktopCommandServices as createDesktopCommandServicesImpl,
   DesktopTaskEvents,
   resetLocalHistory,
 } from "./composition.js";
 
 const temporaryDirectories: string[] = [];
+
+// Watcher-specific tests inject their own factory; keep all other fixtures free of background scans.
+function createDesktopCommandServices(
+  options: Parameters<typeof createDesktopCommandServicesImpl>[0],
+): ReturnType<typeof createDesktopCommandServicesImpl> {
+  return createDesktopCommandServicesImpl({
+    ...options,
+    fileWatcherFactory:
+      options.fileWatcherFactory ?? (() => ({ start: () => Promise.resolve(), close() {} })),
+  });
+}
+
 type DesktopRuntimeFixture = Awaited<ReturnType<typeof createDesktopCommandServices>>;
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
