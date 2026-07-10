@@ -1,15 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { chmod, mkdir, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, readdir, realpath as fsRealpath, rm } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { createDefaultAdapterRegistry, type AdapterRegistry } from "@ai-config-hub/adapters";
+import {
+  createDefaultAdapterRegistry,
+  enumerateSkillPackageSourceFiles,
+  type AdapterRegistry,
+} from "@ai-config-hub/adapters";
 import {
   CHANGE_DETAIL_LIMIT,
   GROUP_TARGET_PATH_SAMPLE_LIMIT,
+  DeploymentRecordSchema,
   DeploymentStatusSchema,
   EffectiveConfigSchema,
+  ScanRunSummarySchema,
   operationGroupsForPlan,
 } from "@ai-config-hub/core";
 import type {
@@ -45,7 +51,9 @@ import {
   createNodeFileAccess,
   NodeFileWatcher,
   ScanService,
+  stableId,
   WatchService,
+  type NodeFileWatcherOptions,
   type ScanItemFailure,
   type WatchBatch,
 } from "@ai-config-hub/scanner";
@@ -71,6 +79,7 @@ import {
   ToolInstallationIdSchema,
   type AbsolutePath,
   type ContentHash,
+  type DeploymentRecordId,
   type ProjectId,
   type ScopeKind,
   type TaskId,
@@ -87,11 +96,23 @@ import { LocalHistoryService, SystemLocalGitPort } from "@ai-config-hub/git";
 import { createStorageRepositories, openDatabase } from "@ai-config-hub/storage";
 
 const NOOP_ADAPTER_LOGGER = { debug() {}, warn() {} } satisfies AdapterLogger;
+const INDEX_SNAPSHOT_READ_ATTEMPTS = 3;
+const INTERNAL_PAGE_SIZE = 10_000;
+const DIAGNOSTIC_EXPORT_ITEM_LIMIT = 10_000;
+const DIAGNOSTIC_REPORT_MAX_BYTES = 1_000_000;
+const EFFECTIVE_RESPONSE_ARRAY_LIMIT = 10_000;
 const SOURCE_FILE_ROLE_ORDER = new Map([
   ["primary", 0],
   ["metadata", 1],
   ["support", 2],
 ] as const);
+
+type DesktopFileWatcher = Pick<NodeFileWatcher, "start" | "close">;
+type DesktopFileWatcherFactory = (options: NodeFileWatcherOptions) => DesktopFileWatcher;
+type DesktopDeploymentFileFactory = (options: {
+  readonly allowedRoots: readonly AbsolutePath[];
+  readonly backupRoot: AbsolutePath;
+}) => DeploymentFilePort;
 
 export interface DesktopCommandServiceOptions {
   readonly userDataPath: string;
@@ -101,6 +122,8 @@ export interface DesktopCommandServiceOptions {
   readonly now?: () => string;
   readonly sourceFileOpener?: SourceFileOpener;
   readonly watchService?: WatchService;
+  readonly fileWatcherFactory?: DesktopFileWatcherFactory;
+  readonly deploymentFileFactory?: DesktopDeploymentFileFactory;
 }
 
 export interface SourceFileOpener {
@@ -110,8 +133,23 @@ export interface SourceFileOpener {
 export interface DesktopCommandServiceRuntime {
   readonly services: CommandServiceMap;
   readonly taskEvents: DesktopTaskEventPort;
+  readonly indexChanges: DesktopIndexChangePort;
+  runtimeState(): DesktopRuntimeState;
   close(): void;
 }
+
+export interface DesktopRuntimeState {
+  readonly activeTasks: readonly {
+    readonly taskId: string;
+    readonly taskKind: "scan" | "deployment" | "rollback";
+    readonly clientContext?: DesktopScanClientContext;
+    readonly selectedRoots?: readonly string[];
+    readonly canonicalRoots?: readonly string[];
+  }[];
+  readonly recoveryDeploymentIds: readonly string[];
+}
+
+type DesktopScanClientContext = NonNullable<CommandRequest<"scan.start">["clientContext"]>;
 
 export interface DesktopTaskEventPort {
   subscribe(
@@ -119,6 +157,14 @@ export interface DesktopTaskEventPort {
     afterSequence: number,
     listener: (event: TaskEvent) => void,
   ): () => void;
+}
+
+export interface DesktopIndexChangeEvent {
+  readonly roots: readonly string[];
+}
+
+export interface DesktopIndexChangePort {
+  subscribe(listener: (event: DesktopIndexChangeEvent) => void): () => void;
 }
 
 interface DesktopRuntime {
@@ -133,7 +179,16 @@ interface DesktopRuntime {
   readonly now: () => string;
   readonly sourceFileOpener?: SourceFileOpener;
   readonly watchService: WatchService;
-  readonly fileWatchers: Set<NodeFileWatcher>;
+  readonly fileWatcherFactory: DesktopFileWatcherFactory;
+  readonly deploymentFileFactory: DesktopDeploymentFileFactory;
+  readonly fileWatchers: Map<
+    string,
+    {
+      readonly root: AbsolutePath;
+      readonly scanRoots: Set<AbsolutePath>;
+      readonly watcher: DesktopFileWatcher;
+    }
+  >;
   close(): void;
 }
 
@@ -155,9 +210,14 @@ export async function createDesktopCommandServices(
 ): Promise<DesktopCommandServiceRuntime> {
   const runtime = await createRuntime(options);
   const taskEvents = new DesktopTaskEvents();
+  const taskRuntime = new DesktopTaskRuntimeRegistry(loadPersistedRecoveryLocks(runtime));
+  taskEvents.onTerminal((taskId) => taskRuntime.markTerminal(taskId));
+  const indexChanges = new DesktopIndexChanges();
   return {
-    services: createServices(runtime, options, taskEvents),
+    services: createServices(runtime, options, taskEvents, taskRuntime, indexChanges),
     taskEvents,
+    indexChanges,
+    runtimeState: () => taskRuntime.runtimeState(),
     close: () => runtime.close(),
   };
 }
@@ -195,7 +255,11 @@ async function createRuntime(options: DesktopCommandServiceOptions): Promise<Des
       ? {}
       : { sourceFileOpener: options.sourceFileOpener }),
     watchService: options.watchService ?? new WatchService(),
-    fileWatchers: new Set<NodeFileWatcher>(),
+    fileWatcherFactory:
+      options.fileWatcherFactory ?? ((watcherOptions) => new NodeFileWatcher(watcherOptions)),
+    deploymentFileFactory:
+      options.deploymentFileFactory ?? ((fileOptions) => new NodeDeploymentFilePort(fileOptions)),
+    fileWatchers: new Map(),
     close() {
       closeFileWatchers(runtime);
       repositories.database.close();
@@ -214,6 +278,8 @@ function createServices(
   runtime: DesktopRuntime,
   options: DesktopCommandServiceOptions,
   taskEvents: DesktopTaskEvents,
+  taskRuntime: DesktopTaskRuntimeRegistry,
+  indexChanges: DesktopIndexChanges,
 ): CommandServiceMap {
   const cwd = AbsolutePathSchema.parse(resolve(options.cwd ?? process.cwd()));
   const homeDirectory = AbsolutePathSchema.parse(resolve(options.homeDirectory ?? homedir()));
@@ -226,92 +292,57 @@ function createServices(
 
   const services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>> = {
     "scan.start": async (payload) => {
-      const request = payload as {
-        readonly changedPaths?: readonly string[];
-        readonly mode?: "full" | "incremental";
-        readonly projectId?: string;
-        readonly roots?: readonly string[];
-        readonly toolKeys?: readonly string[];
-      };
+      const request = payload as DesktopScanRequest;
       const allowedRoots = scanRoots(request.roots, cwd, homeDirectory);
+      const canonicalRoots = await canonicalScanRoots(allowedRoots);
       const changedPaths = changedScanPaths(request.changedPaths, cwd);
       const taskId = TaskIdSchema.parse(`task:scan:${randomUUID()}`);
       const scanRunId = ScanRunIdSchema.parse(`scan:${randomUUID()}`);
       const acceptedAt = now(runtime);
+      const cancellation = createCancellationController();
+      taskRuntime.assertCanStart();
+      const taskCreation = runtime.repositories.tasks.create({
+        taskId,
+        scanRunId,
+        status: "queued",
+      });
+      taskRuntime.start({
+        taskId,
+        taskKind: "scan",
+        cancellation,
+        scanMetadata: {
+          selectedRoots: allowedRoots,
+          canonicalRoots,
+          ...(request.clientContext === undefined ? {} : { clientContext: request.clientContext }),
+        },
+        run: async () => {
+          await taskCreation;
+          await executeDesktopScan({
+            runtime,
+            taskEvents,
+            taskRuntime,
+            indexChanges,
+            services,
+            registry,
+            request,
+            taskId,
+            scanRunId,
+            allowedRoots,
+            changedPaths,
+            homeDirectory,
+            cancellation,
+          });
+        },
+        onUnhandled: (error) =>
+          recordUnhandledScanFailure(runtime, taskEvents, taskId, scanRunId, error),
+      });
       taskEvents.record({
         taskId,
         emittedAt: acceptedAt,
         type: "accepted",
         payload: { taskKind: "scan", phase: "queued", acceptedAt },
       });
-      await runtime.repositories.tasks.create({ taskId, scanRunId, status: "queued" });
-
-      const access = await createNodeFileAccess({ allowedRoots, platform: platform() });
-      const canonicalChangedPaths =
-        changedPaths === undefined
-          ? undefined
-          : await Promise.all(changedPaths.map((path) => access.read.realpath(path)));
-      const scanner = new ScanService({
-        registrations: scanRegistrations(registry.registrations, request.toolKeys),
-        read: access.read,
-        snapshots: access.snapshots,
-        indexRepository: runtime.repositories.index,
-        now: () => now(runtime),
-      });
-      const cancellation = createCancellationController();
-      let sequence = 0;
-      let previousPhase:
-        | "queued"
-        | "discovering"
-        | "reading"
-        | "parsing"
-        | "validating"
-        | "committing"
-        | "completed" = "queued";
-      const summary = await scanner.scan({
-        scanRunId,
-        candidateRoots: allowedRoots,
-        ...(request.mode === "incremental" && canonicalChangedPaths !== undefined
-          ? { changedPaths: canonicalChangedPaths }
-          : {}),
-        ...(request.projectId === undefined ? {} : { commitMode: "merge-scoped" as const }),
-        homeDirectory,
-        platform: scannerPlatform(),
-        signal: cancellation.signal,
-        onPhase: (phase) => {
-          sequence += 1;
-          taskEvents.record({
-            taskId,
-            emittedAt: now(runtime),
-            type: "phase.changed",
-            payload: { from: previousPhase, to: phase },
-          });
-          previousPhase = phase;
-          void runtime.repositories.tasks.updateProgress({
-            taskId,
-            sequence,
-            phase,
-            completed: phase === "completed" ? 1 : 0,
-            total: 1,
-          });
-        },
-      });
-      await runtime.repositories.tasks.finish(summary.summary);
-      await recordScanItemFailures(runtime, taskEvents, taskId, summary.itemFailures);
-      await syncFileWatcher(runtime, allowedRoots, services);
-      taskEvents.record({
-        taskId,
-        emittedAt: now(runtime),
-        type: "completed",
-        payload: {
-          status: summary.summary.status,
-          succeededCount: summary.summary.succeededCount,
-          failedCount: summary.summary.failedCount,
-          skippedCount: summary.summary.skippedCount,
-          resultRef: summary.summary.scanRunId,
-          systemRecoveryLock: false,
-        },
-      });
+      await taskCreation;
       return { taskId, status: "queued", acceptedAt };
     },
     "scan.status": async (payload) => {
@@ -345,15 +376,16 @@ function createServices(
               },
             }),
         lastSequence: task.progress?.sequence ?? (terminal === undefined ? 0 : 1),
-        cancellable: !["succeeded", "partially_succeeded", "cancelled", "failed"].includes(
-          task.status,
-        ),
+        cancellable: terminal === undefined && taskRuntime.cancellation(task.taskId) !== undefined,
       };
     },
     "scan.cancel": async (payload) => {
       const request = payload as { readonly taskId: string };
-      const task = await runtime.repositories.tasks.get(TaskIdSchema.parse(request.taskId));
+      const taskId = TaskIdSchema.parse(request.taskId);
+      const task = await runtime.repositories.tasks.get(taskId);
       if (task === undefined) throw notFound("Task not found");
+      const cancellation = taskRuntime.cancellation(taskId);
+      if (cancellation === undefined) throw taskNotCancellable(taskId);
       const effectiveAfterPhase = apiPhase(
         task.summary === undefined ? (task.progress?.phase ?? task.status) : "completed",
       );
@@ -363,8 +395,9 @@ function createServices(
         type: "cancel.requested",
         payload: { reason: "user", effectiveAfterPhase },
       });
+      cancellation.abort();
       return {
-        taskId: TaskIdSchema.parse(request.taskId),
+        taskId,
         cancelRequested: true,
         effectiveAfterPhase,
       };
@@ -506,7 +539,12 @@ function createServices(
       resolveEffectiveView(runtime, registry, payload as CommandRequest<"effective.resolve">),
     "diagnostics.list": async (payload) => {
       const request = payload as CommandRequest<"diagnostics.list">;
-      const page = await runtime.repositories.index.listDiagnostics({
+      const requestedLimit = request.limit ?? 50;
+      const requiresPostFilter =
+        request.projectId !== undefined ||
+        request.toolKeys !== undefined ||
+        request.codes !== undefined;
+      const repositoryQuery = {
         ...(request.assetId === undefined ? {} : { assetId: AssetIdSchema.parse(request.assetId) }),
         ...(request.severities === undefined
           ? {}
@@ -518,35 +556,33 @@ function createServices(
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
-        limit:
-          request.projectId === undefined &&
-          request.toolKeys === undefined &&
-          request.codes === undefined
-            ? (request.limit ?? 50)
-            : 10_000,
+      };
+      if (!requiresPostFilter) {
+        const page = await runtime.repositories.index.listDiagnostics({
+          ...repositoryQuery,
+          limit: requestedLimit,
+        });
+        return diagnosticsPage(page);
+      }
+      const snapshot = await readFilteredDiagnosticsSnapshot(runtime, {
+        repositoryQuery,
+        filter: listFilterRequest(request),
+        matchLimit: requestedLimit + 1,
       });
-      const context = diagnosticFilterContext(runtime, await diagnosticFilterAssets(runtime));
-      const filtered = page.items.filter((diagnostic) =>
-        includeDiagnostic(diagnostic, listFilterRequest(request), context, undefined),
-      );
+      const items = snapshot.items.slice(0, requestedLimit);
+      const last = items.at(-1);
+      const nextCursor =
+        snapshot.items.length > requestedLimit && last !== undefined
+          ? PaginationCursorSchema.parse(last.diagnosticId)
+          : undefined;
       return diagnosticsPage({
-        items: filtered.slice(0, request.limit ?? 50),
-        snapshotRevision: page.snapshotRevision,
+        items,
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+        snapshotRevision: snapshot.snapshotRevision,
       });
     },
     "diagnostics.export": async (payload) => {
       const request = payload as CommandRequest<"diagnostics.export">;
-      const page = await runtime.repositories.index.listDiagnostics({
-        ...(request.severities === undefined
-          ? {}
-          : {
-              severity: request.severities.map((severity) =>
-                DiagnosticSeveritySchema.parse(severity),
-              ),
-            }),
-        limit: 10_000,
-      });
-      const context = diagnosticFilterContext(runtime, await diagnosticFilterAssets(runtime));
       const taskDiagnosticIds =
         request.taskId === undefined
           ? undefined
@@ -554,9 +590,26 @@ function createServices(
               (await runtime.repositories.tasks.get(TaskIdSchema.parse(request.taskId)))?.summary
                 ?.diagnosticIds ?? [],
             );
-      const items = page.items
-        .filter((diagnostic) => includeDiagnostic(diagnostic, request, context, taskDiagnosticIds))
-        .map(diagnosticView);
+      const snapshot = await readFilteredDiagnosticsSnapshot(runtime, {
+        repositoryQuery: {
+          ...(request.severities === undefined
+            ? {}
+            : {
+                severity: request.severities.map((severity) =>
+                  DiagnosticSeveritySchema.parse(severity),
+                ),
+              }),
+        },
+        filter: request,
+        ...(taskDiagnosticIds === undefined ? {} : { taskDiagnosticIds }),
+        matchLimit: DIAGNOSTIC_EXPORT_ITEM_LIMIT + 1,
+      });
+      if (snapshot.items.length > DIAGNOSTIC_EXPORT_ITEM_LIMIT) {
+        throw diagnosticExportTooLarge(
+          `Diagnostic export matches more than ${String(DIAGNOSTIC_EXPORT_ITEM_LIMIT)} items`,
+        );
+      }
+      const items = snapshot.items.map(diagnosticView);
       const filters = compact({
         taskId: request.taskId === undefined ? undefined : TaskIdSchema.parse(request.taskId),
         projectId:
@@ -566,7 +619,7 @@ function createServices(
         from: request.from,
         to: request.to,
       });
-      return createDiagnosticReport({
+      const report = createDiagnosticReport({
         format: request.format,
         generatedAt: now(runtime),
         filters,
@@ -574,6 +627,8 @@ function createServices(
         homeDirectory,
         pathRoots: diagnosticReportPathRoots(runtime, cwd),
       });
+      assertDiagnosticReportSize(report);
+      return report;
     },
     "migration.preview": async (payload) => {
       const request = payload as {
@@ -636,6 +691,7 @@ function createServices(
         conflictPolicy: request.conflictPolicy ?? "replace",
         now: now(runtime),
         correlationId: CorrelationIdSchema.parse(`correlation:desktop:${randomUUID()}`),
+        projectId: projectIdForAbsoluteRoot(targetRoot),
         signal: AbortSignal.timeout(60_000),
       });
       return migrationPreviewResponse(preview.plan, preview.conversions, now(runtime));
@@ -647,201 +703,129 @@ function createServices(
         readonly confirmations?: readonly DeploymentPlan["requiredConfirmations"][number][];
       };
       const planId = DeploymentPlanIdSchema.parse(request.planId);
+      taskRuntime.assertDeploymentAllowed();
       const found = deploymentRecordForPlan(runtime, planId);
-      const plan = await runtime.repositories.deployments.getPlan(planId);
-      if (found === undefined || plan === undefined) throw notFound("Deployment plan not found");
-      const roots = deploymentRoots(found);
-      const access = await createNodeFileAccess({ allowedRoots: roots, platform: platform() });
+      if (found === undefined) throw notFound("Deployment plan not found");
+      const planPromise = runtime.repositories.deployments.getPlan(planId);
       const taskId = TaskIdSchema.parse(`task:deployment:${randomUUID()}`);
+      const taskRecord = DeploymentRecordSchema.parse({ ...found, taskId });
+      const bound = await runtime.repositories.deployments.compareAndSetRecord({
+        expectedStatus: "planned",
+        record: taskRecord,
+      });
+      if (!bound) throw deploymentStateChangedConflict(found.deploymentRecordId);
       const acceptedAt = now(runtime);
       const recorder = new DesktopOperationTaskRecorder({
         taskEvents,
         taskId,
         taskKind: "deployment",
-        resultRef: found.deploymentRecordId,
+        resultRef: taskRecord.deploymentRecordId,
         acceptedAt,
-        operationTotal: plan.operations.length,
+        operationTotal: taskRecord.operations.length,
         now: runtime.now,
-      });
-      const deploymentFiles = instrumentDeploymentFiles(
-        new NodeDeploymentFilePort({
-          allowedRoots: roots,
-          backupRoot: runtime.backupRoot,
-        }),
-        recorder,
-        "deployment",
-      );
-      const service = new DeploymentExecutionService({
-        deploymentRepository: runtime.repositories.deployments,
-        sourceHashes: {
-          currentHash: async (assetId) =>
-            (await runtime.repositories.index.getAsset(AssetIdSchema.parse(assetId)))?.contentHash,
+        recoveryDeploymentId: taskRecord.deploymentRecordId,
+        onRecoveryLockRequired: (deploymentRecordId) => {
+          taskRuntime.requireRecovery(deploymentRecordId);
+          try {
+            persistRecoveryLock(runtime, deploymentRecordId);
+          } catch {
+            // Keep the in-memory lock when durable recovery metadata cannot be refreshed.
+          }
         },
-        snapshots: access.snapshots,
-        deploymentFiles,
-        locks: runtime.pathLocks,
-        registry,
-        read: instrumentDeploymentRead(access.read, recorder),
+      });
+      taskRuntime.start({
+        taskId,
+        taskKind: "deployment",
+        operationKey: `deployment:${taskRecord.deploymentRecordId}`,
+        run: () =>
+          executeDesktopDeployment({
+            runtime,
+            registry,
+            request,
+            taskId,
+            found: taskRecord,
+            planPromise,
+            recorder,
+          }),
+        onUnhandled: (error) => recordUnhandledOperationFailure(recorder, error),
       });
       recorder.accept();
-      recorder.changePhase("preflight");
-      recorder.progress(0);
-      const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
-      runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
-      let record: DeploymentRecord;
-      try {
-        record = await service.execute({
-          deploymentRecordId: found.deploymentRecordId,
-          confirmedPlanHash: ContentHashSchema.parse(request.confirmedPlanHash),
-          confirmations: request.confirmations ?? [],
-          allowedRoots: roots,
-          now: now(runtime),
-        });
-      } catch (error) {
-        recorder.fail(error, found.deploymentRecordId);
-        throw taskScopedError(error, taskId, "Deployment failed");
-      } finally {
-        runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
-      }
-      if (record.status !== "succeeded") {
-        recorder.failStatus(
-          record.status === "rolled_back" ? "rolled_back" : "failed",
-          record.deploymentRecordId,
-        );
-        throw new AppError({
-          code: "VALIDATION_FAILED",
-          message: `Deployment did not succeed: ${record.status}`,
-          retryable: false,
-          suggestedActions: [
-            "Review deployment diagnostics and create a fresh preview before retrying",
-          ],
-          taskId,
-        });
-      }
-      finishDeploymentWork(recorder);
-      recorder.succeed(record.deploymentRecordId, record.operations.length);
-      const snapshot = await recordDeploymentSnapshot(runtime, record, plan);
+      await Promise.resolve();
       return {
         taskId,
         status: "queued",
         acceptedAt,
-        deploymentId: record.deploymentRecordId,
-        snapshot,
+        deploymentId: taskRecord.deploymentRecordId,
       };
     },
     "deployment.rollback": async (payload) => {
       const request = payload as { readonly deploymentId: string };
       const originalId = DeploymentRecordIdSchema.parse(request.deploymentId);
+      taskRuntime.assertRollbackAllowed(originalId);
       const taskId = TaskIdSchema.parse(`task:rollback:${randomUUID()}`);
+      const rollbackRecordId = DeploymentRecordIdSchema.parse(`rollback-record:${randomUUID()}`);
+      const recoveryRollback = taskRuntime.isRecoveryRollback(originalId);
       const acceptedAt = now(runtime);
       const recorder = new DesktopOperationTaskRecorder({
         taskEvents,
         taskId,
         taskKind: "rollback",
-        resultRef: originalId,
+        resultRef: rollbackRecordId,
         acceptedAt,
         operationTotal: 0,
         now: runtime.now,
+        recoveryDeploymentId: originalId,
+        onRecoveryLockRequired: (deploymentRecordId) => {
+          taskRuntime.requireRecovery(deploymentRecordId);
+          try {
+            persistRecoveryLock(runtime, deploymentRecordId);
+          } catch {
+            // Keep the in-memory lock when durable recovery metadata cannot be refreshed.
+          }
+        },
+        onRecoveryRollbackSucceeded: (deploymentRecordId) => {
+          try {
+            resolvePersistedRecoveryLock(runtime, deploymentRecordId);
+            taskRuntime.resolveRecovery(deploymentRecordId);
+          } catch {
+            // Retain the lock if durable resolution could not be recorded.
+          }
+        },
+      });
+      taskRuntime.start({
+        taskId,
+        taskKind: "rollback",
+        operationKey: `rollback:${originalId}`,
+        run: () =>
+          executeDesktopRollback({
+            runtime,
+            originalId,
+            rollbackRecordId,
+            recoveryRollback,
+            taskId,
+            recorder,
+          }),
+        onUnhandled: (error) => recordUnhandledOperationFailure(recorder, error),
       });
       recorder.accept();
-      recorder.changePhase("preflight");
-      recorder.progress(0);
-
-      let roots: readonly AbsolutePath[];
-      let access: Awaited<ReturnType<typeof createNodeFileAccess>>;
-      let plan: DeploymentPlan;
-      let original: DeploymentRecord | undefined;
-      try {
-        original = deploymentRecordById(runtime, originalId);
-        roots = rollbackRoots(runtime, originalId);
-        access = await createNodeFileAccess({
-          allowedRoots: [...roots, runtime.backupRoot],
-          platform: platform(),
-        });
-        const service = new DeploymentRollbackService({
-          deploymentRepository: runtime.repositories.deployments,
-          snapshots: access.snapshots,
-          deploymentFiles: new NodeDeploymentFilePort({
-            allowedRoots: roots,
-            backupRoot: runtime.backupRoot,
-          }),
-          locks: runtime.pathLocks,
-        });
-        plan = await service.preview(originalId);
-      } catch (error) {
-        recorder.fail(error, originalId);
-        throw taskScopedError(error, taskId, "Rollback failed");
-      }
-
-      recorder.setOperationTotal(plan.operations.length);
-      const rollbackRecordId = DeploymentRecordIdSchema.parse(
-        `rollback-record:${plan.planHash.slice("sha256:".length)}`,
-      );
-      const rollbackService = new DeploymentRollbackService({
-        deploymentRepository: runtime.repositories.deployments,
-        snapshots: access.snapshots,
-        deploymentFiles: instrumentDeploymentFiles(
-          new NodeDeploymentFilePort({
-            allowedRoots: roots,
-            backupRoot: runtime.backupRoot,
-          }),
-          recorder,
-          "rollback",
-        ),
-        locks: runtime.pathLocks,
-      });
-      const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
-      runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
-      let record: DeploymentRecord;
-      try {
-        record = await rollbackService.execute({
-          deploymentRecordId: originalId,
-          rollbackPlanHash: plan.planHash,
-          now: now(runtime),
-        });
-      } catch (error) {
-        recorder.fail(error, rollbackRecordId);
-        throw taskScopedError(error, taskId, "Rollback failed");
-      } finally {
-        runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
-      }
-      if (record.status === "succeeded") {
-        finishRollbackWork(recorder);
-        recorder.succeed(record.deploymentRecordId, record.operations.length);
-      } else {
-        if (recorder.phase === "preflight") recorder.changePhase("restoring");
-        recorder.progress(Object.keys(record.resultingHashes).length);
-        recorder.failStatus("failed", record.deploymentRecordId);
-      }
-      if (record.status !== "succeeded") {
-        throw new AppError({
-          code: "VALIDATION_FAILED",
-          message: `Rollback did not succeed: ${record.status}`,
-          retryable: false,
-          suggestedActions: ["Review rollback diagnostics before retrying"],
-          taskId,
-        });
-      }
-      const originalPlan =
-        original === undefined
-          ? undefined
-          : await runtime.repositories.deployments.getPlan(original.deploymentPlanId);
-      const snapshot = await recordDeploymentSnapshot(runtime, record, originalPlan);
+      await Promise.resolve();
       return {
         taskId,
         status: "queued",
         acceptedAt,
-        rollbackId: record.deploymentRecordId,
-        snapshot,
+        rollbackId: rollbackRecordId,
       };
     },
     "history.list": async (payload) => {
       const request = payload as {
         readonly kinds?: readonly ("deployment" | "rollback")[];
+        readonly taskId?: string;
+        readonly projectId?: string;
         readonly statuses?: readonly string[];
         readonly from?: string;
         readonly to?: string;
         readonly cursor?: string;
+        readonly snapshotRevision?: string;
         readonly limit?: number;
       };
       const page = await runtime.repositories.deployments.listRecords({
@@ -849,11 +833,18 @@ function createServices(
         ...(request.statuses === undefined
           ? {}
           : { statuses: request.statuses.map((status) => DeploymentStatusSchema.parse(status)) }),
+        ...(request.taskId === undefined ? {} : { taskId: TaskIdSchema.parse(request.taskId) }),
+        ...(request.projectId === undefined
+          ? {}
+          : { projectId: ProjectIdSchema.parse(request.projectId) }),
         ...(request.from === undefined ? {} : { from: IsoDateTimeSchema.parse(request.from) }),
         ...(request.to === undefined ? {} : { to: IsoDateTimeSchema.parse(request.to) }),
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
+        ...(request.snapshotRevision === undefined
+          ? {}
+          : { snapshotRevision: request.snapshotRevision }),
         limit: request.limit ?? 50,
       });
       const snapshots = await snapshotMetadataForRecords(runtime, page.items);
@@ -862,6 +853,7 @@ function createServices(
           historyEntry(record, snapshots.get(record.deploymentRecordId)),
         ),
         nextCursor: page.nextCursor ?? null,
+        snapshotRevision: page.snapshotRevision,
       };
     },
     "history.get": async (payload) => {
@@ -887,20 +879,26 @@ function createServices(
     },
     "settings.clearLocalData": async (payload) => {
       const request = payload as CommandRequest<"settings.clearLocalData">;
-      const localHistoryDirectories = request.categories.includes("deployment_history")
-        ? await clearLocalHistoryBeforeDatabaseCleanup(runtime, request.categories)
-        : 0;
-      const result = await runtime.repositories.maintenance.clearLocalData({
-        categories: request.categories,
-        now: now(runtime),
-      });
-      return {
-        ...result,
-        counts: {
-          ...result.counts,
-          localHistoryDirectories,
-        },
-      };
+      const releaseCleanup = taskRuntime.beginCleanup(request.categories);
+      try {
+        const localHistoryDirectories = request.categories.includes("deployment_history")
+          ? await clearLocalHistoryBeforeDatabaseCleanup(runtime, request.categories)
+          : 0;
+        const result = await runtime.repositories.maintenance.clearLocalData({
+          categories: request.categories,
+          now: now(runtime),
+        });
+        if (request.categories.includes("scan_cache")) taskEvents.purge("scan");
+        return {
+          ...result,
+          counts: {
+            ...result.counts,
+            localHistoryDirectories,
+          },
+        };
+      } finally {
+        releaseCleanup();
+      }
     },
     "settings.update": async (payload) => {
       const request = payload as {
@@ -937,6 +935,343 @@ function createServices(
     },
   };
   return services as unknown as CommandServiceMap;
+}
+
+type DesktopScanRequest = {
+  readonly changedPaths?: readonly string[];
+  readonly clientContext?: DesktopScanClientContext;
+  readonly mode?: "full" | "incremental";
+  readonly projectId?: string;
+  readonly roots?: readonly string[];
+  readonly toolKeys?: readonly string[];
+};
+
+async function executeDesktopScan(input: {
+  readonly runtime: DesktopRuntime;
+  readonly taskEvents: DesktopTaskEvents;
+  readonly taskRuntime: DesktopTaskRuntimeRegistry;
+  readonly indexChanges: DesktopIndexChanges;
+  readonly services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>;
+  readonly registry: AdapterRegistry;
+  readonly request: DesktopScanRequest;
+  readonly taskId: TaskId;
+  readonly scanRunId: ReturnType<typeof ScanRunIdSchema.parse>;
+  readonly allowedRoots: readonly AbsolutePath[];
+  readonly changedPaths: readonly AbsolutePath[] | undefined;
+  readonly homeDirectory: AbsolutePath;
+  readonly cancellation: ReturnType<typeof createCancellationController>;
+}): Promise<void> {
+  // Attach native watchers before reading the scan snapshot. Any change that
+  // lands during the scan is then queued and replayed once this task becomes
+  // idle, closing the scan-to-watcher lost-change window.
+  await syncFileWatcher(
+    input.runtime,
+    input.allowedRoots,
+    input.services,
+    input.taskRuntime,
+    input.indexChanges,
+  );
+  const access = await createNodeFileAccess({
+    allowedRoots: input.allowedRoots,
+    platform: platform(),
+  });
+  const canonicalChangedPaths =
+    input.changedPaths === undefined
+      ? undefined
+      : await Promise.all(
+          input.changedPaths.map(async (path) => {
+            try {
+              return await access.read.realpath(path);
+            } catch (error) {
+              if (isMissingPathError(error)) return path;
+              throw error;
+            }
+          }),
+        );
+  const scanner = new ScanService({
+    registrations: scanRegistrations(input.registry.registrations, input.request.toolKeys),
+    read: access.read,
+    snapshots: access.snapshots,
+    indexRepository: input.runtime.repositories.index,
+    now: () => now(input.runtime),
+  });
+  let sequence = 0;
+  let previousPhase:
+    | "queued"
+    | "discovering"
+    | "reading"
+    | "parsing"
+    | "validating"
+    | "committing"
+    | "completed" = "queued";
+  const result = await scanner.scan({
+    scanRunId: input.scanRunId,
+    candidateRoots: input.allowedRoots,
+    ...(input.request.mode === "incremental" && canonicalChangedPaths !== undefined
+      ? { changedPaths: canonicalChangedPaths }
+      : {}),
+    ...(input.request.projectId === undefined ? {} : { commitMode: "merge-scoped" as const }),
+    homeDirectory: input.homeDirectory,
+    platform: scannerPlatform(),
+    signal: input.cancellation.signal,
+    onPhase: (phase) => {
+      if (phase === "committing") input.taskRuntime.makeNonCancellable(input.taskId);
+      sequence += 1;
+      input.taskEvents.record({
+        taskId: input.taskId,
+        emittedAt: now(input.runtime),
+        type: "phase.changed",
+        payload: { from: previousPhase, to: phase },
+      });
+      previousPhase = phase;
+      void input.runtime.repositories.tasks
+        .updateProgress({
+          taskId: input.taskId,
+          sequence,
+          phase,
+          completed: phase === "completed" ? 1 : 0,
+          total: 1,
+        })
+        .catch(() => undefined);
+    },
+  });
+  input.cancellation.signal.throwIfAborted();
+  await input.runtime.repositories.tasks.finish(result.summary);
+  await recordScanItemFailures(input.runtime, input.taskEvents, input.taskId, result.itemFailures);
+  input.cancellation.signal.throwIfAborted();
+  input.taskEvents.record({
+    taskId: input.taskId,
+    emittedAt: now(input.runtime),
+    type: "completed",
+    payload: {
+      status: result.summary.status,
+      succeededCount: result.summary.succeededCount,
+      failedCount: result.summary.failedCount,
+      skippedCount: result.summary.skippedCount,
+      resultRef: result.summary.scanRunId,
+      systemRecoveryLock: false,
+    },
+  });
+}
+
+async function recordUnhandledScanFailure(
+  runtime: DesktopRuntime,
+  taskEvents: DesktopTaskEvents,
+  taskId: TaskId,
+  scanRunId: ReturnType<typeof ScanRunIdSchema.parse>,
+  error: unknown,
+): Promise<void> {
+  if (taskEvents.isTerminal(taskId)) return;
+  const cancelled = error instanceof AppError && error.code === "USER_CANCELLED";
+  const summary = ScanRunSummarySchema.parse({
+    scanRunId,
+    status: cancelled ? "cancelled" : "failed",
+    succeededCount: 0,
+    failedCount: cancelled ? 0 : 1,
+    skippedCount: 0,
+    diagnosticIds: [],
+  });
+  await runtime.repositories.tasks.finish(summary).catch(() => undefined);
+  if (!cancelled) {
+    taskEvents.record({
+      taskId,
+      emittedAt: now(runtime),
+      type: "item.failed",
+      payload: {
+        itemRef: scanRunId,
+        diagnosticId: DiagnosticIdSchema.parse("diagnostic:scan:runtime-failure"),
+        errorCode: errorCode(error),
+        retryable: isRetryable(error),
+      },
+    });
+  }
+  taskEvents.record({
+    taskId,
+    emittedAt: now(runtime),
+    type: "completed",
+    payload: {
+      status: summary.status,
+      succeededCount: summary.succeededCount,
+      failedCount: summary.failedCount,
+      skippedCount: summary.skippedCount,
+      resultRef: scanRunId,
+      systemRecoveryLock: false,
+    },
+  });
+}
+
+async function executeDesktopDeployment(input: {
+  readonly runtime: DesktopRuntime;
+  readonly registry: AdapterRegistry;
+  readonly request: {
+    readonly planId: string;
+    readonly confirmedPlanHash: string;
+    readonly confirmations?: readonly DeploymentPlan["requiredConfirmations"][number][];
+  };
+  readonly taskId: TaskId;
+  readonly found: DeploymentRecord;
+  readonly planPromise: Promise<DeploymentPlan | undefined>;
+  readonly recorder: DesktopOperationTaskRecorder;
+}): Promise<void> {
+  try {
+    const plan = await input.planPromise;
+    if (plan === undefined) throw notFound("Deployment plan not found");
+    input.recorder.setOperationTotal(plan.operations.length);
+    input.recorder.changePhase("preflight");
+    input.recorder.progress(0);
+    const roots = deploymentRoots(input.found);
+    const access = await createNodeFileAccess({ allowedRoots: roots, platform: platform() });
+    const deploymentFiles = instrumentDeploymentFiles(
+      input.runtime.deploymentFileFactory({
+        allowedRoots: roots,
+        backupRoot: input.runtime.backupRoot,
+      }),
+      input.recorder,
+      "deployment",
+    );
+    const service = new DeploymentExecutionService({
+      deploymentRepository: input.runtime.repositories.deployments,
+      sourceHashes: {
+        currentHash: (assetId) => currentAssetSourceHash(input.runtime, assetId),
+      },
+      snapshots: access.snapshots,
+      deploymentFiles,
+      locks: input.runtime.pathLocks,
+      registry: input.registry,
+      read: instrumentDeploymentRead(access.read, input.recorder),
+    });
+    const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
+    input.runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
+    let record: DeploymentRecord;
+    try {
+      record = await service.execute({
+        deploymentRecordId: input.found.deploymentRecordId,
+        confirmedPlanHash: ContentHashSchema.parse(input.request.confirmedPlanHash),
+        confirmations: input.request.confirmations ?? [],
+        allowedRoots: roots,
+        now: now(input.runtime),
+      });
+    } finally {
+      input.runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
+    }
+    if (record.status !== "succeeded") {
+      input.recorder.failStatus(
+        record.status === "rolled_back" ? "rolled_back" : "failed",
+        record.deploymentRecordId,
+      );
+      return;
+    }
+    finishDeploymentWork(input.recorder);
+    await recordDeploymentSnapshot(input.runtime, record, plan);
+    input.recorder.succeed(record.deploymentRecordId, record.operations.length);
+  } catch (error) {
+    input.recorder.fail(error, input.found.deploymentRecordId);
+  }
+}
+
+async function executeDesktopRollback(input: {
+  readonly runtime: DesktopRuntime;
+  readonly originalId: ReturnType<typeof DeploymentRecordIdSchema.parse>;
+  readonly rollbackRecordId: ReturnType<typeof DeploymentRecordIdSchema.parse>;
+  readonly recoveryRollback: boolean;
+  readonly taskId: TaskId;
+  readonly recorder: DesktopOperationTaskRecorder;
+}): Promise<void> {
+  input.recorder.changePhase("preflight");
+  input.recorder.progress(0);
+  let roots: readonly AbsolutePath[];
+  let access: Awaited<ReturnType<typeof createNodeFileAccess>>;
+  let plan: DeploymentPlan;
+  let original: DeploymentRecord | undefined;
+  try {
+    original = deploymentRecordById(input.runtime, input.originalId);
+    roots = rollbackRoots(input.runtime, input.originalId);
+    access = await createNodeFileAccess({
+      allowedRoots: [...roots, input.runtime.backupRoot],
+      platform: platform(),
+    });
+    const service = new DeploymentRollbackService({
+      deploymentRepository: input.runtime.repositories.deployments,
+      snapshots: access.snapshots,
+      deploymentFiles: input.runtime.deploymentFileFactory({
+        allowedRoots: roots,
+        backupRoot: input.runtime.backupRoot,
+      }),
+      locks: input.runtime.pathLocks,
+    });
+    plan = await service.preview(input.originalId, {
+      allowFailedRecovery: input.recoveryRollback,
+      attemptId: input.rollbackRecordId,
+    });
+  } catch (error) {
+    if (input.recoveryRollback && isRecoveryAlreadyComplete(error)) {
+      input.recorder.succeed(input.rollbackRecordId, 0);
+      return;
+    }
+    input.recorder.fail(error, input.originalId);
+    return;
+  }
+
+  input.recorder.setOperationTotal(plan.operations.length);
+  const rollbackService = new DeploymentRollbackService({
+    deploymentRepository: input.runtime.repositories.deployments,
+    snapshots: access.snapshots,
+    deploymentFiles: instrumentDeploymentFiles(
+      input.runtime.deploymentFileFactory({
+        allowedRoots: roots,
+        backupRoot: input.runtime.backupRoot,
+      }),
+      input.recorder,
+      "rollback",
+    ),
+    locks: input.runtime.pathLocks,
+  });
+  const suppressedTargetPaths = plan.operations.map(({ targetPath }) => targetPath);
+  input.runtime.watchService.suppressDeploymentPaths(suppressedTargetPaths);
+  let record: DeploymentRecord;
+  try {
+    record = await rollbackService.execute({
+      deploymentRecordId: input.originalId,
+      rollbackPlanHash: plan.planHash,
+      rollbackRecordId: input.rollbackRecordId,
+      allowFailedRecovery: input.recoveryRollback,
+      taskId: input.taskId,
+      now: now(input.runtime),
+    });
+  } catch (error) {
+    input.recorder.fail(error, input.originalId);
+    return;
+  } finally {
+    input.runtime.watchService.clearDeploymentSuppression(suppressedTargetPaths);
+  }
+  if (record.status !== "succeeded") {
+    if (input.recorder.phase === "preflight") input.recorder.changePhase("restoring");
+    input.recorder.progress(Object.keys(record.resultingHashes).length);
+    input.recorder.failStatus("failed", input.originalId);
+    return;
+  }
+  finishRollbackWork(input.recorder);
+  const originalPlan =
+    original === undefined
+      ? undefined
+      : await input.runtime.repositories.deployments.getPlan(original.deploymentPlanId);
+  await recordDeploymentSnapshot(input.runtime, record, originalPlan);
+  input.recorder.succeed(record.deploymentRecordId, record.operations.length);
+}
+
+function isRecoveryAlreadyComplete(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    error.code === "CONFLICT" &&
+    error.safeContext?.["recoveryAlreadyComplete"] === true
+  );
+}
+
+function recordUnhandledOperationFailure(
+  recorder: DesktopOperationTaskRecorder,
+  error: unknown,
+): void {
+  if (!recorder.completed) recorder.fail(error);
 }
 
 async function clearLocalHistoryBeforeDatabaseCleanup(
@@ -1026,11 +1361,238 @@ function diagnosticItemRef(diagnostic: Diagnostic): string {
   return diagnostic.diagnosticId;
 }
 
+type DesktopRuntimeTaskKind = "scan" | "deployment" | "rollback";
+
+type DesktopRuntimeTaskEntry = {
+  readonly taskKind: DesktopRuntimeTaskKind;
+  readonly completion: Promise<void>;
+  readonly settle: () => void;
+  readonly operationKey?: string;
+  readonly cancellation?: ReturnType<typeof createCancellationController>;
+  readonly scanMetadata?: {
+    readonly clientContext?: DesktopScanClientContext;
+    readonly selectedRoots: readonly AbsolutePath[];
+    readonly canonicalRoots: readonly AbsolutePath[];
+  };
+};
+
+class DesktopTaskRuntimeRegistry {
+  readonly #active = new Map<TaskId, DesktopRuntimeTaskEntry>();
+  readonly #activeOperationKeys = new Map<string, TaskId>();
+  readonly #idleWaiters = new Set<() => void>();
+  #cleanupActive = false;
+  readonly #recoveryDeploymentIds = new Set<DeploymentRecordId>();
+
+  constructor(recoveryDeploymentIds: readonly DeploymentRecordId[] = []) {
+    for (const deploymentRecordId of recoveryDeploymentIds) {
+      this.#recoveryDeploymentIds.add(deploymentRecordId);
+    }
+  }
+
+  runtimeState(): DesktopRuntimeState {
+    return {
+      activeTasks: [...this.#active.entries()].map(([taskId, entry]) => ({
+        taskId,
+        taskKind: entry.taskKind,
+        ...(entry.scanMetadata?.clientContext === undefined
+          ? {}
+          : { clientContext: entry.scanMetadata.clientContext }),
+        ...(entry.scanMetadata === undefined
+          ? {}
+          : {
+              selectedRoots: entry.scanMetadata.selectedRoots,
+              canonicalRoots: entry.scanMetadata.canonicalRoots,
+            }),
+      })),
+      recoveryDeploymentIds: [...this.#recoveryDeploymentIds].sort(),
+    };
+  }
+
+  start(input: {
+    readonly taskId: TaskId;
+    readonly taskKind: DesktopRuntimeTaskKind;
+    readonly operationKey?: string;
+    readonly cancellation?: ReturnType<typeof createCancellationController>;
+    readonly scanMetadata?: DesktopRuntimeTaskEntry["scanMetadata"];
+    readonly run: () => Promise<void>;
+    readonly onUnhandled: (error: unknown) => void | Promise<void>;
+  }): void {
+    this.assertCanStart();
+    if (this.#active.has(input.taskId)) {
+      throw new Error(`Task is already active: ${input.taskId}`);
+    }
+    if (input.operationKey !== undefined && this.#activeOperationKeys.has(input.operationKey)) {
+      throw operationAlreadyRunningConflict(input.operationKey);
+    }
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      this.#active.delete(input.taskId);
+      if (
+        input.operationKey !== undefined &&
+        this.#activeOperationKeys.get(input.operationKey) === input.taskId
+      ) {
+        this.#activeOperationKeys.delete(input.operationKey);
+      }
+      resolveCompletion();
+      this.#notifyIdle();
+    };
+    this.#active.set(input.taskId, {
+      taskKind: input.taskKind,
+      completion,
+      settle,
+      ...(input.operationKey === undefined ? {} : { operationKey: input.operationKey }),
+      ...(input.cancellation === undefined ? {} : { cancellation: input.cancellation }),
+      ...(input.scanMetadata === undefined ? {} : { scanMetadata: input.scanMetadata }),
+    });
+    if (input.operationKey !== undefined) {
+      this.#activeOperationKeys.set(input.operationKey, input.taskId);
+    }
+    setTimeout(() => {
+      void (async () => {
+        try {
+          await input.run();
+        } catch (error) {
+          try {
+            await input.onUnhandled(error);
+          } catch {
+            // A failed event sink must not become an unhandled background rejection.
+          }
+        } finally {
+          settle();
+        }
+      })();
+    }, 0);
+  }
+
+  assertCanStart(): void {
+    if (this.#cleanupActive) throw operationCleanupConflict("Local data cleanup is running");
+    if (this.#active.size > 0) throw operationAlreadyRunningConflict("desktop-task");
+  }
+
+  assertDeploymentAllowed(): void {
+    this.assertCanStart();
+    if (this.#recoveryDeploymentIds.size > 0) {
+      throw recoveryRequiredConflict([...this.#recoveryDeploymentIds]);
+    }
+  }
+
+  assertRollbackAllowed(deploymentRecordId: DeploymentRecordId): void {
+    this.assertCanStart();
+    if (
+      this.#recoveryDeploymentIds.size > 0 &&
+      !this.#recoveryDeploymentIds.has(deploymentRecordId)
+    ) {
+      throw recoveryRequiredConflict([...this.#recoveryDeploymentIds]);
+    }
+  }
+
+  requireRecovery(deploymentRecordId: DeploymentRecordId): void {
+    this.#recoveryDeploymentIds.add(deploymentRecordId);
+  }
+
+  isRecoveryRollback(deploymentRecordId: DeploymentRecordId): boolean {
+    return this.#recoveryDeploymentIds.has(deploymentRecordId);
+  }
+
+  resolveRecovery(deploymentRecordId: DeploymentRecordId): void {
+    this.#recoveryDeploymentIds.delete(deploymentRecordId);
+  }
+
+  cancellation(taskId: TaskId): ReturnType<typeof createCancellationController> | undefined {
+    const cancellation = this.#active.get(taskId)?.cancellation;
+    return cancellation?.signal.aborted === true ? undefined : cancellation;
+  }
+
+  makeNonCancellable(taskId: TaskId): void {
+    const entry = this.#active.get(taskId);
+    if (entry?.cancellation === undefined) return;
+    const { cancellation: discardedCancellation, ...nonCancellable } = entry;
+    void discardedCancellation;
+    this.#active.set(taskId, nonCancellable);
+  }
+
+  markTerminal(taskId: TaskId): void {
+    this.#active.get(taskId)?.settle();
+  }
+
+  async waitForCompletion(taskId: string): Promise<void> {
+    await this.#active.get(TaskIdSchema.parse(taskId))?.completion;
+  }
+
+  async waitForIdle(): Promise<void> {
+    while (this.#active.size > 0 || this.#cleanupActive) {
+      await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
+    }
+  }
+
+  beginCleanup(
+    categories: readonly CommandRequest<"settings.clearLocalData">["categories"][number][],
+  ): () => void {
+    if (this.#cleanupActive)
+      throw operationCleanupConflict("Local data cleanup is already running");
+    if (categories.includes("deployment_history") && this.#recoveryDeploymentIds.size > 0) {
+      throw recoveryRequiredConflict([...this.#recoveryDeploymentIds]);
+    }
+    if (this.#active.size > 0) {
+      const activeKinds = [...new Set([...this.#active.values()].map(({ taskKind }) => taskKind))]
+        .sort()
+        .join(",");
+      throw operationCleanupConflict(
+        "Wait for active tasks before clearing local data",
+        activeKinds,
+      );
+    }
+    this.#cleanupActive = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#cleanupActive = false;
+      this.#notifyIdle();
+    };
+  }
+
+  #notifyIdle(): void {
+    if (this.#active.size > 0 || this.#cleanupActive) return;
+    const waiters = [...this.#idleWaiters];
+    this.#idleWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+}
+
+export class DesktopIndexChanges implements DesktopIndexChangePort {
+  readonly #listeners = new Set<(event: DesktopIndexChangeEvent) => void>();
+
+  subscribe(listener: (event: DesktopIndexChangeEvent) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  record(roots: readonly AbsolutePath[]): void {
+    const event: DesktopIndexChangeEvent = { roots: uniquePaths(roots) };
+    for (const listener of this.#listeners) listener(event);
+  }
+}
+
 export class DesktopTaskEvents implements DesktopTaskEventPort {
+  static readonly TERMINAL_TASK_LIMIT = 100;
   readonly #events = new Map<string, TaskEvent[]>();
   readonly #listeners = new Map<string, Set<(event: TaskEvent) => void>>();
   readonly #lastSequence = new Map<string, number>();
   readonly #states = new Map<string, TaskReplayState>();
+  readonly #terminalTasks = new Map<string, true>();
+  readonly #terminalListeners = new Set<(taskId: TaskId) => void>();
+
+  onTerminal(listener: (taskId: TaskId) => void): () => void {
+    this.#terminalListeners.add(listener);
+    return () => this.#terminalListeners.delete(listener);
+  }
 
   subscribe(
     taskId: string,
@@ -1077,6 +1639,8 @@ export class DesktopTaskEvents implements DesktopTaskEventPort {
             progress: state.progress,
             lastSequence: latestSequence,
             cancellable: state.cancellable,
+            systemRecoveryLock: state.systemRecoveryLock,
+            ...(state.resultRef === undefined ? {} : { resultRef: state.resultRef }),
           },
         }),
       );
@@ -1122,8 +1686,53 @@ export class DesktopTaskEvents implements DesktopTaskEventPort {
     events.push(event);
     this.#events.set(taskId, events.slice(-200));
     this.#states.set(taskId, reduceTaskReplayState(this.#states.get(taskId), event));
-    for (const listener of this.#listeners.get(taskId) ?? []) listener(event);
+    if (event.type === "completed") {
+      this.#terminalTasks.delete(taskId);
+      this.#terminalTasks.set(taskId, true);
+      this.#pruneTerminalTasks();
+      for (const listener of this.#terminalListeners) {
+        try {
+          listener(taskId);
+        } catch {
+          // Event consumers must not change a task's durable outcome.
+        }
+      }
+    }
+    for (const listener of this.#listeners.get(taskId) ?? []) {
+      try {
+        listener(event);
+      } catch {
+        // A renderer or test listener is observational and cannot fail the task.
+      }
+    }
     return event;
+  }
+
+  isTerminal(taskId: string): boolean {
+    return this.#terminalTasks.has(TaskIdSchema.parse(taskId));
+  }
+
+  purge(taskKind: TaskReplayState["taskKind"]): void {
+    for (const [taskId, state] of this.#states) {
+      if (state.taskKind !== taskKind) continue;
+      this.#deleteTask(taskId);
+    }
+  }
+
+  #pruneTerminalTasks(): void {
+    while (this.#terminalTasks.size > DesktopTaskEvents.TERMINAL_TASK_LIMIT) {
+      const oldestTaskId = this.#terminalTasks.keys().next().value;
+      if (oldestTaskId === undefined) return;
+      this.#deleteTask(oldestTaskId);
+    }
+  }
+
+  #deleteTask(taskId: string): void {
+    this.#events.delete(taskId);
+    this.#listeners.delete(taskId);
+    this.#lastSequence.delete(taskId);
+    this.#states.delete(taskId);
+    this.#terminalTasks.delete(taskId);
   }
 }
 
@@ -1144,6 +1753,8 @@ type TaskReplayState = {
     readonly unit: "files" | "operations" | "items";
   };
   readonly cancellable: boolean;
+  readonly systemRecoveryLock: boolean;
+  readonly resultRef?: string;
   readonly updatedAt: string;
 };
 type OrderedTaskEvent = Extract<TaskEvent, { readonly sequence: number }>;
@@ -1164,6 +1775,7 @@ function reduceTaskReplayState(
         unit: event.payload.taskKind === "scan" ? "items" : "operations",
       },
       cancellable: true,
+      systemRecoveryLock: false,
       updatedAt: event.emittedAt,
     };
   }
@@ -1175,6 +1787,7 @@ function reduceTaskReplayState(
       status: "running",
       progress: { phase: "queued", completed: 0, total: null, unit: "items" },
       cancellable: true,
+      systemRecoveryLock: false,
       updatedAt: event.emittedAt,
     } satisfies TaskReplayState);
   if (event.type === "phase.changed") {
@@ -1182,6 +1795,10 @@ function reduceTaskReplayState(
       ...previous,
       phase: event.payload.to,
       progress: { ...previous.progress, phase: event.payload.to },
+      cancellable:
+        previous.taskKind === "scan" && event.payload.to === "committing"
+          ? false
+          : previous.cancellable,
       updatedAt: event.emittedAt,
     };
   }
@@ -1192,6 +1809,9 @@ function reduceTaskReplayState(
       progress: event.payload,
       updatedAt: event.emittedAt,
     };
+  }
+  if (event.type === "cancel.requested") {
+    return { ...previous, cancellable: false, updatedAt: event.emittedAt };
   }
   if (event.type === "completed") {
     const completed = event.payload.succeededCount + event.payload.failedCount;
@@ -1206,6 +1826,8 @@ function reduceTaskReplayState(
         total: completed + event.payload.skippedCount,
       },
       cancellable: false,
+      systemRecoveryLock: event.payload.systemRecoveryLock,
+      ...(event.payload.resultRef === undefined ? {} : { resultRef: event.payload.resultRef }),
       updatedAt: event.emittedAt,
     };
   }
@@ -1229,9 +1851,13 @@ class DesktopOperationTaskRecorder {
   readonly #taskKind: OperationTaskKind;
   readonly #resultRef: string;
   readonly #acceptedAt: string;
+  readonly #recoveryDeploymentId: DeploymentRecordId;
+  readonly #onRecoveryLockRequired: (deploymentRecordId: DeploymentRecordId) => void;
+  readonly #onRecoveryRollbackSucceeded: (deploymentRecordId: DeploymentRecordId) => void;
   #operationTotal: number;
   readonly #now: () => string;
   #phase: OperationTaskPhase = "queued";
+  #completed = false;
   readonly #lastProgressByPhase = new Map<OperationTaskPhase, number>();
 
   constructor(options: {
@@ -1242,12 +1868,18 @@ class DesktopOperationTaskRecorder {
     readonly acceptedAt: string;
     readonly operationTotal: number;
     readonly now: () => string;
+    readonly recoveryDeploymentId: DeploymentRecordId;
+    readonly onRecoveryLockRequired: (deploymentRecordId: DeploymentRecordId) => void;
+    readonly onRecoveryRollbackSucceeded?: (deploymentRecordId: DeploymentRecordId) => void;
   }) {
     this.#taskEvents = options.taskEvents;
     this.#taskId = TaskIdSchema.parse(options.taskId);
     this.#taskKind = options.taskKind;
     this.#resultRef = options.resultRef;
     this.#acceptedAt = options.acceptedAt;
+    this.#recoveryDeploymentId = options.recoveryDeploymentId;
+    this.#onRecoveryLockRequired = options.onRecoveryLockRequired;
+    this.#onRecoveryRollbackSucceeded = options.onRecoveryRollbackSucceeded ?? (() => undefined);
     this.#operationTotal = options.operationTotal;
     this.#now = options.now;
   }
@@ -1258,6 +1890,10 @@ class DesktopOperationTaskRecorder {
 
   get operationTotal(): number {
     return this.#operationTotal;
+  }
+
+  get completed(): boolean {
+    return this.#completed;
   }
 
   setOperationTotal(operationTotal: number): void {
@@ -1278,6 +1914,7 @@ class DesktopOperationTaskRecorder {
   }
 
   changePhase(to: OperationTaskPhase): void {
+    if (this.#completed) return;
     if (this.#phase === to) return;
     const from = this.#phase;
     this.#phase = to;
@@ -1290,6 +1927,7 @@ class DesktopOperationTaskRecorder {
   }
 
   progress(completed: number): void {
+    if (this.#completed) return;
     const nextCompleted = Math.min(completed, this.#operationTotal);
     if (this.#lastProgressByPhase.get(this.#phase) === nextCompleted) return;
     this.#lastProgressByPhase.set(this.#phase, nextCompleted);
@@ -1307,7 +1945,12 @@ class DesktopOperationTaskRecorder {
   }
 
   succeed(resultRef: string, succeededCount: number): void {
+    if (this.#completed) return;
     this.changePhase("completed");
+    if (this.#taskKind === "rollback") {
+      this.#onRecoveryRollbackSucceeded(this.#recoveryDeploymentId);
+    }
+    this.#completed = true;
     this.#taskEvents.record({
       taskId: this.#taskId,
       emittedAt: nowFrom(this.#now),
@@ -1324,11 +1967,13 @@ class DesktopOperationTaskRecorder {
   }
 
   fail(error: unknown, itemRef = this.#resultRef): void {
-    this.recordFailure(errorCode(error), isRetryable(error), itemRef);
+    if (this.#completed) return;
+    this.recordFailure(errorCode(error), isRetryable(error), itemRef, taskFailureMessage(error));
     this.completeFailure("failed", itemRef);
   }
 
   failStatus(status: "failed" | "rolled_back", itemRef = this.#resultRef): void {
+    if (this.#completed) return;
     this.recordFailure(
       status === "rolled_back" ? "DEPLOYMENT_ROLLED_BACK" : "VALIDATION_FAILED",
       false,
@@ -1337,7 +1982,12 @@ class DesktopOperationTaskRecorder {
     this.completeFailure(status, itemRef);
   }
 
-  private recordFailure(errorCodeValue: string, retryable: boolean, itemRef: string): void {
+  private recordFailure(
+    errorCodeValue: string,
+    retryable: boolean,
+    itemRef: string,
+    message?: string,
+  ): void {
     this.#taskEvents.record({
       taskId: this.#taskId,
       emittedAt: nowFrom(this.#now),
@@ -1346,19 +1996,25 @@ class DesktopOperationTaskRecorder {
         itemRef,
         diagnosticId: `diagnostic:${this.#taskKind}:failure`,
         errorCode: errorCodeValue,
+        ...(message === undefined ? {} : { message }),
         retryable,
       },
     });
   }
 
   private completeFailure(status: "failed" | "rolled_back", resultRef: string): void {
-    if (
+    const failedAfterWriting =
       this.#taskKind === "deployment" &&
-      (this.#phase === "writing" || this.#phase === "verifying")
-    ) {
+      (this.#phase === "writing" || this.#phase === "verifying" || this.#phase === "rolling_back");
+    const failedDuringRollback =
+      this.#taskKind === "rollback" && (this.#phase === "restoring" || this.#phase === "verifying");
+    const systemRecoveryLock = status === "failed" && (failedAfterWriting || failedDuringRollback);
+    if (systemRecoveryLock) this.#onRecoveryLockRequired(this.#recoveryDeploymentId);
+    if (failedAfterWriting && this.#phase !== "rolling_back") {
       this.changePhase("rolling_back");
     }
     this.changePhase("completed");
+    this.#completed = true;
     this.#taskEvents.record({
       taskId: this.#taskId,
       emittedAt: nowFrom(this.#now),
@@ -1369,25 +2025,16 @@ class DesktopOperationTaskRecorder {
         failedCount: 1,
         skippedCount: 0,
         resultRef,
-        systemRecoveryLock: status === "failed",
+        systemRecoveryLock,
       },
     });
   }
 }
 
-function taskScopedError(error: unknown, taskId: string, fallbackMessage: string): AppError {
-  const parsedTaskId = TaskIdSchema.parse(taskId);
-  if (error instanceof AppError) {
-    return new AppError({ ...error.toJSON(), taskId: parsedTaskId, cause: error });
-  }
-  return new AppError({
-    code: "INTERNAL_ERROR",
-    message: error instanceof Error ? error.message : fallbackMessage,
-    retryable: false,
-    suggestedActions: ["Review deployment history before retrying"],
-    taskId: parsedTaskId,
-    cause: error,
-  });
+function taskFailureMessage(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const message = error.message.trim().slice(0, 2_000).trim();
+  return message.length === 0 ? undefined : message;
 }
 
 function errorCode(error: unknown): string {
@@ -1531,39 +2178,131 @@ async function syncFileWatcher(
   runtime: DesktopRuntime,
   roots: readonly AbsolutePath[],
   services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>,
+  taskRuntime: DesktopTaskRuntimeRegistry,
+  indexChanges: DesktopIndexChanges,
 ): Promise<void> {
   const settings = await runtime.repositories.settings.getPublic();
-  closeFileWatchers(runtime);
-  if (!settings.settings.fileWatching || roots.length === 0) return;
-  const watcher = new NodeFileWatcher({
-    roots,
-    platform: scannerPlatform(),
-    service: runtime.watchService,
-    onBatch: (batch) => handleWatchBatch(batch, roots, services),
-  });
-  runtime.fileWatchers.add(watcher);
-  await watcher.start();
+  if (!settings.settings.fileWatching) {
+    closeFileWatchers(runtime);
+    return;
+  }
+
+  for (const requestedRoot of uniquePaths(roots)) {
+    const root = AbsolutePathSchema.parse(await fsRealpath(requestedRoot));
+    const key = watcherRootKey(root);
+    const existing = runtime.fileWatchers.get(key);
+    if (existing !== undefined) {
+      existing.scanRoots.add(requestedRoot);
+      continue;
+    }
+    const watcher = runtime.fileWatcherFactory({
+      roots: [root],
+      platform: scannerPlatform(),
+      service: runtime.watchService.fork(),
+      onBatch: (batch) =>
+        handleWatchBatch(batch, key, runtime, services, taskRuntime, indexChanges),
+    });
+    runtime.fileWatchers.set(key, {
+      root,
+      scanRoots: new Set([requestedRoot]),
+      watcher,
+    });
+    try {
+      await watcher.start();
+    } catch (error) {
+      runtime.fileWatchers.delete(key);
+      watcher.close();
+      throw error;
+    }
+  }
 }
 
 function closeFileWatchers(runtime: DesktopRuntime): void {
-  for (const watcher of runtime.fileWatchers) watcher.close();
+  for (const { watcher } of runtime.fileWatchers.values()) watcher.close();
   runtime.fileWatchers.clear();
+}
+
+function watcherRootKey(root: AbsolutePath): string {
+  const normalized = resolve(root);
+  return platform() === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
 }
 
 async function handleWatchBatch(
   batch: WatchBatch,
-  roots: readonly AbsolutePath[],
+  watcherKey: string,
+  runtime: DesktopRuntime,
   services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>,
+  taskRuntime: DesktopTaskRuntimeRegistry,
+  indexChanges: DesktopIndexChanges,
 ): Promise<void> {
+  const owner = runtime.fileWatchers.get(watcherKey);
+  if (owner === undefined) return;
   if (batch.kind === "changes") {
-    await services["scan.start"]({
-      mode: "incremental",
-      roots,
-      changedPaths: batch.changedPaths,
-    });
+    const changedPaths = batch.changedPaths.filter((changedPath) =>
+      containsPath(owner.root, changedPath),
+    );
+    if (changedPaths.length === 0) return;
+    const completedRoots: AbsolutePath[] = [];
+    try {
+      for (const scanRoot of owner.scanRoots) {
+        await runWatcherScanWhenIdle(taskRuntime, services, {
+          mode: "incremental",
+          roots: [scanRoot],
+          projectId: projectIdForAbsoluteRoot(scanRoot),
+          changedPaths,
+        });
+        completedRoots.push(scanRoot);
+      }
+    } finally {
+      publishIndexChanges(indexChanges, completedRoots);
+    }
     return;
   }
-  await services["scan.start"]({ mode: "full", roots });
+  const completedRoots: AbsolutePath[] = [];
+  try {
+    for (const scanRoot of owner.scanRoots) {
+      await runWatcherScanWhenIdle(taskRuntime, services, {
+        mode: "full",
+        roots: [scanRoot],
+        projectId: projectIdForAbsoluteRoot(scanRoot),
+      });
+      completedRoots.push(scanRoot);
+    }
+  } finally {
+    publishIndexChanges(indexChanges, completedRoots);
+  }
+}
+
+async function runWatcherScanWhenIdle(
+  taskRuntime: DesktopTaskRuntimeRegistry,
+  services: Record<ApiCommandName, (payload: unknown) => Promise<unknown>>,
+  request: DesktopScanRequest,
+): Promise<void> {
+  for (;;) {
+    await taskRuntime.waitForIdle();
+    try {
+      const accepted = await services["scan.start"](request);
+      await taskRuntime.waitForCompletion(taskIdFromAcceptedTask(accepted));
+      return;
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== "CONFLICT") throw error;
+    }
+  }
+}
+
+function taskIdFromAcceptedTask(value: unknown): TaskId {
+  if (typeof value !== "object" || value === null || !("taskId" in value)) {
+    throw new TypeError("Task acceptance response is missing a task id");
+  }
+  return TaskIdSchema.parse(value.taskId);
+}
+
+function publishIndexChanges(
+  indexChanges: DesktopIndexChanges,
+  roots: readonly AbsolutePath[],
+): void {
+  if (roots.length === 0) return;
+  indexChanges.record(roots);
 }
 
 function scanRoots(
@@ -1575,6 +2314,14 @@ function scanRoots(
     return uniquePaths((requestRoots ?? []).map((root) => AbsolutePathSchema.parse(resolve(root))));
   }
   return uniquePaths([...projectRootChain(cwd), homeDirectory]);
+}
+
+async function canonicalScanRoots(
+  roots: readonly AbsolutePath[],
+): Promise<readonly AbsolutePath[]> {
+  return uniquePaths(
+    await Promise.all(roots.map(async (root) => AbsolutePathSchema.parse(await fsRealpath(root)))),
+  );
 }
 
 function changedScanPaths(
@@ -1723,9 +2470,9 @@ async function assetLoadStates(
   runtime: DesktopRuntime,
   listedAssets: readonly Asset[],
 ): Promise<ReadonlyMap<string, AssetListLoadState>> {
-  const allAssets = await runtime.repositories.index.listAssets({ limit: 10_000 });
+  const allAssets = await listAllAssets(runtime);
   const assetsById = new Map(
-    [...allAssets.items, ...listedAssets].map((asset) => [asset.assetId, asset]),
+    [...allAssets, ...listedAssets].map((asset) => [asset.assetId, asset]),
   );
   const states = new Map<string, AssetListLoadState>();
   for (const asset of assetsById.values()) {
@@ -1761,13 +2508,21 @@ async function assetLoadStates(
 }
 
 function latestEffectiveConfigs(runtime: DesktopRuntime) {
-  const row = runtime.repositories.database
-    .prepare(
-      "SELECT effective_configs_json FROM scan_runs ORDER BY started_at DESC, rowid DESC LIMIT 1",
-    )
-    .get() as { readonly effective_configs_json: string } | undefined;
-  if (row === undefined) return [];
-  return EffectiveConfigSchema.array().parse(JSON.parse(row.effective_configs_json));
+  const rows = runtime.repositories.database
+    .prepare("SELECT effective_configs_json FROM scan_runs ORDER BY started_at DESC, rowid DESC")
+    .all() as { readonly effective_configs_json: string }[];
+  const latestByInstallationTarget = new Map<
+    string,
+    ReturnType<typeof EffectiveConfigSchema.parse>
+  >();
+  for (const row of rows) {
+    const configs = EffectiveConfigSchema.array().parse(JSON.parse(row.effective_configs_json));
+    for (const config of configs) {
+      const key = `${config.toolInstallationId}\0${config.canonicalTargetPath}`;
+      if (!latestByInstallationTarget.has(key)) latestByInstallationTarget.set(key, config);
+    }
+  }
+  return [...latestByInstallationTarget.values()];
 }
 
 function assetLoadStateFields(state: AssetListLoadState | undefined): AssetListLoadState {
@@ -1856,6 +2611,64 @@ function sourcePackageRoots(assets: readonly Asset[]): readonly AbsolutePath[] {
   ].map((root) => AbsolutePathSchema.parse(root));
 }
 
+async function currentAssetSourceHash(
+  runtime: DesktopRuntime,
+  assetId: string,
+): Promise<ContentHash | undefined> {
+  const asset = await runtime.repositories.index.getAsset(AssetIdSchema.parse(assetId));
+  if (asset === undefined) return undefined;
+  return asset.resource.kind === "skill"
+    ? currentSkillPackageHash(asset)
+    : currentSourceFileHash(primarySourcePath(asset));
+}
+
+async function currentSourceFileHash(path: AbsolutePath): Promise<ContentHash | undefined> {
+  const allowedRoot = existingAncestor(dirname(path));
+  const access = await createNodeFileAccess({
+    allowedRoots: [allowedRoot],
+    platform: platform(),
+  });
+  return (await access.read.snapshotFile(path))?.contentHash;
+}
+
+async function currentSkillPackageHash(asset: Asset): Promise<ContentHash | undefined> {
+  const packageRoot = AbsolutePathSchema.parse(dirname(primarySourcePath(asset)));
+  if (!isExistingDirectory(packageRoot)) return undefined;
+  const access = await createNodeFileAccess({
+    allowedRoots: [packageRoot],
+    platform: platform(),
+  });
+  try {
+    const enumeration = await enumerateSkillPackageSourceFiles({
+      packageRoot,
+      read: access.read,
+      signal: createCancellationController().signal,
+    });
+    return enumeration.status === "complete" ? enumeration.contentHash : undefined;
+  } catch (error) {
+    if (isMissingSourceError(error)) return undefined;
+    throw error;
+  }
+}
+
+function isExistingDirectory(path: AbsolutePath): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch (error) {
+    if (isMissingSourceError(error)) return false;
+    throw error;
+  }
+}
+
+function isMissingSourceError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
 function scanRegistrations(
   registrations: Readonly<Partial<Record<string, AdapterRegistration>>>,
   toolKeys: readonly string[] | undefined,
@@ -1887,6 +2700,65 @@ function notFound(message: string): AppError {
     retryable: false,
     suggestedActions: ["Refresh the local index and retry"],
   });
+}
+
+function taskNotCancellable(taskId: TaskId): AppError {
+  return new AppError({
+    code: "TASK_NOT_CANCELLABLE",
+    message: "The scan task is no longer cancellable",
+    retryable: false,
+    suggestedActions: ["Start a new scan if another refresh is needed"],
+    taskId,
+  });
+}
+
+function operationCleanupConflict(message: string, activeTaskKinds?: string): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message,
+    retryable: true,
+    suggestedActions: ["Wait for the active operation to finish, then retry"],
+    ...(activeTaskKinds === undefined ? {} : { safeContext: { activeTaskKinds } }),
+  });
+}
+
+function operationAlreadyRunningConflict(operationKey: string): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message: "The requested operation is already running",
+    retryable: true,
+    suggestedActions: ["Wait for the active operation to finish, then retry"],
+    safeContext: { operationKey },
+  });
+}
+
+function deploymentStateChangedConflict(deploymentRecordId: DeploymentRecordId): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message: "The deployment plan is no longer ready to execute",
+    retryable: true,
+    suggestedActions: ["Create a fresh deployment preview and retry"],
+    safeContext: { deploymentRecordId },
+  });
+}
+
+function recoveryRequiredConflict(deploymentRecordIds: readonly DeploymentRecordId[]): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message: "A recovery rollback must succeed before another deployment can start",
+    retryable: true,
+    suggestedActions: ["Roll back the failed deployment, then retry the new deployment"],
+    safeContext: { recoveryDeploymentId: [...deploymentRecordIds].sort().join(",") },
+  });
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
 
 function unsupported(message: string): AppError {
@@ -1957,6 +2829,29 @@ function diagnosticView(item: Diagnostic) {
   };
 }
 
+function assertDiagnosticReportSize(report: ReturnType<typeof createDiagnosticReport>): void {
+  const contentBytes = Buffer.byteLength(report.content, "utf8");
+  const responseBytes = Buffer.byteLength(JSON.stringify(report), "utf8");
+  if (
+    report.content.length > DIAGNOSTIC_REPORT_MAX_BYTES ||
+    contentBytes > DIAGNOSTIC_REPORT_MAX_BYTES ||
+    responseBytes > DIAGNOSTIC_REPORT_MAX_BYTES
+  ) {
+    throw diagnosticExportTooLarge(
+      `Diagnostic export exceeds the ${String(DIAGNOSTIC_REPORT_MAX_BYTES)} byte response limit`,
+    );
+  }
+}
+
+function diagnosticExportTooLarge(message: string): AppError {
+  return new AppError({
+    code: "PREVIEW_TOO_LARGE",
+    message,
+    retryable: false,
+    suggestedActions: ["Narrow the diagnostic filters and export again"],
+  });
+}
+
 type DiagnosticFilterRequest = Pick<
   CommandRequest<"diagnostics.export">,
   "from" | "projectId" | "taskId" | "to" | "toolKeys"
@@ -1983,8 +2878,118 @@ interface DiagnosticOwnership {
   readonly projectId?: ProjectId;
 }
 
-async function diagnosticFilterAssets(runtime: DesktopRuntime): Promise<readonly Asset[]> {
-  return (await runtime.repositories.index.listAssets({ limit: 10_000 })).items;
+interface DiagnosticRepositoryQuery {
+  readonly assetId?: ReturnType<typeof AssetIdSchema.parse>;
+  readonly severity?: readonly ReturnType<typeof DiagnosticSeveritySchema.parse>[];
+  readonly cursor?: ReturnType<typeof PaginationCursorSchema.parse>;
+}
+
+interface FilteredDiagnosticsSnapshot {
+  readonly items: readonly Diagnostic[];
+  readonly snapshotRevision: string;
+}
+
+async function readFilteredDiagnosticsSnapshot(
+  runtime: DesktopRuntime,
+  input: {
+    readonly repositoryQuery: DiagnosticRepositoryQuery;
+    readonly filter: DiagnosticFilterRequest;
+    readonly taskDiagnosticIds?: ReadonlySet<string>;
+    readonly matchLimit: number;
+  },
+): Promise<FilteredDiagnosticsSnapshot> {
+  for (let attempt = 0; attempt < INDEX_SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
+    const expectedRevision = databaseRevision(runtime);
+    const assets = await tryListAllAssetsAtRevision(runtime, expectedRevision);
+    if (assets === undefined) continue;
+    const context = diagnosticFilterContext(runtime, assets);
+    if (databaseRevision(runtime) !== expectedRevision) continue;
+
+    const items: Diagnostic[] = [];
+    const seenCursors = new Set<string>();
+    let cursor = input.repositoryQuery.cursor;
+    if (cursor !== undefined) seenCursors.add(cursor);
+    let changedDuringRead = false;
+    while (items.length < input.matchLimit) {
+      const page = await runtime.repositories.index.listDiagnostics({
+        ...(input.repositoryQuery.assetId === undefined
+          ? {}
+          : { assetId: input.repositoryQuery.assetId }),
+        ...(input.repositoryQuery.severity === undefined
+          ? {}
+          : { severity: input.repositoryQuery.severity }),
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: INTERNAL_PAGE_SIZE,
+      });
+      if (page.snapshotRevision !== expectedRevision) {
+        changedDuringRead = true;
+        break;
+      }
+      for (const diagnostic of page.items) {
+        if (includeDiagnostic(diagnostic, input.filter, context, input.taskDiagnosticIds)) {
+          items.push(diagnostic);
+          if (items.length === input.matchLimit) break;
+        }
+      }
+      if (items.length === input.matchLimit || page.nextCursor === undefined) break;
+      if (seenCursors.has(page.nextCursor)) throw repeatedPaginationCursor("diagnostic");
+      cursor = page.nextCursor;
+      seenCursors.add(cursor);
+    }
+    if (changedDuringRead || databaseRevision(runtime) !== expectedRevision) continue;
+    return { items, snapshotRevision: expectedRevision };
+  }
+  throw indexChangedDuringRead("diagnostic");
+}
+
+async function listAllAssets(runtime: DesktopRuntime): Promise<readonly Asset[]> {
+  for (let attempt = 0; attempt < INDEX_SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
+    const expectedRevision = databaseRevision(runtime);
+    const assets = await tryListAllAssetsAtRevision(runtime, expectedRevision);
+    if (assets !== undefined && databaseRevision(runtime) === expectedRevision) return assets;
+  }
+  throw indexChangedDuringRead("asset");
+}
+
+async function tryListAllAssetsAtRevision(
+  runtime: DesktopRuntime,
+  expectedRevision: string,
+): Promise<readonly Asset[] | undefined> {
+  const assets: Asset[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: ReturnType<typeof PaginationCursorSchema.parse> | undefined;
+  do {
+    const page = await runtime.repositories.index.listAssets({
+      limit: 10_000,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    if (page.snapshotRevision !== expectedRevision) return undefined;
+    assets.push(...page.items);
+    cursor = page.nextCursor;
+    if (cursor !== undefined && seenCursors.has(cursor)) {
+      throw repeatedPaginationCursor("asset");
+    }
+    if (cursor !== undefined) seenCursors.add(cursor);
+  } while (cursor !== undefined);
+  return assets;
+}
+
+function repeatedPaginationCursor(kind: "asset" | "diagnostic"): AppError {
+  return new AppError({
+    code: "INTERNAL_ERROR",
+    message: `The ${kind} repository returned a repeated pagination cursor`,
+    retryable: true,
+    suggestedActions: ["Run a fresh scan and try again"],
+  });
+}
+
+function indexChangedDuringRead(kind: "asset" | "diagnostic" | "effective"): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message: `The ${kind} index changed repeatedly while it was being read`,
+    retryable: true,
+    suggestedActions: ["Wait for active scans to finish and try again"],
+  });
 }
 
 function diagnosticFilterContext(
@@ -2110,13 +3115,15 @@ function diagnosticOwnership(
     diagnostic.location === undefined
       ? undefined
       : scopeOwnershipForPath(diagnostic.location.path, context);
+  const toolId = stored.toolId ?? evidenced.toolId ?? scoped?.toolId;
+  const projectId =
+    stored.projectId ??
+    evidenced.projectId ??
+    (scoped?.projectId === null ? undefined : scoped?.projectId);
   return {
     ...stored,
-    ...evidenced,
-    ...(scoped === undefined ? {} : { toolId: scoped.toolId }),
-    ...(scoped?.projectId === undefined || scoped.projectId === null
-      ? {}
-      : { projectId: scoped.projectId }),
+    ...(toolId === undefined ? {} : { toolId }),
+    ...(projectId === undefined ? {} : { projectId }),
   };
 }
 
@@ -2126,12 +3133,23 @@ function evidenceDiagnosticOwnership(diagnostic: Diagnostic): DiagnosticOwnershi
     typeof evidence["toolId"] === "string" ? ToolIdSchema.safeParse(evidence["toolId"]) : undefined;
   const projectRoot =
     typeof evidence["projectRoot"] === "string"
-      ? ProjectIdSchema.safeParse(evidence["projectRoot"])
+      ? projectIdFromEvidenceRoot(evidence["projectRoot"])
       : undefined;
   return {
     ...(toolId?.success === true ? { toolId: toolId.data } : {}),
-    ...(projectRoot?.success === true ? { projectId: projectRoot.data } : {}),
+    ...(projectRoot === undefined ? {} : { projectId: projectRoot }),
   };
+}
+
+function projectIdFromEvidenceRoot(value: string): ProjectId | undefined {
+  const absoluteRoot = AbsolutePathSchema.safeParse(value);
+  if (absoluteRoot.success) return projectIdForAbsoluteRoot(absoluteRoot.data);
+  const existing = ProjectIdSchema.safeParse(value);
+  return existing.success ? existing.data : undefined;
+}
+
+function projectIdForAbsoluteRoot(root: AbsolutePath): ProjectId {
+  return ProjectIdSchema.parse(stableId("project", [root]));
 }
 
 function scopeOwnershipForPath(
@@ -2187,61 +3205,82 @@ async function resolveEffectiveView(
   request: CommandRequest<"effective.resolve">,
 ) {
   const targetPath = AbsolutePathSchema.parse(resolve(request.targetScopeId));
-  const tool = toolInstallations(runtime)
-    .filter((installation) => installation.toolId === request.toolKey)
-    .find((installation) =>
-      installation.configRoots.some((root) => containsPath(root, targetPath)),
-    );
-  if (tool === undefined) throw notFound("Effective configuration not found");
-
   const resourceKinds =
     request.resourceTypes === undefined
       ? undefined
       : request.resourceTypes.map((resourceType) => ResourceKindSchema.parse(resourceType));
-  const scopes = (await runtime.repositories.index.listScopes()).filter(
-    (scope) => scope.toolId === tool.toolId,
-  );
-  const assets = (await diagnosticFilterAssets(runtime)).filter(
-    (asset) => asset.toolId === tool.toolId,
-  );
-  const enabledAssets = assets.filter((asset) => asset.status !== "disabled");
-  const adapter = registry.create(tool.toolId, { debug() {}, warn() {} });
-  const cancellation = createCancellationController();
-  const resolution = await adapter.resolveEffective({
-    tool,
-    targetPath,
-    assets: enabledAssets,
-    scopes,
-    ...(resourceKinds === undefined ? {} : { resourceKinds }),
-    signal: cancellation.signal,
-  });
-  const draft = withDisabledAssetsAsIgnored(
-    resolution.draft,
-    disabledApplicableAssets(assets, scopes, tool.toolId, targetPath, resourceKinds),
-  );
-  const resources =
-    resourceKinds === undefined
-      ? draft.resolvedResources
-      : draft.resolvedResources.filter((resource) => resourceKinds.includes(resource.kind));
-  return {
-    effective: toJson(resources),
-    contributors: draft.steps
+  for (let attempt = 0; attempt < INDEX_SNAPSHOT_READ_ATTEMPTS; attempt += 1) {
+    const expectedRevision = databaseRevision(runtime);
+    const matchingTools = toolInstallations(runtime).filter(
+      (installation) => installation.toolId === request.toolKey,
+    );
+    const allScopes = await runtime.repositories.index.listScopes();
+    const allAssets = await tryListAllAssetsAtRevision(runtime, expectedRevision);
+    if (allAssets === undefined || databaseRevision(runtime) !== expectedRevision) continue;
+    const tool =
+      matchingTools.find((installation) =>
+        installation.configRoots.some(
+          (root) => containsPath(root, targetPath) || containsPath(targetPath, root),
+        ),
+      ) ?? matchingTools[0];
+    if (tool === undefined) throw notFound("Effective configuration not found");
+    const scopes = allScopes.filter((scope) => scope.toolId === tool.toolId);
+    const assets = allAssets.filter((asset) => asset.toolId === tool.toolId);
+    const enabledAssets = assets.filter((asset) => asset.status !== "disabled");
+    const adapter = registry.create(tool.toolId, { debug() {}, warn() {} });
+    const cancellation = createCancellationController();
+    const resolution = await adapter.resolveEffective({
+      tool,
+      targetPath,
+      assets: enabledAssets,
+      scopes,
+      ...(resourceKinds === undefined ? {} : { resourceKinds }),
+      signal: cancellation.signal,
+    });
+    if (databaseRevision(runtime) !== expectedRevision) continue;
+    const draft = withDisabledAssetsAsIgnored(
+      resolution.draft,
+      disabledApplicableAssets(assets, scopes, tool.toolId, targetPath, resourceKinds),
+    );
+    const resources =
+      resourceKinds === undefined
+        ? draft.resolvedResources
+        : draft.resolvedResources.filter((resource) => resourceKinds.includes(resource.kind));
+    const contributors = draft.steps
       .filter((step) => step.action !== "ignore")
       .map((step) => ({
         assetId: step.assetId,
         action: step.action,
         reasonCode: reasonCode(step.reason),
-      })),
-    ignored: draft.steps
+      }));
+    const ignored = draft.steps
       .filter((step) => step.action === "ignore")
       .map((step) => ({
         assetId: step.assetId,
         reasonCode: reasonCode(step.reason),
         ...(step.coveredByAssetId === undefined ? {} : { coveredByAssetId: step.coveredByAssetId }),
-      })),
-    diagnostics: [],
-    snapshotRevision: databaseRevision(runtime),
-  };
+      }));
+    assertEffectiveResponseArrayBound("contributors", contributors.length);
+    assertEffectiveResponseArrayBound("ignored", ignored.length);
+    return {
+      effective: toJson(resources),
+      contributors,
+      ignored,
+      diagnostics: [],
+      snapshotRevision: expectedRevision,
+    };
+  }
+  throw indexChangedDuringRead("effective");
+}
+
+export function assertEffectiveResponseArrayBound(name: string, count: number): void {
+  if (count <= EFFECTIVE_RESPONSE_ARRAY_LIMIT) return;
+  throw new AppError({
+    code: "PREVIEW_TOO_LARGE",
+    message: `Effective configuration has more than ${String(EFFECTIVE_RESPONSE_ARRAY_LIMIT)} ${name}`,
+    retryable: false,
+    suggestedActions: ["Narrow the selected resource types or target scope and try again"],
+  });
 }
 
 function toolInstallations(runtime: DesktopRuntime): readonly ToolInstallation[] {
@@ -2283,8 +3322,11 @@ function disabledApplicableAssets(
     .filter((asset) => resourceKinds === undefined || resourceKinds.includes(asset.resource.kind))
     .filter((asset) => {
       const scope = scopesById.get(asset.scopeId);
-      void targetPath;
-      return scope === undefined || scope.toolId === toolId;
+      return (
+        scope !== undefined &&
+        scope.toolId === toolId &&
+        containsPath(scope.canonicalRootPath, targetPath)
+      );
     })
     .sort((left, right) => left.assetId.localeCompare(right.assetId));
 }
@@ -2334,11 +3376,14 @@ function databaseRevision(runtime: DesktopRuntime): string {
 }
 
 function reasonCode(reason: string): string {
-  return reason
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 100);
+  if (reason === "The asset applies to the selected target scope") {
+    return "TARGET_SCOPE_APPLIES";
+  }
+  if (reason === "Asset disabled") return "ASSET_DISABLED";
+  if (reason.startsWith("A more specific scope overrides this resource")) {
+    return "MORE_SPECIFIC_SCOPE_OVERRIDE";
+  }
+  return "UNSPECIFIED_RESOLUTION_REASON";
 }
 
 function migrationPreviewResponse(
@@ -2584,6 +3629,8 @@ function historyEntry(record: DeploymentRecord, snapshot: SnapshotMetadata | und
     id: record.deploymentRecordId,
     kind: record.rollbackOfRecordId === undefined ? ("deployment" as const) : ("rollback" as const),
     status: record.status,
+    ...(record.taskId === undefined ? {} : { taskId: record.taskId }),
+    ...(record.projectId === undefined ? {} : { projectId: record.projectId }),
     createdAt: record.createdAt,
     ...(record.finishedAt === undefined ? {} : { finishedAt: record.finishedAt }),
     phase:
@@ -2696,6 +3743,185 @@ function deploymentRecordById(
     | { verification_json: string }
     | undefined;
   return row === undefined ? undefined : (JSON.parse(row.verification_json) as DeploymentRecord);
+}
+
+function loadPersistedRecoveryLocks(runtime: DesktopRuntime): readonly DeploymentRecordId[] {
+  const lockRows = runtime.repositories.database
+    .prepare(
+      `SELECT deployments.domain_id, recovery_locks.resolved_at,
+              recovery_locks.resolution_evidence_json
+       FROM recovery_locks
+       JOIN deployments ON deployments.id = recovery_locks.deployment_id
+       ORDER BY deployments.domain_id`,
+    )
+    .all() as {
+    readonly domain_id: string;
+    readonly resolved_at: number | null;
+    readonly resolution_evidence_json: string | null;
+  }[];
+  const deploymentRecordIds = new Set(
+    lockRows
+      .filter(({ resolved_at }) => resolved_at === null)
+      .map(({ domain_id }) => DeploymentRecordIdSchema.parse(domain_id)),
+  );
+  const persistedUnresolvedDeploymentIds = new Set(deploymentRecordIds);
+  const resolvedThroughStorageOrder = new Map(
+    lockRows.flatMap((row) => {
+      if (row.resolved_at === null) return [];
+      const evidence = resolvedRecoveryEvidence(row.resolution_evidence_json);
+      return [
+        [
+          DeploymentRecordIdSchema.parse(row.domain_id),
+          evidence?.resolvedThroughStorageOrder,
+        ] as const,
+      ];
+    }),
+  );
+  const records = runtime.repositories.database
+    .prepare(
+      `SELECT rowid AS storage_order, verification_json
+       FROM deployments
+       WHERE status IN ('failed', 'writing', 'verifying', 'rolling_back', 'succeeded')
+       ORDER BY rowid`,
+    )
+    .all() as { readonly storage_order: number; readonly verification_json: string }[];
+  const latestRecoveryEvents = new Map<
+    DeploymentRecordId,
+    { readonly state: "required" | "recovered"; readonly storageOrder: number }
+  >();
+  for (const { storage_order, verification_json } of records) {
+    const record = JSON.parse(verification_json) as DeploymentRecord;
+    const event = recoveryEventForRecord(record);
+    if (event === undefined) continue;
+    latestRecoveryEvents.set(event.deploymentRecordId, {
+      state: event.state,
+      storageOrder: storage_order,
+    });
+  }
+  for (const [deploymentRecordId, event] of latestRecoveryEvents) {
+    const resolvedThrough = resolvedThroughStorageOrder.get(deploymentRecordId);
+    // A resolved durable row can cover zero-operation recovery, which has no
+    // successful rollback record. A later failed/interrupted record must win.
+    if (
+      !persistedUnresolvedDeploymentIds.has(deploymentRecordId) &&
+      resolvedThrough !== undefined &&
+      resolvedThrough >= event.storageOrder
+    ) {
+      deploymentRecordIds.delete(deploymentRecordId);
+      continue;
+    }
+    if (event.state === "recovered") {
+      deploymentRecordIds.delete(deploymentRecordId);
+      try {
+        resolvePersistedRecoveryLock(runtime, deploymentRecordId);
+      } catch {
+        // The successful rollback record still prevents a false in-memory lock.
+      }
+    } else {
+      deploymentRecordIds.add(deploymentRecordId);
+      try {
+        persistRecoveryLock(runtime, deploymentRecordId);
+      } catch {
+        // The failed record still reconstructs an in-memory lock for this runtime.
+      }
+    }
+  }
+  return [...deploymentRecordIds].sort();
+}
+
+function resolvedRecoveryEvidence(
+  text: string | null,
+): { readonly resolvedThroughStorageOrder: number } | undefined {
+  if (text === null) return undefined;
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const resolvedThroughStorageOrder = value["resolvedThroughStorageOrder"];
+    return typeof resolvedThroughStorageOrder === "number" &&
+      Number.isSafeInteger(resolvedThroughStorageOrder) &&
+      resolvedThroughStorageOrder >= 0
+      ? { resolvedThroughStorageOrder }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function recoveryEventForRecord(
+  record: DeploymentRecord,
+):
+  | { readonly deploymentRecordId: DeploymentRecordId; readonly state: "required" | "recovered" }
+  | undefined {
+  if (record.rollbackOfRecordId !== undefined && record.status === "succeeded") {
+    return { deploymentRecordId: record.rollbackOfRecordId, state: "recovered" };
+  }
+  const interruptedWrite = ["writing", "verifying", "rolling_back"].includes(record.status);
+  if (record.rollbackOfRecordId !== undefined) {
+    return interruptedWrite || (record.status === "failed" && record.startedAt !== undefined)
+      ? { deploymentRecordId: record.rollbackOfRecordId, state: "required" }
+      : undefined;
+  }
+  return interruptedWrite ||
+    (record.status === "failed" && record.rollbackResults.some(({ status }) => status === "failed"))
+    ? { deploymentRecordId: record.deploymentRecordId, state: "required" }
+    : undefined;
+}
+
+function persistRecoveryLock(
+  runtime: DesktopRuntime,
+  deploymentRecordId: DeploymentRecordId,
+): void {
+  const row = runtime.repositories.database
+    .prepare("SELECT id, verification_json FROM deployments WHERE domain_id = ?")
+    .get(deploymentRecordId) as
+    | { readonly id: string; readonly verification_json: string }
+    | undefined;
+  if (row === undefined) return;
+  const record = JSON.parse(row.verification_json) as DeploymentRecord;
+  const statement = runtime.repositories.database.prepare(
+    `INSERT INTO recovery_locks(
+       canonical_target_key, deployment_id, reason, created_at, recovery_fence_token
+     ) VALUES(?, ?, 'failed_deployment', ?, 1)
+     ON CONFLICT(canonical_target_key) DO UPDATE SET
+       deployment_id = excluded.deployment_id,
+       reason = excluded.reason,
+       created_at = excluded.created_at,
+       resolved_at = NULL,
+       resolution_evidence_json = NULL,
+       recovery_owner_id = NULL,
+       recovery_claim_expires_at = NULL,
+       recovery_fence_token = recovery_locks.recovery_fence_token + 1`,
+  );
+  const createdAt = Date.parse(now(runtime));
+  for (const targetPath of new Set(record.operations.map(({ targetPath }) => targetPath))) {
+    statement.run(watcherRootKey(targetPath), row.id, createdAt);
+  }
+}
+
+function resolvePersistedRecoveryLock(
+  runtime: DesktopRuntime,
+  deploymentRecordId: DeploymentRecordId,
+): void {
+  const resolvedThroughStorageOrder = (
+    runtime.repositories.database
+      .prepare("SELECT COALESCE(MAX(rowid), 0) AS storage_order FROM deployments")
+      .get() as { readonly storage_order: number }
+  ).storage_order;
+  runtime.repositories.database
+    .prepare(
+      `UPDATE recovery_locks
+       SET resolved_at = ?, resolution_evidence_json = ?
+       WHERE resolved_at IS NULL
+         AND deployment_id = (SELECT id FROM deployments WHERE domain_id = ?)`,
+    )
+    .run(
+      Date.parse(now(runtime)),
+      JSON.stringify({
+        resolution: "successful_rollback",
+        deploymentRecordId,
+        resolvedThroughStorageOrder,
+      }),
+      deploymentRecordId,
+    );
 }
 
 function rollbackRoots(

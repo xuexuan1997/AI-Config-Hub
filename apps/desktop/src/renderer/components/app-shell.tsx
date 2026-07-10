@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { localeForState, t } from "../i18n.js";
+import { localeForState, localizeUiMessage, t } from "../i18n.js";
 import type { AppState, Route, ThemeSetting } from "../model.js";
 
 const routes: { readonly route: Route; readonly label: string }[] = [
@@ -12,6 +12,7 @@ const routes: { readonly route: Route; readonly label: string }[] = [
 export function AppShell(props: {
   readonly state: AppState;
   readonly onRoute: (route: Route) => void;
+  readonly onDismissMessage?: () => void;
   readonly children: ReactNode;
 }) {
   const mainRef = useRef<HTMLElement | null>(null);
@@ -37,6 +38,7 @@ export function AppShell(props: {
           <nav aria-label={t(locale, "Workspaces")}>
             {routes.map(({ route, label }) => (
               <button
+                aria-current={props.state.route === route ? "page" : undefined}
                 className={props.state.route === route ? "active" : ""}
                 key={route}
                 type="button"
@@ -50,6 +52,14 @@ export function AppShell(props: {
       </aside>
       <main data-route={props.state.route} key={props.state.route} ref={mainRef}>
         <section className="workspace" data-route={props.state.route}>
+          {props.state.message === undefined || props.state.assetDetail !== undefined ? null : (
+            <div className="app-message" role="status" aria-live="polite">
+              <span>{localizeUiMessage(locale, props.state.message)}</span>
+              <button type="button" onClick={props.onDismissMessage}>
+                {t(locale, "Close")}
+              </button>
+            </div>
+          )}
           {props.children}
         </section>
       </main>

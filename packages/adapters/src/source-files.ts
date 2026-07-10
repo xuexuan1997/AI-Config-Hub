@@ -54,10 +54,14 @@ export function packageContentHash(files: readonly AssetSourceFile[]): ContentHa
       file.isText ? "text" : "binary",
       file.contentHash,
     ])
-    .sort((left, right) => left.join("\0").localeCompare(right.join("\0")));
+    .sort((left, right) => compareStrings(left.join("\0"), right.join("\0")));
   return ContentHashSchema.parse(
     `sha256:${createHash("sha256").update(JSON.stringify(tuples), "utf8").digest("hex")}`,
   );
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function mediaTypeFromPath(path: string, isText: boolean): string {

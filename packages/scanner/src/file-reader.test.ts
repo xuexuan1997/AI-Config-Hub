@@ -4,9 +4,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { AbsolutePathSchema } from "@ai-config-hub/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createNodeFileAccess } from "./file-reader.js";
+import {
+  createNodeFileAccess,
+  MAX_DIRECTORY_LIST_ENTRIES,
+  MAX_SOURCE_SNAPSHOT_BYTES,
+  type FileSnapshotLimitError,
+} from "./file-reader.js";
 
 const absolute = (path: string) => AbsolutePathSchema.parse(resolve(path));
 const canonicalAbsolute = async (path: string) => AbsolutePathSchema.parse(await realpath(path));
@@ -163,6 +168,67 @@ describe("root-confined file access", () => {
     await expect(
       snapshots.snapshot({ path: absolute(sibling), allowedRoots: [absolute(narrow)] }),
     ).rejects.toMatchObject({ code: "PATH_OUTSIDE_ALLOWED_ROOT" });
+  });
+
+  it("rejects an oversized snapshot before allocating file contents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-snapshot-limit-"));
+    const target = join(root, "SKILL.md");
+    await writeFile(target, Buffer.alloc(32));
+    const readFile = vi.fn<(path: ReturnType<typeof absolute>) => Promise<Buffer>>(() =>
+      Promise.reject(new Error("Oversized files must not be read")),
+    );
+    const { read } = await createNodeFileAccess({
+      allowedRoots: [absolute(root)],
+      maxSnapshotBytes: 16,
+      readFile,
+    });
+
+    await expect(read.snapshotFile(absolute(target))).rejects.toMatchObject({
+      name: "FileSnapshotLimitError",
+      code: "FILE_SNAPSHOT_TOO_LARGE",
+      limit: 16,
+      observed: 32,
+    } satisfies Partial<FileSnapshotLimitError>);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(MAX_SOURCE_SNAPSHOT_BYTES).toBe(5 * 1024 * 1024);
+  });
+
+  it("rejects a snapshot when the bytes read exceed the preflight size", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-snapshot-growth-"));
+    const target = join(root, "SKILL.md");
+    await writeFile(target, "x", "utf8");
+    const readFile = vi.fn(() => Promise.resolve(Buffer.alloc(32)));
+    const { read } = await createNodeFileAccess({
+      allowedRoots: [absolute(root)],
+      maxSnapshotBytes: 16,
+      readFile,
+    });
+
+    await expect(read.snapshotFile(absolute(target))).rejects.toMatchObject({
+      code: "FILE_SNAPSHOT_TOO_LARGE",
+      limit: 16,
+      observed: 32,
+    });
+    expect(readFile).toHaveBeenCalledOnce();
+  });
+
+  it("streams directory listings into a fixed entry budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ai-config-hub-directory-limit-"));
+    for (let index = 0; index < 4; index += 1) {
+      await writeFile(join(root, `file-${String(index)}.md`), "x", "utf8");
+    }
+    const { read } = await createNodeFileAccess({
+      allowedRoots: [absolute(root)],
+      maxDirectoryEntries: 3,
+    });
+
+    await expect(read.list(absolute(root))).rejects.toMatchObject({
+      name: "AdapterDiscoveryLimitError",
+      code: "ADAPTER_DISCOVERY_LIMIT_EXCEEDED",
+      limit: 3,
+      observedAtLeast: 4,
+    });
+    expect(MAX_DIRECTORY_LIST_ENTRIES).toBe(10_000);
   });
 });
 

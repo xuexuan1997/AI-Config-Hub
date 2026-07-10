@@ -44,6 +44,16 @@ describe("command schemas", () => {
     ).toBe(false);
     expect(CommandRequestSchemas["assets.list"].safeParse({ limit: 201 }).success).toBe(false);
     expect(CommandRequestSchemas["assets.list"].safeParse({ limit: 200 }).success).toBe(true);
+    expect(
+      CommandRequestSchemas["scan.start"].safeParse({
+        mode: "full",
+        clientContext: "migration-source",
+      }).success,
+    ).toBe(true);
+    expect(
+      CommandRequestSchemas["scan.start"].safeParse({ mode: "full", clientContext: "unknown" })
+        .success,
+    ).toBe(false);
   });
 
   it("requires asset disable requests to declare the selected disablement method", () => {
@@ -179,8 +189,12 @@ describe("command schemas", () => {
 
   it("limits history records to supported deployment record kinds", () => {
     expect(
-      CommandRequestSchemas["history.list"].safeParse({ kinds: ["deployment", "rollback"] })
-        .success,
+      CommandRequestSchemas["history.list"].safeParse({
+        kinds: ["deployment", "rollback"],
+        taskId: "task-1",
+        projectId: "project-1",
+        snapshotRevision: "42",
+      }).success,
     ).toBe(true);
     expect(CommandRequestSchemas["history.list"].safeParse({ kinds: ["scan"] }).success).toBe(
       false,
@@ -189,7 +203,11 @@ describe("command schemas", () => {
       CommandResponseSchemas["history.list"].safeParse({
         items: [{ id: "scan-1", kind: "scan", status: "succeeded", createdAt: now }],
         nextCursor: null,
+        snapshotRevision: "42",
       }).success,
+    ).toBe(false);
+    expect(
+      CommandResponseSchemas["history.list"].safeParse({ items: [], nextCursor: null }).success,
     ).toBe(false);
   });
 
@@ -556,6 +574,7 @@ describe("command schemas", () => {
           },
         ],
         nextCursor: null,
+        snapshotRevision: "42",
       },
       "history.get": {
         entry: {

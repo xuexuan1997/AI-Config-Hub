@@ -13,6 +13,7 @@ import {
 import {
   AbsolutePathSchema,
   AssetIdSchema,
+  ProjectIdSchema,
   ScanRunIdSchema,
   TaskIdSchema,
   ToolInstallationIdSchema,
@@ -100,7 +101,7 @@ function diagnosticForAssetPath(input: {
     subject: { kind: "scan", id: input.scanRunId },
     location: { path: input.sourcePath },
     impact: "The resource cannot be used safely",
-    evidence: { sourcePath: input.sourcePath },
+    evidence: { sourcePath: input.sourcePath, toolInstallationId: tool.installationId },
     suggestedActions: ["Review the source configuration and scan again"],
     blocking: true,
     createdAt: "2026-06-21T08:00:00.000Z",
@@ -180,6 +181,160 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("retires only missing tool installations covered by a scoped rescan", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const otherTool = {
+      ...tool,
+      installationId: ToolInstallationIdSchema.parse("codex-other-project"),
+      configRoots: [AbsolutePathSchema.parse("/other-project")],
+    };
+    const otherToolKind = {
+      ...tool,
+      toolId: "cursor" as const,
+      installationId: ToolInstallationIdSchema.parse("cursor-project"),
+    };
+    const otherScope = ScopeSchema.parse({
+      ...scope,
+      scopeId: "scope-other-project-installation",
+      canonicalRootPath: "/other-project",
+      projectId: "project-2",
+      discoveryEvidence: { installationId: otherTool.installationId },
+    });
+    const otherAsset = AssetSchema.parse({
+      ...asset("asset-other-installation", "Other project"),
+      scopeId: otherScope.scopeId,
+      canonicalSourcePath: "/other-project/AGENTS.md",
+      sourceFiles: [
+        {
+          path: "/other-project/AGENTS.md",
+          relativePath: "AGENTS.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+    });
+    await repositories.index.replaceDerivedIndex({
+      ...replacement("scan-installations", [asset("asset-project", "Project"), otherAsset]),
+      scanCoverage: {
+        roots: [AbsolutePathSchema.parse("/project"), AbsolutePathSchema.parse("/other-project")],
+        toolIds: ["codex", "cursor"],
+      },
+      tools: [tool, otherTool, otherToolKind],
+      scopes: [scope, otherScope],
+    });
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-project-removed", []),
+      scanCoverage: {
+        roots: [AbsolutePathSchema.parse("/project")],
+        toolIds: ["codex"],
+      },
+      tools: [],
+      scopes: [],
+      changedPaths: [AbsolutePathSchema.parse("/project")],
+    });
+
+    const installationRows = opened.database
+      .prepare(
+        "SELECT tool_installation_id, is_detected FROM tools WHERE tool_installation_id IN (?, ?, ?) ORDER BY tool_installation_id",
+      )
+      .all(tool.installationId, otherTool.installationId, otherToolKind.installationId) as {
+      readonly tool_installation_id: string;
+      readonly is_detected: number;
+    }[];
+    expect(installationRows).toEqual([
+      { tool_installation_id: "codex-other-project", is_detected: 1 },
+      { tool_installation_id: "codex-project", is_detected: 0 },
+      { tool_installation_id: "cursor-project", is_detected: 1 },
+    ]);
+    expect(
+      (await repositories.index.listAssets({ limit: 20 })).items.map(({ assetId }) => assetId),
+    ).toEqual(["asset-other-installation"]);
+    opened.database.close();
+  });
+
+  it("removes a stale locator below a changed directory while preserving another project", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const oldTargetAsset = AssetSchema.parse({
+      ...asset("asset-target-old", "Old target rule"),
+      canonicalSourcePath: "/project/.cursor/rules/agents.mdc",
+      locator: "rule:agents",
+      sourceFiles: [
+        {
+          path: "/project/.cursor/rules/agents.mdc",
+          relativePath: ".cursor/rules/agents.mdc",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+      nativeIdentity: { nativeId: "rule:agents", displayName: "agents" },
+    });
+    const newTargetAsset = AssetSchema.parse({
+      ...oldTargetAsset,
+      assetId: "asset-target-new",
+      locator: "rule:AGENTS",
+      resource: {
+        kind: "rule",
+        data: {
+          name: "AGENTS",
+          instructions: "Replacement target rule",
+          globs: [],
+          extensions: {},
+        },
+      },
+      nativeIdentity: { nativeId: "rule:AGENTS", displayName: "AGENTS" },
+    });
+    const otherScope = ScopeSchema.parse({
+      ...scope,
+      scopeId: "scope-other-project",
+      canonicalRootPath: "/other-project",
+      projectId: "project-2",
+    });
+    const otherProjectAsset = AssetSchema.parse({
+      ...asset("asset-other-project", "Keep this rule"),
+      scopeId: otherScope.scopeId,
+      canonicalSourcePath: "/other-project/AGENTS.md",
+      sourceFiles: [
+        {
+          path: "/other-project/AGENTS.md",
+          relativePath: "AGENTS.md",
+          role: "primary",
+          mediaType: "text/markdown",
+          isText: true,
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+    });
+    await repositories.index.replaceDerivedIndex({
+      ...replacement("scan-full-directory", [oldTargetAsset, otherProjectAsset]),
+      scopes: [scope, otherScope],
+    });
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-incremental-directory", [newTargetAsset]),
+      changedPaths: [AbsolutePathSchema.parse("/project/.cursor/rules")],
+    });
+
+    expect(
+      (await repositories.index.listAssets({ limit: 20 })).items.map(({ assetId, locator }) => ({
+        assetId,
+        locator,
+      })),
+    ).toEqual([
+      { assetId: "asset-other-project", locator: "rule:asset-other-project" },
+      { assetId: "asset-target-new", locator: "rule:AGENTS" },
+    ]);
+    opened.database.close();
+  });
+
   it("persists asset disablement across derived index replacement without deleting the asset", async () => {
     const databasePath = path();
     const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
@@ -250,6 +405,94 @@ describe("storage repositories", () => {
       sourceDirectoryPath: "/project/.agents/skills/release",
       movedDirectoryPath: "/user-data/disabled-assets/asset-a/release",
     });
+    opened.database.close();
+  });
+
+  it("upserts an unchanged recorded-disabled asset during an unrelated incremental merge", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const sourceA = asset("asset-a", "A");
+    await repositories.index.replaceDerivedIndex(
+      replacement("scan-full-disabled-merge", [sourceA, asset("asset-b", "B")]),
+    );
+    const internalIdBefore = (
+      opened.database.prepare("SELECT id FROM assets WHERE domain_id = ?").get(sourceA.assetId) as {
+        readonly id: string;
+      }
+    ).id;
+    await repositories.index.saveAssetDisablement({
+      assetId: AssetIdSchema.parse(sourceA.assetId),
+      method: "move_file",
+      disabledAt: "2026-07-05T08:00:00.000Z",
+      asset: sourceA,
+      scope,
+      tool,
+      restore: { sourcePath: sourceA.canonicalSourcePath },
+    });
+
+    const merged = await repositories.index.mergeIncrementalIndex({
+      ...replacement("scan-incremental-disabled-merge", [asset("asset-b", "B2")]),
+      changedPaths: [AbsolutePathSchema.parse("/project/asset-b.md")],
+    });
+    expect(merged.revision).toMatch(/^\d+$/);
+
+    const items = (await repositories.index.listAssets({ limit: 20 })).items;
+    expect(items.map(({ assetId, status }) => ({ assetId, status }))).toEqual([
+      { assetId: "asset-a", status: "disabled" },
+      { assetId: "asset-b", status: "enabled" },
+    ]);
+    expect(
+      (
+        opened.database
+          .prepare("SELECT id FROM assets WHERE domain_id = ?")
+          .get(sourceA.assetId) as {
+          readonly id: string;
+        }
+      ).id,
+    ).toBe(internalIdBefore);
+    opened.database.close();
+  });
+
+  it("replaces diagnostics for unchanged assets included in an incremental scan", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const sourceA = asset("asset-a", "A");
+    await repositories.index.replaceDerivedIndex(
+      replacement(
+        "scan-full-diagnostic-refresh",
+        [sourceA, asset("asset-b", "B")],
+        [
+          diagnosticForAssetPath({
+            diagnosticId: "diagnostic-old-a",
+            scanRunId: "scan-full-diagnostic-refresh",
+            sourcePath: sourceA.canonicalSourcePath,
+          }),
+        ],
+      ),
+    );
+
+    await repositories.index.mergeIncrementalIndex({
+      ...replacement(
+        "scan-incremental-diagnostic-refresh",
+        [sourceA, asset("asset-b", "B2")],
+        [
+          diagnosticForAssetPath({
+            diagnosticId: "diagnostic-new-a",
+            scanRunId: "scan-incremental-diagnostic-refresh",
+            sourcePath: sourceA.canonicalSourcePath,
+          }),
+        ],
+      ),
+      changedPaths: [AbsolutePathSchema.parse("/project/asset-b.md")],
+    });
+
+    expect(
+      (await repositories.index.listDiagnostics({ limit: 20 })).items.map(
+        ({ diagnosticId }) => diagnosticId,
+      ),
+    ).toEqual(["diagnostic-new-a"]);
     opened.database.close();
   });
 
@@ -715,6 +958,80 @@ describe("storage repositories", () => {
     opened.database.close();
   });
 
+  it("continues filtered deployment history after the cursor record changes status", async () => {
+    const databasePath = path();
+    const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
+    const repositories = createStorageRepositories(opened);
+    const oldest = deploymentFixture({
+      deploymentRecordId: "deployment-oldest",
+      deploymentPlanId: "plan-oldest",
+      createdAt: "2026-06-21T08:00:00.000Z",
+      hashSeed: "a",
+    });
+    const middle = deploymentFixture({
+      deploymentRecordId: "deployment-middle",
+      deploymentPlanId: "plan-middle",
+      createdAt: "2026-06-21T09:00:00.000Z",
+      hashSeed: "b",
+    });
+    const newest = deploymentFixture({
+      deploymentRecordId: "deployment-newest",
+      deploymentPlanId: "plan-newest",
+      createdAt: "2026-06-21T10:00:00.000Z",
+      hashSeed: "c",
+    });
+    await repositories.deployments.savePlanAndRecord(oldest);
+    await repositories.deployments.savePlanAndRecord(middle);
+    await repositories.deployments.savePlanAndRecord(newest);
+
+    const firstPage = await repositories.deployments.listRecords({
+      statuses: ["planned"],
+      limit: 1,
+    });
+    expect(firstPage.items.map(({ deploymentRecordId }) => deploymentRecordId)).toEqual([
+      "deployment-newest",
+    ]);
+    const cursor = firstPage.nextCursor;
+    if (cursor === undefined) throw new Error("Expected a filtered history cursor");
+
+    const transitioned = DeploymentRecordSchema.parse({
+      ...newest.record,
+      status: "confirmed",
+      confirmedPlanHash: newest.plan.planHash,
+      confirmedAt: newest.record.createdAt,
+    });
+    await expect(
+      repositories.deployments.compareAndSetRecord({
+        expectedStatus: "planned",
+        record: transitioned,
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      repositories.deployments.listRecords({
+        statuses: ["planned"],
+        cursor,
+        snapshotRevision: firstPage.snapshotRevision,
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({
+      code: "STALE_INDEX",
+      safeContext: { requestedRevision: firstPage.snapshotRevision },
+    });
+
+    const secondPage = await repositories.deployments.listRecords({
+      statuses: ["planned"],
+      cursor,
+      limit: 10,
+    });
+    expect(secondPage.items.map(({ deploymentRecordId }) => deploymentRecordId)).toEqual([
+      "deployment-middle",
+      "deployment-oldest",
+    ]);
+    expect(Number(secondPage.snapshotRevision)).toBeGreaterThan(Number(firstPage.snapshotRevision));
+    opened.database.close();
+  });
+
   it("filters deployment history by kind, status, and creation window", async () => {
     const databasePath = path();
     const opened = await openDatabase({ path: databasePath, appVersion: "0.1.0" });
@@ -725,6 +1042,8 @@ describe("storage repositories", () => {
       createdAt: "2026-06-21T08:00:00.000Z",
       hashSeed: "a",
       status: "succeeded",
+      taskId: "task:deployment-history",
+      projectId: "project:history-a",
     });
     const rollback = deploymentFixture({
       deploymentRecordId: "rollback-succeeded",
@@ -733,6 +1052,8 @@ describe("storage repositories", () => {
       hashSeed: "b",
       rollbackOfRecordId: "deployment-succeeded",
       status: "succeeded",
+      taskId: "task:rollback-history",
+      projectId: "project:history-a",
     });
     const plannedRollback = deploymentFixture({
       deploymentRecordId: "rollback-planned",
@@ -740,6 +1061,8 @@ describe("storage repositories", () => {
       createdAt: "2026-06-21T10:00:00.000Z",
       hashSeed: "c",
       rollbackOfRecordId: "deployment-succeeded",
+      taskId: "task:rollback-planned",
+      projectId: "project:history-b",
     });
     await repositories.deployments.savePlanAndRecord(deployment);
     await repositories.deployments.savePlanAndRecord(rollback);
@@ -754,6 +1077,28 @@ describe("storage repositories", () => {
     });
 
     expect(page.items.map((record) => record.deploymentRecordId)).toEqual(["rollback-succeeded"]);
+    await expect(
+      repositories.deployments.listRecords({
+        taskId: TaskIdSchema.parse("task:rollback-history"),
+        projectId: ProjectIdSchema.parse("project:history-a"),
+        limit: 10,
+      }),
+    ).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          deploymentRecordId: "rollback-succeeded",
+          taskId: "task:rollback-history",
+          projectId: "project:history-a",
+        }),
+      ],
+    });
+    await expect(
+      repositories.deployments.listRecords({
+        taskId: TaskIdSchema.parse("task:rollback-history"),
+        projectId: ProjectIdSchema.parse("project:history-b"),
+        limit: 10,
+      }),
+    ).resolves.toMatchObject({ items: [] });
     opened.database.close();
   });
 });
@@ -782,6 +1127,8 @@ function deploymentFixture(input: {
   readonly hashSeed: string;
   readonly rollbackOfRecordId?: string;
   readonly status?: "planned" | "succeeded" | "failed";
+  readonly taskId?: string;
+  readonly projectId?: string;
 }) {
   const operation = {
     kind: "create" as const,
@@ -811,6 +1158,8 @@ function deploymentFixture(input: {
     ...(input.rollbackOfRecordId === undefined
       ? {}
       : { rollbackOfRecordId: input.rollbackOfRecordId }),
+    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
     status: input.status ?? "planned",
     operations: [operation],
     backupLocations:

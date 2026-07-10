@@ -39,7 +39,6 @@ export const MIGRATION_TARGET_TOOL_OPTIONS = [
 export const MIGRATION_CONFLICT_POLICY_OPTIONS = [
   "replace",
   "fail",
-  "merge",
 ] as const satisfies readonly MigrationConflictPolicy[];
 export const THEME_SETTING_OPTIONS = [
   "system",
@@ -118,6 +117,8 @@ export interface ActiveTaskState {
     readonly unit: "files" | "operations" | "items";
   };
   readonly message?: string;
+  readonly cancellable?: boolean;
+  readonly resultRef?: string;
   readonly recoveryLock: boolean;
   readonly failure?: {
     readonly itemRef: string;
@@ -153,6 +154,7 @@ export interface AppState {
   readonly deploymentConfirmed: boolean;
   readonly deploymentConfirmationGrants: readonly DeploymentConfirmation[];
   readonly activeTask?: ActiveTaskState;
+  readonly recoveryLock?: { readonly deploymentId?: string };
   readonly settings: AppSettingsState;
   readonly message?: string;
 }
@@ -165,9 +167,14 @@ export type AppAction =
       readonly type: "scan";
       readonly status: AppState["scanStatus"];
       readonly scanScope?: ScanTaskScope;
+      readonly projectRoot?: string;
       readonly message?: string;
     }
-  | { readonly type: "assets"; readonly assets: AppState["assets"] }
+  | {
+      readonly type: "assets";
+      readonly assets: AppState["assets"];
+      readonly projectRoot?: string;
+    }
   | {
       readonly type: "migrationSourceAssets";
       readonly assets: AppState["assets"];
@@ -190,6 +197,7 @@ export type AppAction =
       readonly type: "diagnostics";
       readonly diagnostics: AppState["diagnostics"];
       readonly counts: AppState["diagnosticCounts"];
+      readonly projectRoot?: string;
     }
   | {
       readonly type: "migrationSource";
@@ -205,6 +213,7 @@ export type AppAction =
       readonly conflictPolicy: MigrationConflictPolicy;
     }
   | { readonly type: "preview"; readonly preview: CommandResponse<"migration.preview"> }
+  | { readonly type: "previewInvalidated" }
   | { readonly type: "deploymentConfirmation"; readonly confirmed: boolean }
   | {
       readonly type: "deploymentConfirmationGrant";
@@ -212,8 +221,17 @@ export type AppAction =
       readonly granted: boolean;
     }
   | { readonly type: "taskEvent"; readonly action: ActiveTaskUpdate }
+  | { readonly type: "runtimeRecovery"; readonly deploymentIds: readonly string[] }
+  | {
+      readonly type: "runtimeScanRestored";
+      readonly scanScope: ScanTaskScope;
+      readonly projectRoot: string;
+    }
   | { readonly type: "settingsLoading" }
-  | { readonly type: "settingsSaving" }
+  | {
+      readonly type: "settingsSaving";
+      readonly patch: CommandRequest<"settings.update">["patch"];
+    }
   | { readonly type: "settingsFailed" }
   | { readonly type: "settingsLoaded"; readonly settings: CommandResponse<"settings.get"> }
   | { readonly type: "settingsUpdated"; readonly settings: CommandResponse<"settings.update"> }
@@ -308,6 +326,7 @@ function clearScanCacheState(state: AppState): AppState {
     assetDetail: discardedAssetDetail,
     effective: discardedEffective,
     preview: discardedPreview,
+    activeTask: currentTask,
     ...withoutScanDetails
   } = state;
   void discardedAssetDetail;
@@ -324,7 +343,23 @@ function clearScanCacheState(state: AppState): AppState {
     migration: { ...state.migration, sourceAssetIds: [] },
     deploymentConfirmed: false,
     deploymentConfirmationGrants: [],
+    ...(currentTask !== undefined && currentTask.taskKind !== "scan"
+      ? { activeTask: currentTask }
+      : {}),
   };
+}
+
+function clearDeploymentHistoryState(state: AppState): AppState {
+  const withoutPreview = clearPreview(state);
+  if (
+    withoutPreview.activeTask?.taskKind !== "deployment" &&
+    withoutPreview.activeTask?.taskKind !== "rollback"
+  ) {
+    return withoutPreview;
+  }
+  const { activeTask: discardedActiveTask, ...withoutDeploymentTask } = withoutPreview;
+  void discardedActiveTask;
+  return withoutDeploymentTask;
 }
 
 type MigrationAssetSummary = AppState["assets"][number];
@@ -389,6 +424,21 @@ function migrationWithSourceProjectRoot(
     : { ...withoutSourceProjectRoot, sourceProjectRoot, sourceAssetIds: [] };
 }
 
+function scanTaskMatchesScope(
+  task: ActiveTaskState | undefined,
+  scanScope: ScanTaskScope | undefined,
+): boolean {
+  if (task?.taskKind !== "scan") return false;
+  return scanScope === undefined || task.scanScope === undefined || task.scanScope === scanScope;
+}
+
+function withoutMatchingScanTask(state: AppState, scanScope: ScanTaskScope): AppState {
+  if (!scanTaskMatchesScope(state.activeTask, scanScope)) return state;
+  const { activeTask: discardedActiveTask, ...withoutTask } = state;
+  void discardedActiveTask;
+  return withoutTask;
+}
+
 export function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "route": {
@@ -396,43 +446,43 @@ export function reducer(state: AppState, action: AppAction): AppState {
       void discardedMessage;
       return { ...withoutMessage, route: action.route };
     }
-    case "project":
-      if (action.root === undefined) {
-        return clearProjectDetails({
-          route: state.route,
-          scanStatus: state.scanStatus,
-          ...(state.scanScope === undefined ? {} : { scanScope: state.scanScope }),
-          assets: state.assets,
-          migrationSourceAssets: state.migrationSourceAssets,
-          migrationTargetAssets: state.migrationTargetAssets,
-          diagnostics: state.diagnostics,
-          diagnosticCounts: state.diagnosticCounts,
-          migration: state.migration,
-          deploymentConfirmed: state.deploymentConfirmed,
-          deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-          settings: state.settings,
-          ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-          ...(state.message === undefined ? {} : { message: state.message }),
-          ...(state.preview === undefined ? {} : { preview: state.preview }),
-        });
+    case "project": {
+      const root = normalizedProjectRoot(action.root);
+      const currentRoot = normalizedProjectRoot(state.projectRoot);
+      const withoutDetails = clearProjectDetails(state);
+      const {
+        projectRoot: discardedProjectRoot,
+        message: discardedMessage,
+        scanScope: discardedScanScope,
+        activeTask: currentTask,
+        ...base
+      } = withoutDetails;
+      void discardedProjectRoot;
+      void discardedMessage;
+      void discardedScanScope;
+      if (root !== undefined && root === currentRoot) {
+        return {
+          ...base,
+          projectRoot: root,
+          ...(currentTask === undefined ? {} : { activeTask: currentTask }),
+        };
       }
-      return clearProjectDetails({
-        route: state.route,
-        scanStatus: state.scanStatus,
-        ...(state.scanScope === undefined ? {} : { scanScope: state.scanScope }),
-        assets: state.assets,
-        migrationSourceAssets: state.migrationSourceAssets,
-        migrationTargetAssets: state.migrationTargetAssets,
-        diagnostics: state.diagnostics,
-        diagnosticCounts: state.diagnosticCounts,
-        migration: state.migration,
-        deploymentConfirmed: state.deploymentConfirmed,
-        deploymentConfirmationGrants: state.deploymentConfirmationGrants,
-        settings: state.settings,
-        projectRoot: action.root,
-        ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
-        ...(state.preview === undefined ? {} : { preview: state.preview }),
-      });
+      const keepCurrentTask =
+        currentTask !== undefined &&
+        !(
+          currentTask.taskKind === "scan" &&
+          (currentTask.scanScope === undefined || currentTask.scanScope === "asset-review")
+        );
+      return {
+        ...base,
+        scanStatus: "idle",
+        assets: [],
+        diagnostics: [],
+        diagnosticCounts: { info: 0, warning: 0, error: 0 },
+        ...(root === undefined ? {} : { projectRoot: root }),
+        ...(keepCurrentTask ? { activeTask: currentTask } : {}),
+      };
+    }
     case "message":
       return action.message === undefined
         ? {
@@ -453,26 +503,48 @@ export function reducer(state: AppState, action: AppAction): AppState {
             ...(state.effective === undefined ? {} : { effective: state.effective }),
             ...(state.preview === undefined ? {} : { preview: state.preview }),
             ...(state.activeTask === undefined ? {} : { activeTask: state.activeTask }),
+            ...(state.recoveryLock === undefined ? {} : { recoveryLock: state.recoveryLock }),
           }
         : { ...state, message: action.message };
     case "scan": {
-      const { scanScope: discardedScanScope, ...withoutScanScope } = state;
+      if (
+        action.scanScope === "asset-review" &&
+        action.projectRoot !== undefined &&
+        normalizedProjectRoot(action.projectRoot) !== normalizedProjectRoot(state.projectRoot)
+      ) {
+        return state;
+      }
+      const {
+        scanScope: discardedScanScope,
+        message: discardedMessage,
+        activeTask: currentTask,
+        ...withoutScanScope
+      } = state;
       void discardedScanScope;
+      void discardedMessage;
+      const keepCurrentTask = !scanTaskMatchesScope(currentTask, action.scanScope);
       return {
         ...withoutScanScope,
         scanStatus: action.status,
         ...(action.scanScope === undefined ? {} : { scanScope: action.scanScope }),
         ...(action.message === undefined ? {} : { message: action.message }),
+        ...(keepCurrentTask && currentTask !== undefined ? { activeTask: currentTask } : {}),
       };
     }
     case "assets": {
+      if (
+        action.projectRoot !== undefined &&
+        normalizedProjectRoot(action.projectRoot) !== normalizedProjectRoot(state.projectRoot)
+      ) {
+        return state;
+      }
       const refreshed = {
         ...state,
         assets: action.assets,
+        diagnostics: [],
+        diagnosticCounts: { info: 0, warning: 0, error: 0 },
       };
-      return action.assets.some((asset) => asset.id === state.assetDetail?.asset.id)
-        ? refreshed
-        : clearAssetDetail(refreshed);
+      return clearAssetDetail(refreshed);
     }
     case "migrationSourceAssets": {
       const actionSourceProjectRoot = normalizedProjectRoot(action.sourceProjectRoot);
@@ -526,22 +598,53 @@ export function reducer(state: AppState, action: AppAction): AppState {
         assets,
         migrationSourceAssets,
         migrationTargetAssets,
+        migration: {
+          ...state.migration,
+          sourceAssetIds:
+            action.status === "disabled"
+              ? state.migration.sourceAssetIds.filter((assetId) => assetId !== action.assetId)
+              : state.migration.sourceAssetIds,
+        },
         ...(assetDetail === undefined ? {} : { assetDetail }),
       };
-      return refreshed;
+      const { effective: discardedEffective, ...withoutEffective } = refreshed;
+      void discardedEffective;
+      return clearPreview(withoutEffective);
     }
     case "assetDetail": {
-      const { effective: discardedEffective, ...withoutEffective } = state;
+      const {
+        effective: discardedEffective,
+        message: discardedMessage,
+        ...withoutEffective
+      } = state;
       void discardedEffective;
-      return { ...withoutEffective, assetDetail: action.detail };
+      void discardedMessage;
+      return {
+        ...withoutEffective,
+        assetDetail: action.detail,
+        diagnostics: [],
+        diagnosticCounts: { info: 0, warning: 0, error: 0 },
+      };
     }
     case "assetDetailClosed":
-      return clearAssetDetail(state);
+      return {
+        ...clearAssetDetail(state),
+        diagnostics: [],
+        diagnosticCounts: { info: 0, warning: 0, error: 0 },
+      };
     case "effective":
       return { ...state, effective: action.effective };
     case "diagnostics":
+      if (
+        action.projectRoot !== undefined &&
+        normalizedProjectRoot(action.projectRoot) !== normalizedProjectRoot(state.projectRoot)
+      ) {
+        return state;
+      }
       return { ...state, diagnostics: action.diagnostics, diagnosticCounts: action.counts };
     case "migrationSource": {
+      const sourceAsset = state.migrationSourceAssets.find((asset) => asset.id === action.assetId);
+      if (action.selected && sourceAsset?.status !== "enabled") return state;
       const current = state.migration.sourceAssetIds;
       const sourceAssetIds = action.selected
         ? current.includes(action.assetId)
@@ -555,7 +658,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "migrationSourceProject":
       return clearPreview({
-        ...state,
+        ...withoutMatchingScanTask(state, "migration-source"),
         migrationSourceAssets: [],
         migration: migrationWithSourceProjectRoot(
           state.migration,
@@ -569,7 +672,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       });
     case "migrationTargetProject":
       return clearPreview({
-        ...state,
+        ...withoutMatchingScanTask(state, "migration-target"),
         migrationTargetAssets: [],
         migration: migrationWithTargetScopeId(
           state.migration,
@@ -609,6 +712,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
         deploymentConfirmed: false,
         deploymentConfirmationGrants: [],
       };
+    case "previewInvalidated":
+      return clearPreview(state);
     case "deploymentConfirmation":
       return { ...state, deploymentConfirmed: action.confirmed };
     case "deploymentConfirmationGrant": {
@@ -622,13 +727,80 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "taskEvent": {
       const activeTask = mergeActiveTask(state.activeTask, action.action);
-      const updated = { ...state, activeTask };
-      return shouldRetireDeploymentPreview(activeTask) ? clearPreview(updated) : updated;
+      const clearsRecoveryLock =
+        activeTask.taskKind === "rollback" &&
+        activeTask.phase === "completed" &&
+        activeTask.status === "succeeded";
+      const recoveryLock = clearsRecoveryLock
+        ? undefined
+        : activeTask.recoveryLock
+          ? activeTask.taskKind === "rollback" && state.recoveryLock !== undefined
+            ? state.recoveryLock
+            : {
+                ...(activeTask.resultRef === undefined
+                  ? {}
+                  : { deploymentId: activeTask.resultRef }),
+              }
+          : state.recoveryLock;
+      const { recoveryLock: discardedRecoveryLock, ...withoutRecoveryLock } = state;
+      void discardedRecoveryLock;
+      const updated = {
+        ...withoutRecoveryLock,
+        activeTask,
+        ...(recoveryLock === undefined ? {} : { recoveryLock }),
+      };
+      const retired = shouldRetireDeploymentPreview(activeTask) ? clearPreview(updated) : updated;
+      return shouldClearMigratedSourceSelection(activeTask)
+        ? {
+            ...retired,
+            migration: { ...retired.migration, sourceAssetIds: [] },
+          }
+        : retired;
+    }
+    case "runtimeRecovery": {
+      const { recoveryLock: discardedRecoveryLock, ...withoutRecoveryLock } = state;
+      void discardedRecoveryLock;
+      const deploymentId = action.deploymentIds[0];
+      return {
+        ...withoutRecoveryLock,
+        ...(deploymentId === undefined ? {} : { recoveryLock: { deploymentId } }),
+      };
+    }
+    case "runtimeScanRestored": {
+      const restoredSelection =
+        action.scanScope === "asset-review"
+          ? reducer(state, { type: "project", root: action.projectRoot })
+          : action.scanScope === "migration-source"
+            ? reducer(state, {
+                type: "migrationSourceProject",
+                sourceProjectRoot: action.projectRoot,
+              })
+            : reducer(state, {
+                type: "migrationTargetProject",
+                targetScopeId: action.projectRoot,
+              });
+      return {
+        ...restoredSelection,
+        route: action.scanScope === "asset-review" ? "assets" : "migration",
+        scanStatus: "queued",
+        scanScope: action.scanScope,
+      };
     }
     case "settingsLoading":
       return { ...state, settings: { ...state.settings, status: "loading" } };
     case "settingsSaving":
-      return { ...state, settings: { ...state.settings, status: "saving" } };
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          status: "saving",
+          values: {
+            ...state.settings.values,
+            ...(action.patch.theme === undefined ? {} : { theme: action.patch.theme }),
+            ...(action.patch.language === undefined ? {} : { language: action.patch.language }),
+          },
+        },
+      };
     case "settingsFailed":
       return { ...state, settings: { ...state.settings, status: "error" } };
     case "settingsLoaded":
@@ -716,10 +888,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
           : {}),
         clearLocalData,
       };
-      const updated = { ...state, settings };
-      return action.result.categories.includes("scan_cache")
-        ? clearScanCacheState(updated)
-        : updated;
+      let updated: AppState = { ...state, settings };
+      if (action.result.categories.includes("scan_cache")) {
+        updated = clearScanCacheState(updated);
+      }
+      if (action.result.categories.includes("deployment_history")) {
+        updated = clearDeploymentHistoryState(updated);
+      }
+      return updated;
     }
   }
 }
@@ -757,9 +933,15 @@ function shouldRetireDeploymentPreview(activeTask: ActiveTaskState): boolean {
   return (
     activeTask.taskKind === "deployment" &&
     activeTask.phase === "completed" &&
-    (activeTask.status === "succeeded" ||
-      activeTask.status === "partially_succeeded" ||
-      activeTask.status === "rolled_back")
+    activeTask.status !== "running"
+  );
+}
+
+function shouldClearMigratedSourceSelection(activeTask: ActiveTaskState): boolean {
+  return (
+    activeTask.taskKind === "deployment" &&
+    activeTask.phase === "completed" &&
+    activeTask.status === "succeeded"
   );
 }
 
@@ -769,11 +951,34 @@ export async function refreshAssets(
 ): Promise<AppState["assets"]> {
   const projectId =
     options.projectRoot === undefined ? undefined : await projectIdForRoot(options.projectRoot);
-  const response = await api.invoke("assets.list", {
-    limit: 50,
-    ...(projectId === undefined ? {} : { projectId }),
-  });
-  return response.ok ? response.data.items : [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const items: AppState["assets"][number][] = [];
+    const visitedCursors = new Set<string>();
+    let cursor: string | undefined;
+    let snapshotRevision: string | undefined;
+    let changedDuringRead = false;
+    do {
+      const response = await api.invoke("assets.list", {
+        limit: 200,
+        ...(projectId === undefined ? {} : { projectId }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      if (!response.ok) throw new Error(response.error.message);
+      snapshotRevision ??= response.data.snapshotRevision;
+      if (response.data.snapshotRevision !== snapshotRevision) {
+        changedDuringRead = true;
+        break;
+      }
+      items.push(...response.data.items);
+      cursor = response.data.nextCursor ?? undefined;
+      if (cursor !== undefined && visitedCursors.has(cursor)) {
+        throw new Error("Asset pagination returned a repeated cursor.");
+      }
+      if (cursor !== undefined) visitedCursors.add(cursor);
+    } while (cursor !== undefined);
+    if (!changedDuringRead) return items;
+  }
+  throw new Error("The asset index kept changing while it was being refreshed. Try again.");
 }
 
 export async function projectIdForRoot(projectRoot: string): Promise<ProjectId> {
@@ -802,15 +1007,46 @@ export async function refreshAssetDetail(
 
 export async function refreshDiagnostics(
   api: DesktopApi,
-  assetId?: CommandResponse<"assets.list">["items"][number]["id"],
+  options: {
+    readonly assetId?: CommandResponse<"assets.list">["items"][number]["id"];
+    readonly projectRoot?: string;
+  } = {},
 ): Promise<Pick<AppState, "diagnostics" | "diagnosticCounts">> {
-  const response = await api.invoke("diagnostics.list", {
-    limit: 50,
-    ...(assetId === undefined ? {} : { assetId }),
-  });
-  return response.ok
-    ? { diagnostics: response.data.items, diagnosticCounts: response.data.countsBySeverity }
-    : { diagnostics: [], diagnosticCounts: { info: 0, warning: 0, error: 0 } };
+  const projectId =
+    options.projectRoot === undefined ? undefined : await projectIdForRoot(options.projectRoot);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const diagnostics: AppState["diagnostics"][number][] = [];
+    const diagnosticCounts = { info: 0, warning: 0, error: 0 };
+    const visitedCursors = new Set<string>();
+    let cursor: string | undefined;
+    let snapshotRevision: string | undefined;
+    let changedDuringRead = false;
+    do {
+      const response = await api.invoke("diagnostics.list", {
+        limit: 200,
+        ...(options.assetId === undefined ? {} : { assetId: options.assetId }),
+        ...(projectId === undefined ? {} : { projectId }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      if (!response.ok) throw new Error(response.error.message);
+      snapshotRevision ??= response.data.snapshotRevision;
+      if (response.data.snapshotRevision !== snapshotRevision) {
+        changedDuringRead = true;
+        break;
+      }
+      diagnostics.push(...response.data.items);
+      diagnosticCounts.info += response.data.countsBySeverity.info;
+      diagnosticCounts.warning += response.data.countsBySeverity.warning;
+      diagnosticCounts.error += response.data.countsBySeverity.error;
+      cursor = response.data.nextCursor ?? undefined;
+      if (cursor !== undefined && visitedCursors.has(cursor)) {
+        throw new Error("Diagnostic pagination returned a repeated cursor.");
+      }
+      if (cursor !== undefined) visitedCursors.add(cursor);
+    } while (cursor !== undefined);
+    if (!changedDuringRead) return { diagnostics, diagnosticCounts };
+  }
+  throw new Error("Diagnostics kept changing while they were being refreshed. Try again.");
 }
 
 export function effectiveRequestForState(
@@ -855,6 +1091,13 @@ export function migrationPreviewBlockersForState(state: AppState): readonly stri
   const selectedAssets = state.migration.sourceAssetIds
     .map((assetId) => availableAssets.get(assetId))
     .filter((asset) => asset !== undefined);
+
+  if (isActiveTaskRunning(state.activeTask)) {
+    blockers.push("Wait for the active task to finish before creating a migration preview.");
+  }
+  if (state.recoveryLock !== undefined || state.activeTask?.recoveryLock === true) {
+    blockers.push("Resolve the active recovery lock before migrating.");
+  }
 
   if (normalizedProjectRoot(state.migration.sourceProjectRoot) === undefined) {
     blockers.push("Choose a source project before creating a migration preview.");
@@ -939,14 +1182,15 @@ export function migrationAssetDifferencesForState(
   const targetScopeId = normalizedTargetScopeId(state.migration.targetScopeId);
   if (sourceProjectRoot === undefined || targetScopeId === undefined) return [];
 
-  const sourceAssets = enabledMigrationAssets(state);
+  const selectedSourceAssetIds = new Set(state.migration.sourceAssetIds);
+  const sourceAssets = enabledMigrationAssets(state).filter((asset) =>
+    selectedSourceAssetIds.has(asset.id),
+  );
   if (sourceAssets.length === 0) return [];
 
   const targetAssets = state.migrationTargetAssets.filter(
     (asset) => asset.toolKey === state.migration.targetToolKey,
   );
-  if (targetAssets.length === 0) return [];
-
   const targetQueues = new Map<string, MigrationAssetSummary[]>();
   for (const targetAsset of [...targetAssets].sort(compareMigrationAssets)) {
     const key = migrationAssetComparisonKey(targetAsset);
@@ -1085,6 +1329,14 @@ export function deploymentBlockersForState(
   now = new Date().toISOString(),
 ): readonly string[] {
   const blockers: string[] = [];
+  if (
+    isActiveTaskRunning(state.activeTask) &&
+    (state.activeTask?.taskKind === "deployment" || state.activeTask?.taskKind === "rollback")
+  ) {
+    blockers.push("Wait for the active migration task to finish.");
+  } else if (isActiveTaskRunning(state.activeTask)) {
+    blockers.push("Wait for the active task to finish before migrating.");
+  }
   if (state.preview === undefined) {
     blockers.push("Create a migration preview before migrating.");
   } else if (Date.parse(now) > Date.parse(state.preview.expiresAt)) {
@@ -1093,7 +1345,7 @@ export function deploymentBlockersForState(
   if (migrationSourceDriftRowsForState(state).some((row) => row.status !== "current")) {
     blockers.push("Refresh the scan and create a fresh migration preview before migrating.");
   }
-  if (state.activeTask?.recoveryLock === true) {
+  if (state.recoveryLock !== undefined || state.activeTask?.recoveryLock === true) {
     blockers.push("Resolve the active recovery lock before migrating.");
   }
   const missingConfirmations = missingDeploymentConfirmationsForState(state);
@@ -1108,6 +1360,10 @@ export function deploymentBlockersForState(
     blockers.push("Confirm that this writes verified config files.");
   }
   return blockers;
+}
+
+function isActiveTaskRunning(task: ActiveTaskState | undefined): boolean {
+  return task !== undefined && task.status === "running" && task.phase !== "completed";
 }
 
 export function deploymentConfirmationsForState(
@@ -1140,11 +1396,16 @@ export function deploymentConfirmationLabel(confirmation: DeploymentConfirmation
 export function scanActionForTaskEvent(
   event: TaskEvent,
   scanScope?: ScanTaskScope,
-): AppAction | undefined {
+): Extract<AppAction, { readonly type: "scan" }> | undefined {
   if (event.type === "accepted") {
     return { type: "scan", status: "queued", ...(scanScope === undefined ? {} : { scanScope }) };
   }
-  if (event.type !== "completed") return undefined;
+  if (
+    event.type !== "completed" &&
+    !(event.type === "snapshot" && event.payload.status !== "running")
+  ) {
+    return undefined;
+  }
   const status = event.payload.status === "failed" ? "error" : "complete";
   return {
     type: "scan",
@@ -1208,7 +1469,9 @@ export function taskActionForTaskEvent(
       phase: event.payload.phase,
       status: event.payload.status,
       progress: event.payload.progress,
-      recoveryLock: event.payload.status === "failed",
+      cancellable: event.payload.cancellable,
+      ...(event.payload.resultRef === undefined ? {} : { resultRef: event.payload.resultRef }),
+      recoveryLock: event.payload.systemRecoveryLock ?? false,
       message: `${event.payload.taskKind} ${event.payload.status}: restored from event snapshot.`,
     });
   }
@@ -1221,6 +1484,7 @@ export function taskActionForTaskEvent(
       taskKind,
       phase: "queued",
       status: "running",
+      cancellable: true,
       recoveryLock: false,
       message: `Queued ${taskKind} ${event.taskId}`,
     });
@@ -1264,6 +1528,14 @@ export function taskActionForTaskEvent(
       message: `${taskKind} failed: ${event.payload.errorCode}`,
     });
   }
+  if (event.type === "cancel.requested") {
+    return withScanScope({
+      taskId: event.taskId,
+      taskKind,
+      cancellable: false,
+      message: `${taskKindLabel(taskKind)} cancellation requested.`,
+    });
+  }
   if (event.type === "completed") {
     const completed = event.payload.succeededCount + event.payload.failedCount;
     return withScanScope({
@@ -1271,6 +1543,8 @@ export function taskActionForTaskEvent(
       taskKind,
       phase: "completed",
       status: event.payload.status,
+      cancellable: false,
+      ...(event.payload.resultRef === undefined ? {} : { resultRef: event.payload.resultRef }),
       recoveryLock: event.payload.systemRecoveryLock,
       progress: {
         phase: "completed",
@@ -1309,6 +1583,8 @@ function mergeActiveTask(
     phase: merged.phase ?? base.phase,
     status: merged.status ?? base.status,
     recoveryLock: merged.recoveryLock ?? base.recoveryLock,
+    ...(merged.cancellable === undefined ? {} : { cancellable: merged.cancellable }),
+    ...(merged.resultRef === undefined ? {} : { resultRef: merged.resultRef }),
     ...(merged.scanScope === undefined ? {} : { scanScope: merged.scanScope }),
     ...(merged.progress === undefined ? {} : { progress: merged.progress }),
     ...(merged.message === undefined ? {} : { message: merged.message }),

@@ -10,34 +10,81 @@ import {
 } from "@ai-config-hub/shared";
 
 const ignoredDirectories = new Set([".git", "node_modules", "dist", "target"]);
+export const ADAPTER_DISCOVERY_ENTRY_LIMIT = 10_000;
+
+export class AdapterDiscoveryLimitError extends Error {
+  readonly code = "ADAPTER_DISCOVERY_LIMIT_EXCEEDED";
+
+  constructor(
+    readonly root: AbsolutePath,
+    readonly limit: number,
+    readonly observedAtLeast: number,
+  ) {
+    super(`Adapter discovery exceeds the ${String(limit)} entry limit at ${root}`);
+    this.name = "AdapterDiscoveryLimitError";
+  }
+}
+
+export interface AdapterDiscoveryBudget {
+  readonly root: AbsolutePath;
+  readonly visitedDirectories: Set<AbsolutePath>;
+  visitedEntries: number;
+}
+
+export function createAdapterDiscoveryBudget(root: AbsolutePath): AdapterDiscoveryBudget {
+  return { root, visitedDirectories: new Set(), visitedEntries: 0 };
+}
+
+function consumeDiscoveryEntry(budget: AdapterDiscoveryBudget): void {
+  budget.visitedEntries += 1;
+  if (budget.visitedEntries > ADAPTER_DISCOVERY_ENTRY_LIMIT) {
+    throw new AdapterDiscoveryLimitError(
+      budget.root,
+      ADAPTER_DISCOVERY_ENTRY_LIMIT,
+      budget.visitedEntries,
+    );
+  }
+}
 
 export async function walkFiles(
   read: AdapterReadApi,
   root: AbsolutePath,
   signal: CancellationSignal,
+  sharedBudget?: AdapterDiscoveryBudget,
+): Promise<readonly AbsolutePath[]> {
+  return walkFilesWithBudget(read, root, signal, sharedBudget);
+}
+
+async function walkFilesWithBudget(
+  read: AdapterReadApi,
+  root: AbsolutePath,
+  signal: CancellationSignal,
+  sharedBudget?: AdapterDiscoveryBudget,
 ): Promise<readonly AbsolutePath[]> {
   const rootStat = await read.stat(root);
   if (rootStat.kind === "missing") return [];
   const canonicalRoot = await read.realpath(root);
   if (rootStat.kind === "file") return [canonicalRoot];
 
-  const files: AbsolutePath[] = [];
+  const budget = sharedBudget ?? createAdapterDiscoveryBudget(canonicalRoot);
+  const files = new Set<AbsolutePath>();
   const queue: AbsolutePath[] = [canonicalRoot];
-  let visited = 0;
   while (queue.length > 0) {
     signal.throwIfAborted();
     const directory = queue.shift();
     if (directory === undefined) break;
-    for (const child of await read.list(directory)) {
-      visited += 1;
-      if (visited > 10_000) throw new Error("Adapter discovery exceeds 10,000 entries");
+    const canonicalDirectory = await read.realpath(directory);
+    if (budget.visitedDirectories.has(canonicalDirectory)) continue;
+    budget.visitedDirectories.add(canonicalDirectory);
+    for (const child of await read.list(canonicalDirectory)) {
+      consumeDiscoveryEntry(budget);
       const metadata = await read.stat(child);
-      if (metadata.kind === "file") files.push(child);
+      if (metadata.kind === "file") files.add(await read.realpath(child));
       if (metadata.kind === "directory" && !ignoredDirectories.has(basename(child)))
         queue.push(child);
     }
   }
-  return files.sort();
+  return [...files].sort();
 }
 
 export async function existingRelativeFiles(
@@ -58,12 +105,17 @@ export async function walkRelativeDirectories(
   root: AbsolutePath,
   relativeDirectories: readonly string[],
   signal: CancellationSignal,
+  sharedBudget?: AdapterDiscoveryBudget,
 ): Promise<readonly AbsolutePath[]> {
   const files = [];
+  const canonicalRoot = await read.realpath(root);
+  const budget = sharedBudget ?? createAdapterDiscoveryBudget(canonicalRoot);
   for (const relativeDirectory of [...relativeDirectories].sort()) {
     const directory = markerPath(root, ...pathSegments(relativeDirectory));
     if ((await read.stat(directory)).kind === "directory") {
-      files.push(...(await walkFiles(read, await read.realpath(directory), signal)));
+      files.push(
+        ...(await walkFilesWithBudget(read, await read.realpath(directory), signal, budget)),
+      );
     }
   }
   return uniquePaths(files);
@@ -76,6 +128,7 @@ export async function documentedFiles(input: {
   readonly relativeFiles: readonly string[];
   readonly relativeDirectories: readonly string[];
   readonly signal: CancellationSignal;
+  readonly budget?: AdapterDiscoveryBudget;
 }): Promise<readonly AbsolutePath[]> {
   const rootStat = await input.read.stat(input.root);
   if (rootStat.kind === "file") {
@@ -91,6 +144,7 @@ export async function documentedFiles(input: {
       input.root,
       input.relativeDirectories,
       input.signal,
+      input.budget,
     )),
   ]);
 }

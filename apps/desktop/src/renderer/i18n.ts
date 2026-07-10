@@ -24,6 +24,17 @@ const ZH_CN: Partial<Record<string, string>> = {
     "仅从新的预览计划哈希部署，并需要明确确认。",
   "Create a fresh migration preview; the current plan has expired.":
     "请创建新的迁移预览；当前计划已过期。",
+  "Wait for the active task to finish before creating a migration preview.":
+    "请等待当前任务完成后再创建迁移预览。",
+  "Wait for the active migration task to finish.": "请等待当前迁移任务完成。",
+  "Wait for the active task to finish before migrating.": "请等待当前任务完成后再迁移。",
+  "Wait for the active task to finish before clearing local data.":
+    "请等待当前任务完成后再清除本地数据。",
+  "Wait for the active task to finish before starting another scan.":
+    "请等待当前任务完成后再开始新的扫描。",
+  "Wait for the active task to finish before changing projects.":
+    "请等待当前任务完成后再更改项目。",
+  "Wait for the active task to finish before changing assets.": "请等待当前任务完成后再更改资产。",
   "Browse folder": "浏览文件夹",
   Choose: "选择",
   "Choose a source project before creating a migration preview.": "请先选择源项目再创建迁移预览。",
@@ -57,6 +68,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Preview target files": "预览目标文件",
   "Preview target folder": "预览目标文件夹",
   "Create files": "创建文件",
+  "Creating preview": "正在创建预览",
   "Replace files": "替换文件",
   "Delete files": "删除文件",
   "Change files": "变更文件",
@@ -96,6 +108,11 @@ const ZH_CN: Partial<Record<string, string>> = {
   "No contributing assets.": "无贡献资产。",
   "No deployment history yet.": "暂无部署历史。",
   "No effective diagnostics.": "无有效诊断。",
+  "No effective configuration values.": "无有效配置内容。",
+  "All converted outputs are already byte-identical": "所有转换输出都已与目标完全一致。",
+  "Deployment plan not found": "找不到迁移计划，请重新创建预览。",
+  "Effective configuration not found": "找不到当前范围的有效配置。",
+  "Merge conflict policy is not supported yet": "暂不支持合并冲突策略。",
   "No succeeded deployment is available to roll back.": "没有可回滚的成功部署。",
   "No history records": "没有历史记录",
   "No ignored assets.": "无已忽略资产。",
@@ -143,6 +160,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Scans automatically after project selection.": "选择项目后自动扫描。",
   "Scanning assets": "正在扫描资产",
   "Scanning migration assets": "正在扫描迁移资产",
+  "Scan cancellation requested.": "已请求取消扫描。",
+  "Cancel scan": "取消扫描",
   Settings: "设置",
   "Selected project folder": "已选择的项目文件夹",
   "Select an asset to inspect its source, problems, and effective config.":
@@ -156,6 +175,8 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Cannot migrate duplicate source assets with the same name: {name}.":
     "存在同名源资产，无法迁移：{name}。",
   "Select migration target project": "选择迁移目标项目",
+  "Restore task state": "恢复任务状态",
+  "Subscribe to task updates": "订阅任务更新",
   "Selected migration sources changed after the rescan; create a new preview.":
     "重新扫描后，已选择的迁移来源发生变化；请创建新的预览。",
   "Selected asset diagnostics": "已选资产诊断",
@@ -193,6 +214,10 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Disable asset": "禁用资产",
   "Asset enabled.": "\u8d44\u4ea7\u5df2\u542f\u7528\u3002",
   "Asset disabled.": "\u8d44\u4ea7\u5df2\u7981\u7528\u3002",
+  "asset disabled": "\u8d44\u4ea7\u5df2\u7981\u7528",
+  "target scope applies": "\u9002\u7528\u4e8e\u6240\u9009\u76ee\u6807\u8303\u56f4",
+  "more specific scope override": "\u88ab\u66f4\u5177\u4f53\u7684\u8303\u56f4\u8986\u76d6",
+  "unspecified resolution reason": "未说明的解析原因",
   "Asset status action": "\u8d44\u4ea7\u72b6\u6001\u64cd\u4f5c",
   "Asset is disabled": "\u8d44\u4ea7\u5df2\u7981\u7528",
   "Enable it to include it again in review, effective configuration, and migration.":
@@ -228,6 +253,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   Contributors: "贡献者",
   "Ignored assets": "已忽略资产",
   "Effective diagnostics": "有效诊断",
+  "Snapshot revision": "快照修订版本",
   Info: "信息",
   Locate: "定位",
   "Locate diagnostic": "定位诊断",
@@ -369,6 +395,10 @@ const ZH_CN: Partial<Record<string, string>> = {
   "Migration run": "迁移执行",
   "Migration status": "迁移状态",
   "Recovery lock active. Resolve it before retrying.": "恢复锁已激活。请先解决后再重试。",
+  "Roll back failed deployment": "回滚失败的部署",
+  "Roll back deployment": "回滚部署",
+  "Recovery details are unavailable; restart AI Config Hub and retry.":
+    "恢复详情不可用；请重启 AI Config Hub 后重试。",
   "Resolve the active recovery lock before migrating.": "请先解决当前恢复锁再迁移。",
   "Resolve effective configuration": "解析有效配置",
   "Required confirmations": "必需确认",
@@ -495,6 +525,15 @@ export function localizeUiMessage(locale: DesktopLocale, message: string): strin
       name: duplicateMigrationSource[1] ?? "",
     });
   }
+
+  const targetConflict = /^Target already exists: (.+)$/.exec(message);
+  if (targetConflict !== null) return `目标已存在：${targetConflict[1] ?? ""}`;
+
+  const sourceDrift = /^Source changed before deployment: (.+)$/.exec(message);
+  if (sourceDrift !== null) return `部署前源资产已变更：${sourceDrift[1] ?? ""}`;
+
+  const targetDrift = /^Target changed before deployment: (.+)$/.exec(message);
+  if (targetDrift !== null) return `部署前目标文件已变更：${targetDrift[1] ?? ""}`;
 
   const queuedTask = /^Queued (scan|deployment|migration|rollback) (.+)$/.exec(message);
   if (queuedTask !== null) {

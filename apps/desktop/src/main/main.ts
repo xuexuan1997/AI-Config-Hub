@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, webContents } from "electron";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -9,6 +10,8 @@ import { createElectronUpdaterPort, createUpdateService, type UpdateService } fr
 import { createSecureWindowOptions } from "./window-options.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
+configureElectronUserDataPath();
+const appVersion = desktopAppVersion();
 let mainWindow: BrowserWindow | undefined;
 let unregisterIpc: (() => void) | undefined;
 let commandServices: DesktopCommandServiceRuntime | undefined;
@@ -20,6 +23,9 @@ async function createMainWindow(): Promise<void> {
   const rendererPath = resolve(currentDir, "../../renderer/index.html");
   const window = new BrowserWindow(createSecureWindowOptions(preloadPath));
   mainWindow = window;
+  window.once("closed", () => {
+    if (mainWindow === window) mainWindow = undefined;
+  });
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
@@ -34,11 +40,20 @@ async function createMainWindow(): Promise<void> {
 }
 
 if (app.requestSingleInstanceLock()) {
+  app.on("second-instance", () => {
+    if (mainWindow === undefined || mainWindow.isDestroyed()) {
+      if (app.isReady()) void createMainWindow();
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
   void app
     .whenReady()
     .then(async () => {
       commandServices = await createDesktopCommandServices({
-        appVersion: app.getVersion(),
+        appVersion,
         userDataPath: desktopUserDataPath(),
         sourceFileOpener: {
           async openPath(path) {
@@ -47,8 +62,9 @@ if (app.requestSingleInstanceLock()) {
           },
         },
       });
+      const desktopRuntime = commandServices;
       updateService = createUpdateService({
-        appVersion: app.getVersion(),
+        appVersion,
         isPackaged: app.isPackaged,
         platform: process.platform,
         updater: createElectronUpdaterPort(),
@@ -57,8 +73,10 @@ if (app.requestSingleInstanceLock()) {
         ipcMain,
         services: commandServices.services,
         taskEvents: commandServices.taskEvents,
+        indexChanges: commandServices.indexChanges,
+        runtimeState: () => desktopRuntime.runtimeState(),
         updates: updateService,
-        appVersion: () => app.getVersion(),
+        appVersion: () => appVersion,
         webContents: () => webContents.getAllWebContents(),
         dialog: createProjectDialogPort({
           dialog,
@@ -89,5 +107,26 @@ if (app.requestSingleInstanceLock()) {
 }
 
 function desktopUserDataPath(): string {
-  return resolve(process.env["AI_CONFIG_HUB_USER_DATA"] ?? app.getPath("userData"));
+  return resolve(app.getPath("userData"));
+}
+
+function configureElectronUserDataPath(): void {
+  const override = process.env["AI_CONFIG_HUB_USER_DATA"];
+  if (override !== undefined && override.trim().length > 0) {
+    app.setPath("userData", resolve(override));
+  }
+}
+
+function desktopAppVersion(): string {
+  try {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(currentDir, "../../../package.json"), "utf8"),
+    ) as { readonly version?: unknown };
+    if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
+      return packageJson.version;
+    }
+  } catch {
+    // Electron still provides a safe fallback for non-standard development layouts.
+  }
+  return app.getVersion();
 }

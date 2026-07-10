@@ -21,7 +21,13 @@ import {
 
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
+import {
+  candidate,
+  createAdapterDiscoveryBudget,
+  documentedFiles,
+  markerPath,
+  scopeKindFromEvidence,
+} from "./discovery.js";
 import {
   parseMarkdownAsset,
   isEmptyRecord,
@@ -264,7 +270,9 @@ class CodexAdapter extends BaseToolAdapter {
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
+    let budget: ReturnType<typeof createAdapterDiscoveryBudget> | undefined;
     for (const root of [...context.tool.configRoots].sort()) {
+      budget ??= createAdapterDiscoveryBudget(await context.read.realpath(root));
       const files = await documentedFiles({
         read: context.read,
         root,
@@ -282,6 +290,7 @@ class CodexAdapter extends BaseToolAdapter {
               ? ["skills"]
               : [".codex/agents", ".agents/skills"],
         signal: context.signal,
+        budget,
       });
       const overrides = new Set(
         files

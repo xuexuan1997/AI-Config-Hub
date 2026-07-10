@@ -29,8 +29,13 @@ export function SettingsView(props: {
     props.state.settings.status === "saving" ||
     clearLocalData.status === "clearing" ||
     props.state.settings.readOnlyRecovery;
+  const clearBlockedByTask =
+    props.state.activeTask?.status === "running" && props.state.activeTask.phase !== "completed";
   const canClear =
-    !disabled && clearLocalData.confirmed && clearLocalData.selectedCategories.length > 0;
+    !disabled &&
+    !clearBlockedByTask &&
+    clearLocalData.confirmed &&
+    clearLocalData.selectedCategories.length > 0;
 
   return (
     <section className="settings-panel">
@@ -39,7 +44,7 @@ export function SettingsView(props: {
           <p className="eyebrow">{t(locale, "General")}</p>
           <h1>{t(locale, "Settings")}</h1>
         </div>
-        <button type="button" onClick={props.onReload}>
+        <button type="button" disabled={disabled} onClick={props.onReload}>
           {t(locale, "Reload")}
         </button>
       </div>
@@ -77,7 +82,7 @@ export function SettingsView(props: {
           </select>
         </div>
       </div>
-      <div className="settings-meta">
+      <div className="settings-meta" aria-live="polite" role="status">
         <span>{settingsStatusLabel(locale, props.state.settings.status)}</span>
         <span>{t(locale, "Revision {revision}", { revision: props.state.settings.revision })}</span>
         {props.state.settings.requiresRestart ? <span>{t(locale, "Restart required")}</span> : null}
@@ -179,13 +184,18 @@ export function SettingsView(props: {
               : t(locale, "Clear selected data")}
           </button>
           {clearLocalData.result === undefined ? null : (
-            <span>
+            <span role="status">
               {t(locale, "Last cleared {count} records", {
                 count: localDataCount(clearLocalData.result),
               })}
             </span>
           )}
         </div>
+        {clearBlockedByTask ? (
+          <p className="settings-note" role="status">
+            {t(locale, "Wait for the active task to finish before clearing local data.")}
+          </p>
+        ) : null}
       </section>
     </section>
   );

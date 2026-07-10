@@ -120,6 +120,7 @@ const ItemFailedEventSchema = z
         itemRef: z.string().trim().min(1).max(500),
         diagnosticId: z.string().trim().min(1).max(200),
         errorCode: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+        message: z.string().trim().min(1).max(2_000).optional(),
         retryable: z.boolean(),
       })
       .strict()
@@ -190,6 +191,8 @@ const SnapshotEventSchema = z
         progress: TaskProgressPayloadSchema,
         lastSequence: z.number().int().nonnegative(),
         cancellable: z.boolean(),
+        systemRecoveryLock: z.boolean().optional(),
+        resultRef: z.string().trim().min(1).max(200).optional(),
       })
       .strict()
       .readonly(),

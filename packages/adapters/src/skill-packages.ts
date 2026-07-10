@@ -2,12 +2,16 @@ import { basename, dirname } from "node:path";
 
 import {
   NormalizedResourceSchema,
+  type AdapterReadApi,
   type AdapterDiagnostic,
+  type AssetSourceFile,
+  type CancellationSignal,
   type ParseContext,
 } from "@ai-config-hub/core";
-import type { AbsolutePath } from "@ai-config-hub/shared";
+import type { AbsolutePath, ContentHash } from "@ai-config-hub/shared";
 
 import { parseFrontmatter } from "./frontmatter.js";
+import { AdapterDiscoveryLimitError } from "./discovery.js";
 import { nativeDiagnostic } from "./native-diagnostics.js";
 import {
   mediaTypeFromPath,
@@ -19,11 +23,55 @@ import {
 import { redactStructuredValue } from "./secrets.js";
 import { stringValue, withoutKeys } from "./markdown-assets.js";
 
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "target"]);
-const MAX_PACKAGE_FILES = 500;
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
+const IGNORED_PACKAGE_ENTRY_NAMES = new Set([".git", "node_modules", "dist", "target"]);
+export const SKILL_PACKAGE_MAX_FILES = 500;
+export const SKILL_PACKAGE_MAX_ENTRIES = 2_000;
+export const SKILL_PACKAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const SKILL_PACKAGE_MAX_BYTES = 50 * 1024 * 1024;
 const LOWER_HYPHEN_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export type SkillPackageOverflow =
+  | {
+      readonly kind: "entry-count";
+      readonly limit: number;
+      readonly observedAtLeast: number;
+    }
+  | {
+      readonly kind: "file-count";
+      readonly limit: number;
+      readonly observedAtLeast: number;
+    }
+  | {
+      readonly kind: "file-size";
+      readonly relativePath: string;
+      readonly limit: number;
+      readonly observed: number;
+    }
+  | {
+      readonly kind: "package-size";
+      readonly limit: number;
+      readonly observedAtLeast: number;
+    };
+
+export interface SkillPackageSourceFilesResult {
+  readonly status: "complete" | "limit-exceeded" | "rejected";
+  readonly packageRoot: AbsolutePath;
+  readonly sourceFiles: readonly AssetSourceFile[];
+  readonly contentHash: ContentHash;
+  readonly totalBytes: number;
+  /** True only when enumeration stopped before visiting every package entry. */
+  readonly truncated: boolean;
+  readonly overflows: readonly SkillPackageOverflow[];
+  readonly diagnostics: readonly AdapterDiagnostic[];
+}
+
+export interface EnumerateSkillPackageSourceFilesInput {
+  readonly packageRoot: AbsolutePath;
+  readonly read: AdapterReadApi;
+  readonly signal: CancellationSignal;
+  /** Location used for diagnostics; defaults to the canonical package root. */
+  readonly diagnosticPath?: AbsolutePath;
+}
 
 const SKILL_EXTENSION_KEYS = [
   "when_to_use",
@@ -40,10 +88,42 @@ const SKILL_EXTENSION_KEYS = [
 export async function parseSkillPackage(context: ParseContext) {
   const packageRoot = await context.read.realpath(dirname(context.snapshot.canonicalPath));
   const diagnostics: AdapterDiagnostic[] = [];
-  const files = await enumeratePackageFiles(context, packageRoot, diagnostics);
+  const enumeration = await enumerateSkillPackageSourceFiles({
+    packageRoot,
+    read: context.read,
+    signal: context.signal,
+    diagnosticPath: context.snapshot.canonicalPath,
+  });
+  const files = enumeration.sourceFiles;
+  diagnostics.push(...enumeration.diagnostics);
   const primary = files.find((file) => file.relativePath === "SKILL.md");
-  const skillText =
-    primary?.isText === true ? await context.read.readText(primary.path) : context.snapshot.text;
+  if (primary === undefined) {
+    if (!diagnostics.some(({ code }) => code === "SKILL_PRIMARY_FILE_TOO_LARGE")) {
+      diagnostics.push(
+        packageDiagnostic(context.snapshot.canonicalPath, "SKILL_PRIMARY_FILE_MISSING", {
+          relativePath: "SKILL.md",
+        }),
+      );
+    }
+    return { status: "rejected" as const, assets: [] as const, diagnostics };
+  }
+  if (primary.contentHash !== context.snapshot.contentHash) {
+    diagnostics.push(
+      packageDiagnostic(context.snapshot.canonicalPath, "SKILL_PRIMARY_CHANGED_DURING_SCAN", {
+        relativePath: "SKILL.md",
+        initialContentHash: context.snapshot.contentHash,
+        enumeratedContentHash: primary.contentHash,
+      }),
+    );
+    return { status: "rejected" as const, assets: [] as const, diagnostics };
+  }
+  if (
+    enumeration.status === "limit-exceeded" ||
+    enumeration.diagnostics.some(({ blocking }) => blocking)
+  ) {
+    return { status: "rejected" as const, assets: [] as const, diagnostics };
+  }
+  const skillText = context.snapshot.text;
   const parsed = parseFrontmatter(skillText);
   const directoryName = basename(packageRoot);
   const frontmatterName = stringValue(parsed.attributes["name"]);
@@ -86,7 +166,7 @@ export async function parseSkillPackage(context: ParseContext) {
         scope: context.candidate.scope,
         sourceFormat: context.candidate.sourceFormat,
         sourceContentHash: context.snapshot.contentHash,
-        contentHash: packageContentHash(files),
+        contentHash: enumeration.contentHash,
         sourceFiles: files,
         nativeIdentity: identity,
         resource,
@@ -98,45 +178,159 @@ export async function parseSkillPackage(context: ParseContext) {
   };
 }
 
-async function enumeratePackageFiles(
-  context: ParseContext,
-  packageRoot: AbsolutePath,
-  diagnostics: AdapterDiagnostic[],
-) {
-  const files = [];
-  const stack = [packageRoot];
+/**
+ * Enumerates and hashes a Skill package with the exact policy used by parsing.
+ * Callers that validate live source drift should reuse this result instead of
+ * independently walking the directory.
+ */
+export async function enumerateSkillPackageSourceFiles(
+  input: EnumerateSkillPackageSourceFilesInput,
+): Promise<SkillPackageSourceFilesResult> {
+  const packageRoot = await input.read.realpath(input.packageRoot);
+  const diagnosticPath = input.diagnosticPath ?? packageRoot;
+  const files: AssetSourceFile[] = [];
+  const diagnostics: AdapterDiagnostic[] = [];
+  const overflows: SkillPackageOverflow[] = [];
+  const visitedDirectories = new Set<AbsolutePath>();
+  const visitedFiles = new Set<AbsolutePath>();
+  let visitedEntryCount = 0;
+  let visitedFileCount = 0;
   let totalBytes = 0;
+  let truncated = false;
+  let packageLimitExceeded = false;
 
-  while (stack.length > 0) {
-    context.signal.throwIfAborted();
-    const directory = stack.pop();
-    if (directory === undefined) break;
-    for (const child of await context.read.list(directory)) {
-      const name = basename(child);
-      if (IGNORED_DIRECTORIES.has(name)) continue;
-      const stat = await context.read.stat(child);
-      if (stat.kind === "directory") {
-        stack.push(child);
-        continue;
+  async function visit(directory: AbsolutePath): Promise<void> {
+    input.signal.throwIfAborted();
+    const canonicalDirectory = await input.read.realpath(directory);
+    if (visitedDirectories.has(canonicalDirectory)) return;
+    if (
+      canonicalDirectory !== packageRoot &&
+      safeRelativePath(packageRoot, canonicalDirectory) === undefined
+    ) {
+      diagnostics.push(
+        packageDiagnostic(diagnosticPath, "SKILL_SUPPORT_DIRECTORY_OUTSIDE_PACKAGE", {
+          relativePath: basename(directory),
+        }),
+      );
+      return;
+    }
+    visitedDirectories.add(canonicalDirectory);
+    const children = [...(await input.read.list(canonicalDirectory))].sort(compareStrings);
+    for (const child of children) {
+      input.signal.throwIfAborted();
+      visitedEntryCount += 1;
+      if (visitedEntryCount > SKILL_PACKAGE_MAX_ENTRIES) {
+        throw new AdapterDiscoveryLimitError(
+          packageRoot,
+          SKILL_PACKAGE_MAX_ENTRIES,
+          visitedEntryCount,
+        );
       }
-      if (stat.kind !== "file") continue;
-      const snapshot = await context.read.snapshotFile(child);
-      if (snapshot === undefined) continue;
-      const relativePath = safeRelativePath(packageRoot, snapshot.canonicalPath);
-      if (relativePath === undefined) {
+      const name = basename(child);
+      // The policy is name-based, not kind-based. A regular file named `dist`
+      // is ignored just like a directory with that name.
+      if (IGNORED_PACKAGE_ENTRY_NAMES.has(name)) continue;
+      const canonicalChild = await input.read.realpath(child);
+      if (canonicalChild === packageRoot) continue;
+      const relativeChildPath = safeRelativePath(packageRoot, canonicalChild);
+      if (relativeChildPath === undefined) {
         diagnostics.push(
-          skillDiagnostic(context, "SKILL_SUPPORT_FILE_OUTSIDE_PACKAGE", true, {
+          packageDiagnostic(diagnosticPath, "SKILL_SUPPORT_ENTRY_OUTSIDE_PACKAGE", {
             relativePath: name,
           }),
         );
         continue;
       }
-      if (snapshot.size > MAX_FILE_BYTES) {
+      const stat = await input.read.stat(canonicalChild);
+      if (stat.kind === "directory") {
+        await visit(canonicalChild);
+        if (truncated) return;
+        continue;
+      }
+      if (stat.kind !== "file") continue;
+      if (visitedFiles.has(canonicalChild)) continue;
+      visitedFiles.add(canonicalChild);
+
+      if (visitedFileCount === SKILL_PACKAGE_MAX_FILES) {
+        truncated = true;
+        overflows.push({
+          kind: "file-count",
+          limit: SKILL_PACKAGE_MAX_FILES,
+          observedAtLeast: SKILL_PACKAGE_MAX_FILES + 1,
+        });
         diagnostics.push(
-          skillDiagnostic(context, "SKILL_SUPPORT_FILE_TOO_LARGE", true, { relativePath }),
+          packageDiagnostic(diagnosticPath, "SKILL_PACKAGE_TOO_MANY_FILES", {
+            limitFiles: SKILL_PACKAGE_MAX_FILES,
+            observedFilesAtLeast: SKILL_PACKAGE_MAX_FILES + 1,
+          }),
+        );
+        return;
+      }
+      visitedFileCount += 1;
+      totalBytes += stat.size;
+
+      const fileLimitExceeded = stat.size > SKILL_PACKAGE_MAX_FILE_BYTES;
+      if (fileLimitExceeded) {
+        const code =
+          relativeChildPath === "SKILL.md"
+            ? "SKILL_PRIMARY_FILE_TOO_LARGE"
+            : "SKILL_SUPPORT_FILE_TOO_LARGE";
+        overflows.push({
+          kind: "file-size",
+          relativePath: relativeChildPath,
+          limit: SKILL_PACKAGE_MAX_FILE_BYTES,
+          observed: stat.size,
+        });
+        diagnostics.push(
+          packageDiagnostic(diagnosticPath, code, {
+            relativePath: relativeChildPath,
+            limitBytes: SKILL_PACKAGE_MAX_FILE_BYTES,
+            observedBytes: stat.size,
+          }),
         );
       }
-      totalBytes += snapshot.size;
+      if (totalBytes > SKILL_PACKAGE_MAX_BYTES) packageLimitExceeded = true;
+      if (fileLimitExceeded || packageLimitExceeded) continue;
+
+      const snapshot = await input.read.snapshotFile(canonicalChild);
+      if (snapshot === undefined) {
+        totalBytes -= stat.size;
+        continue;
+      }
+      totalBytes += snapshot.size - stat.size;
+      const relativePath = safeRelativePath(packageRoot, snapshot.canonicalPath);
+      if (relativePath === undefined) {
+        diagnostics.push(
+          packageDiagnostic(diagnosticPath, "SKILL_SUPPORT_FILE_OUTSIDE_PACKAGE", {
+            relativePath: name,
+          }),
+        );
+        continue;
+      }
+      if (snapshot.size > SKILL_PACKAGE_MAX_FILE_BYTES) {
+        const code =
+          relativePath === "SKILL.md"
+            ? "SKILL_PRIMARY_FILE_TOO_LARGE"
+            : "SKILL_SUPPORT_FILE_TOO_LARGE";
+        overflows.push({
+          kind: "file-size",
+          relativePath,
+          limit: SKILL_PACKAGE_MAX_FILE_BYTES,
+          observed: snapshot.size,
+        });
+        diagnostics.push(
+          packageDiagnostic(diagnosticPath, code, {
+            relativePath,
+            limitBytes: SKILL_PACKAGE_MAX_FILE_BYTES,
+            observedBytes: snapshot.size,
+          }),
+        );
+        continue;
+      }
+      if (totalBytes > SKILL_PACKAGE_MAX_BYTES) {
+        packageLimitExceeded = true;
+        continue;
+      }
       files.push(
         sourceFile({
           path: snapshot.canonicalPath,
@@ -147,21 +341,84 @@ async function enumeratePackageFiles(
           contentHash: snapshot.contentHash,
         }),
       );
-      if (files.length > MAX_PACKAGE_FILES) {
-        diagnostics.push(skillDiagnostic(context, "SKILL_PACKAGE_TOO_MANY_FILES", true, {}));
-        break;
-      }
     }
   }
 
-  if (totalBytes > MAX_PACKAGE_BYTES) {
-    diagnostics.push(skillDiagnostic(context, "SKILL_PACKAGE_TOO_LARGE", true, {}));
+  try {
+    await visit(packageRoot);
+  } catch (error) {
+    if (!(error instanceof AdapterDiscoveryLimitError)) throw error;
+    truncated = true;
+    overflows.push({
+      kind: "entry-count",
+      limit: error.limit,
+      observedAtLeast: error.observedAtLeast,
+    });
+    diagnostics.push(
+      packageDiagnostic(diagnosticPath, "SKILL_PACKAGE_TOO_MANY_ENTRIES", {
+        limitEntries: error.limit,
+        observedEntriesAtLeast: error.observedAtLeast,
+      }),
+    );
   }
 
-  return files.sort((left, right) => {
-    const role = roleOrder(left.role) - roleOrder(right.role);
-    return role === 0 ? left.relativePath.localeCompare(right.relativePath) : role;
+  if (packageLimitExceeded) {
+    overflows.push({
+      kind: "package-size",
+      limit: SKILL_PACKAGE_MAX_BYTES,
+      observedAtLeast: totalBytes,
+    });
+    diagnostics.push(
+      packageDiagnostic(diagnosticPath, "SKILL_PACKAGE_TOO_LARGE", {
+        limitBytes: SKILL_PACKAGE_MAX_BYTES,
+        observedBytesAtLeast: totalBytes,
+      }),
+    );
+  }
+
+  const sourceFiles = Object.freeze(
+    files.sort((left, right) => {
+      const role = roleOrder(left.role) - roleOrder(right.role);
+      return role === 0 ? compareStrings(left.relativePath, right.relativePath) : role;
+    }),
+  );
+  const frozenOverflows = Object.freeze(overflows);
+  const status =
+    frozenOverflows.length > 0
+      ? ("limit-exceeded" as const)
+      : diagnostics.some(({ blocking }) => blocking)
+        ? ("rejected" as const)
+        : ("complete" as const);
+  return Object.freeze({
+    status,
+    packageRoot,
+    sourceFiles,
+    contentHash: packageContentHash(sourceFiles),
+    totalBytes,
+    truncated,
+    overflows: frozenOverflows,
+    diagnostics: Object.freeze(diagnostics),
   });
+}
+
+function packageDiagnostic(
+  locationPath: AbsolutePath,
+  code: string,
+  evidence: Readonly<Record<string, unknown>>,
+): AdapterDiagnostic {
+  const relativePath =
+    typeof evidence["relativePath"] === "string" ? evidence["relativePath"] : "SKILL.md";
+  return nativeDiagnostic({
+    code,
+    blocking: true,
+    message: `${code} in Skill package`,
+    location: { path: locationPath },
+    evidence: { relativePath, ...evidence },
+  });
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function sourceRole(relativePath: string) {
@@ -277,11 +534,12 @@ function skillDiagnostic(
   blocking: boolean,
   evidence: Readonly<Record<string, unknown>>,
 ) {
+  if (blocking) return packageDiagnostic(context.snapshot.canonicalPath, code, evidence);
   const relativePath =
     typeof evidence["relativePath"] === "string" ? evidence["relativePath"] : "SKILL.md";
   return nativeDiagnostic({
     code,
-    blocking,
+    blocking: false,
     message: `${code} in Skill package`,
     location: { path: context.snapshot.canonicalPath },
     evidence: { relativePath, ...evidence },

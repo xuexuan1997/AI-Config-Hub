@@ -1,11 +1,35 @@
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { AbsolutePathSchema } from "@ai-config-hub/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { NodeFileWatcher, WatchService, type FileWatchFactory } from "./watch-service.js";
 
 describe("WatchService", () => {
+  it("forks independently drained queues while sharing deployment suppression", () => {
+    let nowMs = 0;
+    const parent = new WatchService({ debounceMs: 0, suppressionGraceMs: 10, nowMs: () => nowMs });
+    const first = parent.fork();
+    const second = parent.fork();
+    const firstPath = AbsolutePathSchema.parse("/first/AGENTS.md");
+    const secondPath = AbsolutePathSchema.parse("/second/AGENTS.md");
+
+    first.recordFileEvent({ path: firstPath, kind: "modified", observedAtMs: nowMs });
+    second.recordFileEvent({ path: secondPath, kind: "modified", observedAtMs: nowMs });
+    expect(first.drainReady(nowMs)).toEqual({ kind: "changes", changedPaths: [firstPath] });
+    expect(second.drainReady(nowMs)).toEqual({ kind: "changes", changedPaths: [secondPath] });
+
+    parent.suppressDeploymentPaths([secondPath]);
+    second.recordFileEvent({ path: secondPath, kind: "modified", observedAtMs: nowMs });
+    expect(second.drainReady(nowMs)).toBeUndefined();
+    parent.clearDeploymentSuppression([secondPath]);
+    nowMs = 11;
+    second.recordFileEvent({ path: secondPath, kind: "modified", observedAtMs: nowMs });
+    expect(second.drainReady(nowMs)).toEqual({ kind: "changes", changedPaths: [secondPath] });
+  });
+
   it("debounces noisy editor temporary events into stable changed paths", () => {
     const service = new WatchService({ debounceMs: 50 });
 
@@ -126,7 +150,9 @@ describe("WatchService", () => {
       kind: "changes",
       changedPaths: [changedPath],
     });
-    expect(batches).toEqual([{ kind: "changes", changedPaths: [changedPath] }]);
+    await vi.waitFor(() =>
+      expect(batches).toEqual([{ kind: "changes", changedPaths: [changedPath] }]),
+    );
     expect(options).toEqual([{ recursive: true }]);
     watcher.close();
   });
@@ -184,14 +210,16 @@ describe("WatchService", () => {
       reason: "unstable",
       suggestedAction: "Run a full scan or manual refresh",
     });
-    expect(batches).toEqual([
-      { kind: "changes", changedPaths: [reviewerPath] },
-      {
-        kind: "refresh_required",
-        reason: "unstable",
-        suggestedAction: "Run a full scan or manual refresh",
-      },
-    ]);
+    await vi.waitFor(() =>
+      expect(batches).toEqual([
+        { kind: "changes", changedPaths: [reviewerPath] },
+        {
+          kind: "refresh_required",
+          reason: "unstable",
+          suggestedAction: "Run a full scan or manual refresh",
+        },
+      ]),
+    );
     expect(watchedPaths).toEqual(["/project", "/project/.codex", "/project/.codex/agents"]);
     expect(options).toEqual([{ recursive: false }, { recursive: false }, { recursive: false }]);
     watcher.close();
@@ -225,4 +253,220 @@ describe("WatchService", () => {
     });
     watcher.close();
   });
+
+  it("turns ambiguous rename notifications into a conservative full-refresh fallback", async () => {
+    let listener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    const watcher = new NodeFileWatcher({
+      roots: [AbsolutePathSchema.parse("/project")],
+      platform: "darwin",
+      watch: (_path, _options, nextListener) => {
+        listener = nextListener;
+        return { close() {} };
+      },
+      nowMs: () => 0,
+      autoDrainIntervalMs: 0,
+      onBatch: () => undefined,
+    });
+
+    await watcher.start();
+    listener?.("rename", "AGENTS.md");
+    expect(watcher.drain()).toEqual({
+      kind: "refresh_required",
+      reason: "unstable",
+      suggestedAction: "Run a full scan or manual refresh",
+    });
+    watcher.close();
+  });
+
+  it("backs off failed native handles and disables retries after a bounded attempt count", async () => {
+    let nowMs = 0;
+    const errorListeners: ((error: unknown) => void)[] = [];
+    let watchAttempts = 0;
+    const watcher = new NodeFileWatcher({
+      roots: [AbsolutePathSchema.parse("/project")],
+      platform: "darwin",
+      watch: () => {
+        watchAttempts += 1;
+        return {
+          close() {},
+          on(_event, listener) {
+            errorListeners.push(listener);
+            return this;
+          },
+        };
+      },
+      nowMs: () => nowMs,
+      autoDrainIntervalMs: 0,
+      errorRetryBaseMs: 10,
+      errorRetryMaxMs: 20,
+      maxErrorRetries: 3,
+      onBatch: () => undefined,
+    });
+
+    await watcher.start();
+    expect(watchAttempts).toBe(1);
+    errorListeners[0]?.(new Error("permanent failure"));
+    watcher.drain();
+    nowMs = 9;
+    watcher.drain();
+    expect(watchAttempts).toBe(1);
+
+    nowMs = 10;
+    watcher.drain();
+    expect(watchAttempts).toBe(2);
+    errorListeners[1]?.(new Error("permanent failure"));
+    watcher.drain();
+    nowMs = 30;
+    watcher.drain();
+    expect(watchAttempts).toBe(3);
+    errorListeners[2]?.(new Error("permanent failure"));
+    watcher.drain();
+
+    nowMs = 10_000;
+    watcher.drain();
+    expect(watchAttempts).toBe(3);
+    watcher.close();
+  });
+
+  it("bounds retries when Linux directory enumeration keeps failing", async () => {
+    let nowMs = 0;
+    let listAttempts = 0;
+    const watcher = new NodeFileWatcher({
+      roots: [AbsolutePathSchema.parse("/project")],
+      platform: "linux",
+      watch: () => ({ close() {} }),
+      listDirectories: () => {
+        listAttempts += 1;
+        return Promise.reject(new Error("directory is permanently unreadable"));
+      },
+      nowMs: () => nowMs,
+      autoDrainIntervalMs: 0,
+      errorRetryBaseMs: 10,
+      errorRetryMaxMs: 20,
+      maxErrorRetries: 3,
+      onBatch: () => undefined,
+    });
+
+    await watcher.start();
+    expect(listAttempts).toBe(1);
+    watcher.drain();
+
+    nowMs = 10;
+    watcher.drain();
+    await vi.waitFor(() => expect(listAttempts).toBe(2));
+    watcher.drain();
+
+    nowMs = 30;
+    watcher.drain();
+    await vi.waitFor(() => expect(listAttempts).toBe(3));
+    watcher.drain();
+
+    nowMs = 10_000;
+    watcher.drain();
+    await Promise.resolve();
+    expect(listAttempts).toBe(3);
+    watcher.close();
+  });
+
+  it("adds Linux directory handles after a handled change batch", async () => {
+    const root = AbsolutePathSchema.parse("/project");
+    const nested = AbsolutePathSchema.parse("/project/.agents/skills/new-skill");
+    let directories: readonly ReturnType<typeof AbsolutePathSchema.parse>[] = [root];
+    let rootListener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    let resolveNestedWatch: (() => void) | undefined;
+    const nestedWatched = new Promise<void>((resolveWatch) => {
+      resolveNestedWatch = resolveWatch;
+    });
+    const watcher = new NodeFileWatcher({
+      roots: [root],
+      platform: "linux",
+      watch: (path, _options, listener) => {
+        if (path === root) rootListener = listener;
+        if (path === nested) resolveNestedWatch?.();
+        return { close() {} };
+      },
+      listDirectories: () => Promise.resolve(directories),
+      nowMs: () => 0,
+      autoDrainIntervalMs: 0,
+      service: new WatchService({ debounceMs: 0 }),
+      onBatch: () => {
+        directories = [root, nested];
+      },
+    });
+
+    await watcher.start();
+    rootListener?.("rename", ".agents");
+    watcher.drain();
+    await nestedWatched;
+    watcher.close();
+  });
+
+  it("maps an excessive Linux directory expansion to overflow without opening handles", async () => {
+    const watchedPaths: string[] = [];
+    const watcher = new NodeFileWatcher({
+      roots: [AbsolutePathSchema.parse("/project")],
+      platform: "linux",
+      maxDirectories: 2,
+      watch: (path) => {
+        watchedPaths.push(path);
+        return { close() {} };
+      },
+      listDirectories: () =>
+        Promise.resolve([
+          AbsolutePathSchema.parse("/project"),
+          AbsolutePathSchema.parse("/project/a"),
+          AbsolutePathSchema.parse("/project/b"),
+        ]),
+      autoDrainIntervalMs: 0,
+      onBatch: () => undefined,
+    });
+
+    await watcher.start();
+    expect(watchedPaths).toEqual([]);
+    expect(watcher.drain()).toEqual({
+      kind: "refresh_required",
+      reason: "overflow",
+      suggestedAction: "Run a full scan or manual refresh",
+    });
+    watcher.close();
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "does not recurse through ignored dependency directories or directory symlinks",
+    async () => {
+      const fixtureRoot = await mkdtemp(join(tmpdir(), "ai-config-hub-watcher-"));
+      const root = AbsolutePathSchema.parse(fixtureRoot);
+      const watchedPaths: string[] = [];
+      try {
+        await mkdir(join(fixtureRoot, ".agents", "skills"), { recursive: true });
+        await mkdir(join(fixtureRoot, "node_modules", "package"), { recursive: true });
+        await mkdir(join(fixtureRoot, "build", "generated"), { recursive: true });
+        await mkdir(join(fixtureRoot, ".cache", "metadata"), { recursive: true });
+        await symlink(fixtureRoot, join(fixtureRoot, "loop"), "dir");
+        const watcher = new NodeFileWatcher({
+          roots: [root],
+          platform: "linux",
+          watch: (path) => {
+            watchedPaths.push(path);
+            return { close() {} };
+          },
+          autoDrainIntervalMs: 0,
+          onBatch: () => undefined,
+        });
+
+        await watcher.start();
+        expect(watchedPaths).toContain(root);
+        expect(watchedPaths).toContain(join(fixtureRoot, ".agents"));
+        expect(watchedPaths).toContain(join(fixtureRoot, ".agents", "skills"));
+        expect(watchedPaths.some((path) => path.includes("node_modules"))).toBe(false);
+        expect(watchedPaths).toContain(join(fixtureRoot, "build"));
+        expect(watchedPaths).toContain(join(fixtureRoot, "build", "generated"));
+        expect(watchedPaths).toContain(join(fixtureRoot, ".cache"));
+        expect(watchedPaths.some((path) => path.includes("loop"))).toBe(false);
+        watcher.close();
+      } finally {
+        await rm(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+  );
 });

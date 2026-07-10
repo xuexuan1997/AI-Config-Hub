@@ -8,13 +8,16 @@ import { AssetIdSchema, ContentHashSchema, TaskIdSchema } from "@ai-config-hub/s
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  INDEX_CHANGE_EVENT_CHANNEL,
   registerIpcHandlers,
+  RUNTIME_STATE_CHANNEL,
   UPDATE_CHECK_CHANNEL,
   UPDATE_DOWNLOAD_CHANNEL,
   UPDATE_EVENT_CHANNEL,
   UPDATE_INSTALL_CHANNEL,
   UPDATE_STATUS_CHANNEL,
 } from "./ipc.js";
+import type { DesktopIndexChangeEvent } from "./ipc.js";
 import type { UpdateStatus } from "./updates.js";
 
 describe("desktop IPC handlers", () => {
@@ -52,6 +55,35 @@ describe("desktop IPC handlers", () => {
       data: { taskId: "task:desktop-ipc", status: "queued" },
     });
     expect(services["scan.start"]).toHaveBeenCalledWith({ mode: "full" });
+  });
+
+  it("returns trusted desktop runtime state", async () => {
+    const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents();
+    const runtimeState = {
+      activeTasks: [
+        {
+          taskId: "task:scan:1",
+          taskKind: "scan" as const,
+          clientContext: "migration-source" as const,
+          selectedRoots: ["/workspace/selected-source"],
+          canonicalRoots: ["/workspace/canonical-source"],
+        },
+      ],
+      recoveryDeploymentIds: ["deployment-record:1"],
+    };
+    registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      runtimeState: () => runtimeState,
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    await expect(
+      ipcMain.invoke(RUNTIME_STATE_CHANNEL, undefined, trustedEvent(sender)),
+    ).resolves.toEqual(runtimeState);
   });
 
   it("rejects API commands from unknown senders and subframes", async () => {
@@ -129,16 +161,194 @@ describe("desktop IPC handlers", () => {
 
     await ipcMain.invoke(
       "ai-config-hub:v1:task.subscribe",
-      { taskId: "task:event-bridge", afterSequence: 0 },
+      {
+        taskId: "task:event-bridge",
+        afterSequence: 0,
+        subscriptionId: "subscription:event-bridge",
+      },
       trustedEvent(sender),
     );
     await ipcMain.invoke(
       "ai-config-hub:v1:task.unsubscribe",
-      { taskId: "task:event-bridge" },
+      { taskId: "task:event-bridge", subscriptionId: "subscription:event-bridge" },
       trustedEvent(sender),
     );
 
     expect(sent).toEqual([{ channel: TASK_EVENT_CHANNEL, payload: taskEvent }]);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("isolates same-task subscriptions by sender and subscription identity", async () => {
+    const ipcMain = fakeIpcMain();
+    const firstSender = fakeWebContents();
+    const secondSender = fakeWebContents();
+    const unsubscribes = [vi.fn(), vi.fn(), vi.fn()];
+    const subscribe = vi
+      .fn()
+      .mockImplementationOnce(() => unsubscribes[0])
+      .mockImplementationOnce(() => unsubscribes[1])
+      .mockImplementationOnce(() => unsubscribes[2]);
+    const unregister = registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      taskEvents: { subscribe },
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [firstSender as never, secondSender as never],
+    });
+
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.subscribe",
+      {
+        taskId: "task:shared",
+        afterSequence: 0,
+        subscriptionId: "subscription:first-old",
+      },
+      trustedEvent(firstSender),
+    );
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.subscribe",
+      {
+        taskId: "task:shared",
+        afterSequence: 1,
+        subscriptionId: "subscription:first-new",
+      },
+      trustedEvent(firstSender),
+    );
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.subscribe",
+      {
+        taskId: "task:shared",
+        afterSequence: 2,
+        subscriptionId: "subscription:second",
+      },
+      trustedEvent(secondSender),
+    );
+
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.unsubscribe",
+      { taskId: "task:shared", subscriptionId: "subscription:first-old" },
+      trustedEvent(firstSender),
+    );
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.unsubscribe",
+      { taskId: "task:shared", subscriptionId: "subscription:first-new" },
+      trustedEvent(secondSender),
+    );
+
+    expect(unsubscribes[0]).toHaveBeenCalledOnce();
+    expect(unsubscribes[1]).not.toHaveBeenCalled();
+    expect(unsubscribes[2]).not.toHaveBeenCalled();
+
+    unregister();
+
+    expect(unsubscribes[1]).toHaveBeenCalledOnce();
+    expect(unsubscribes[2]).toHaveBeenCalledOnce();
+  });
+
+  it("cleans sender-owned subscriptions on destruction and never sends to destroyed contents", async () => {
+    const ipcMain = fakeIpcMain();
+    const send = vi.fn();
+    const sender = fakeWebContents(send);
+    const unsubscribe = vi.fn();
+    let taskListener: ((event: TaskEvent) => void) | undefined;
+    const unregister = registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      taskEvents: {
+        subscribe: (
+          _taskId: string,
+          _afterSequence: number,
+          listener: (event: TaskEvent) => void,
+        ) => {
+          taskListener = listener;
+          return unsubscribe;
+        },
+      },
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.subscribe",
+      {
+        taskId: "task:destroyed",
+        afterSequence: 0,
+        subscriptionId: "subscription:destroyed",
+      },
+      trustedEvent(sender),
+    );
+    sender.destroy();
+    taskListener?.(acceptedTaskEvent("task:destroyed"));
+    unregister();
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(sender.destroyedListenerCount()).toBe(0);
+  });
+
+  it("ignores a task send failure when a renderer disappears during delivery", async () => {
+    const ipcMain = fakeIpcMain();
+    const sender = fakeWebContents(() => {
+      throw new Error("web contents was destroyed during send");
+    });
+    let taskListener: ((event: TaskEvent) => void) | undefined;
+    registerIpcHandlers({
+      ipcMain: ipcMain as never,
+      services: commandServices({}),
+      taskEvents: {
+        subscribe: (
+          _taskId: string,
+          _afterSequence: number,
+          listener: (event: TaskEvent) => void,
+        ) => {
+          taskListener = listener;
+          return vi.fn();
+        },
+      },
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [sender as never],
+    });
+
+    await ipcMain.invoke(
+      "ai-config-hub:v1:task.subscribe",
+      {
+        taskId: "task:send-race",
+        afterSequence: 0,
+        subscriptionId: "subscription:send-race",
+      },
+      trustedEvent(sender),
+    );
+
+    expect(() => taskListener?.(acceptedTaskEvent("task:send-race"))).not.toThrow();
+  });
+
+  it("forwards index change events to live trusted windows and removes the bridge", () => {
+    const sent: unknown[] = [];
+    const unsubscribe = vi.fn();
+    const sender = fakeWebContents((channel, payload) => sent.push({ channel, payload }));
+    const destroyed = fakeWebContents(vi.fn(), { destroyed: true });
+    const event = { roots: ["/workspace/source"] } satisfies DesktopIndexChangeEvent;
+    const indexChanges = {
+      subscribe: vi.fn((listener: (change: DesktopIndexChangeEvent) => void) => {
+        listener(event);
+        return unsubscribe;
+      }),
+    };
+
+    const unregister = registerIpcHandlers({
+      ipcMain: fakeIpcMain() as never,
+      services: commandServices({}),
+      indexChanges,
+      appVersion: () => "0.2.0-test",
+      dialog: { selectDirectory: () => Promise.resolve(undefined) },
+      webContents: () => [destroyed as never, sender as never],
+    });
+    unregister();
+
+    expect(sent).toEqual([{ channel: INDEX_CHANGE_EVENT_CHANNEL, payload: event }]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
@@ -280,8 +490,29 @@ function fakeWebContents(
   send: (channel: string, payload: unknown) => void = vi.fn(),
   options: { readonly destroyed?: boolean } = {},
 ) {
+  let destroyed = options.destroyed ?? false;
+  const destroyedListeners = new Set<() => void>();
   const mainFrame = { frameId: 1 };
-  return { isDestroyed: () => options.destroyed ?? false, mainFrame, send };
+  return {
+    isDestroyed: () => destroyed,
+    mainFrame,
+    send,
+    once(event: string, listener: () => void) {
+      if (event === "destroyed") destroyedListeners.add(listener);
+    },
+    removeListener(event: string, listener: () => void) {
+      if (event === "destroyed") destroyedListeners.delete(listener);
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      for (const listener of [...destroyedListeners]) {
+        destroyedListeners.delete(listener);
+        listener();
+      }
+    },
+    destroyedListenerCount: () => destroyedListeners.size,
+  };
 }
 
 function trustedEvent(sender: ReturnType<typeof fakeWebContents>) {
@@ -350,4 +581,20 @@ function commandServices(overrides: Partial<CommandServiceMap>): CommandServiceM
     "settings.update": vi.fn(),
   };
   return { ...base, ...overrides } as CommandServiceMap;
+}
+
+function acceptedTaskEvent(taskId: string): TaskEvent {
+  return {
+    apiVersion: 1,
+    eventVersion: 1,
+    taskId: TaskIdSchema.parse(taskId),
+    sequence: 1,
+    emittedAt: "2026-07-10T00:00:00.000Z",
+    type: "accepted",
+    payload: {
+      taskKind: "scan",
+      phase: "queued",
+      acceptedAt: "2026-07-10T00:00:00.000Z",
+    },
+  };
 }

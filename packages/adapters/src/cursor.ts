@@ -19,7 +19,13 @@ import {
 
 import { adapterDiagnostic, BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
-import { candidate, documentedFiles, markerPath, scopeKindFromEvidence } from "./discovery.js";
+import {
+  candidate,
+  createAdapterDiscoveryBudget,
+  documentedFiles,
+  markerPath,
+  scopeKindFromEvidence,
+} from "./discovery.js";
 import { parseMarkdownAsset, parseMcpJson } from "./markdown-assets.js";
 import { parseSkillPackage } from "./skill-packages.js";
 
@@ -85,7 +91,9 @@ class CursorAdapter extends BaseToolAdapter {
     const candidates = [];
     const diagnostics = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
+    let budget: ReturnType<typeof createAdapterDiscoveryBudget> | undefined;
     for (const root of [...context.tool.configRoots].sort()) {
+      budget ??= createAdapterDiscoveryBudget(await context.read.realpath(root));
       const files = await documentedFiles({
         read: context.read,
         root,
@@ -99,6 +107,7 @@ class CursorAdapter extends BaseToolAdapter {
             ? ["rules", "agents", "skills"]
             : [".cursor/rules", ".cursor/agents", ".cursor/skills", ".agents/skills"],
         signal: context.signal,
+        budget,
       });
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);

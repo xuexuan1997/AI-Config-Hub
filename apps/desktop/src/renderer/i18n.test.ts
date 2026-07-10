@@ -14,6 +14,12 @@ describe("renderer i18n", () => {
     expect(localizeUiMessage("zh-CN", "deployment writing: 2/5 operations")).toBe(
       "部署正在写入：2/5 项操作",
     );
+    expect(localizeUiMessage("zh-CN", "Target already exists: /project/rule.mdc")).toBe(
+      "目标已存在：/project/rule.mdc",
+    );
+    expect(localizeUiMessage("zh-CN", "Source changed before deployment: asset:rule")).toBe(
+      "部署前源资产已变更：asset:rule",
+    );
     expect(
       formatLocalizedUiError(
         "zh-CN",

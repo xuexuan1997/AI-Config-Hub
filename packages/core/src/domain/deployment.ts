@@ -8,8 +8,10 @@ import {
   DeploymentPlanIdSchema,
   DeploymentRecordIdSchema,
   IsoDateTimeSchema,
+  ProjectIdSchema,
   ResourceKindSchema,
   SemVerSchema,
+  TaskIdSchema,
 } from "@ai-config-hub/shared";
 import { z } from "zod";
 
@@ -528,6 +530,8 @@ export const DeploymentRecordSchema = z
     deploymentRecordId: DeploymentRecordIdSchema,
     deploymentPlanId: DeploymentPlanIdSchema,
     rollbackOfRecordId: DeploymentRecordIdSchema.optional(),
+    taskId: TaskIdSchema.optional(),
+    projectId: ProjectIdSchema.optional(),
     confirmedPlanHash: ContentHashSchema.optional(),
     status: DeploymentStatusSchema,
     operations: z.array(DeploymentOperationSchema).readonly(),

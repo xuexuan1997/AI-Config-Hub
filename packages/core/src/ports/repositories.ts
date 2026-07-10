@@ -5,6 +5,7 @@ import type {
   DeploymentRecordId,
   DiagnosticId,
   PaginationCursor,
+  ProjectId,
   ScanRunId,
   ScopeId,
   TaskId,
@@ -27,6 +28,11 @@ export interface Page<T> {
 
 export interface DerivedIndexReplacement {
   readonly scanRunId: ScanRunId;
+  /** Detection coverage for retiring installations that disappeared in this scan. */
+  readonly scanCoverage?: {
+    readonly roots: readonly AbsolutePath[];
+    readonly toolIds: readonly ToolId[];
+  };
   readonly tools: readonly ToolInstallation[];
   readonly scopes: readonly Scope[];
   readonly assets: readonly Asset[];
@@ -112,9 +118,12 @@ export interface DeploymentRepository {
   listRecords(input: {
     readonly kinds?: readonly ("deployment" | "rollback")[];
     readonly statuses?: readonly DeploymentRecord["status"][];
+    readonly taskId?: TaskId;
+    readonly projectId?: ProjectId;
     readonly from?: DeploymentRecord["createdAt"];
     readonly to?: DeploymentRecord["createdAt"];
     readonly cursor?: PaginationCursor;
+    readonly snapshotRevision?: string;
     readonly limit: number;
   }): Promise<Page<DeploymentRecord>>;
 }

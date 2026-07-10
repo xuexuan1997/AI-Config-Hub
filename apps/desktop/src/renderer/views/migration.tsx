@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import {
@@ -20,6 +20,7 @@ import { ScanTaskModal, ScanTaskPanel } from "./scan-task-panel.js";
 
 export function MigrationView(props: {
   readonly state: AppState;
+  readonly previewPending?: boolean;
   readonly onPreview: () => void;
   readonly onToggleSource: (assetId: AppState["assets"][number]["id"], selected: boolean) => void;
   readonly onTargetTool: (targetToolKey: MigrationTargetToolKey) => void;
@@ -27,6 +28,8 @@ export function MigrationView(props: {
   readonly onConfirmMigration: (confirmed: boolean) => void;
   readonly onConfirmRequirement: (confirmation: DeploymentConfirmation, granted: boolean) => void;
   readonly onExecuteMigration: () => void;
+  readonly onResolveRecovery?: () => void;
+  readonly onCancelScan?: (taskId: string) => void;
   readonly onSelectSourceProject?: () => void;
   readonly onSelectTargetProject?: () => void;
   readonly onSwapProjects?: () => void;
@@ -62,7 +65,10 @@ export function MigrationView(props: {
   const stateActiveTask = props.state.activeTask;
   const hasSourceProject = (props.state.migration.sourceProjectRoot?.trim().length ?? 0) > 0;
   const hasTargetProject = (props.state.migration.targetScopeId?.trim().length ?? 0) > 0;
-  const activeTask = stateActiveTask?.taskKind === "deployment" ? stateActiveTask : undefined;
+  const activeTask =
+    stateActiveTask?.taskKind === "deployment" || stateActiveTask?.taskKind === "rollback"
+      ? stateActiveTask
+      : undefined;
   const sourceScanTask =
     stateActiveTask?.taskKind === "scan" &&
     stateActiveTask.scanScope === "migration-source" &&
@@ -96,14 +102,19 @@ export function MigrationView(props: {
         heading={t(locale, "Scanning migration assets")}
         locale={locale}
         task={scanTask}
+        {...(props.onCancelScan === undefined ? {} : { onCancel: props.onCancelScan })}
       />
       <section className="page-heading">
         <div>
           <h1>{t(locale, "Asset Migration")}</h1>
           <p>{t(locale, "Choose source and target projects independently before writing.")}</p>
         </div>
-        <button type="button" disabled={previewBlockers.length > 0} onClick={props.onPreview}>
-          {t(locale, "Preview writes")}
+        <button
+          type="button"
+          disabled={previewBlockers.length > 0 || props.previewPending === true}
+          onClick={props.onPreview}
+        >
+          {t(locale, props.previewPending === true ? "Creating preview" : "Preview writes")}
         </button>
       </section>
 
@@ -142,14 +153,26 @@ export function MigrationView(props: {
       >
         {assetGroups.map((group) => {
           const selected = group.resourceType === activeGroup?.resourceType;
+          const tabId = migrationTypeTabId(group.resourceType);
           return (
             <button
+              aria-controls={migrationTypePanelId(group.resourceType)}
               aria-selected={selected}
               className="asset-type-tab"
+              id={tabId}
               key={group.resourceType}
               role="tab"
+              tabIndex={selected ? 0 : -1}
               type="button"
               onClick={() => setSelectedResourceType(group.resourceType)}
+              onKeyDown={(event) =>
+                moveMigrationTypeTab(
+                  event,
+                  assetGroups,
+                  group.resourceType,
+                  setSelectedResourceType,
+                )
+              }
             >
               <strong>{resourceTypeLabel(locale, group.resourceType)}</strong>
               <span>
@@ -160,7 +183,14 @@ export function MigrationView(props: {
         })}
       </div>
 
-      <section className="migration-comparison-body">
+      <section
+        aria-labelledby={
+          activeGroup === undefined ? undefined : migrationTypeTabId(activeGroup.resourceType)
+        }
+        className="migration-comparison-body"
+        id={activeGroup === undefined ? undefined : migrationTypePanelId(activeGroup.resourceType)}
+        role="tabpanel"
+      >
         <section className="migration-source-panel panel">
           <header className="panel-title">
             <strong>{t(locale, "Source assets")}</strong>
@@ -170,13 +200,7 @@ export function MigrationView(props: {
             ariaLabel={t(locale, "Source scan status")}
             heading={t(locale, "Source scan")}
             locale={locale}
-            message={
-              hasSourceProject &&
-              props.state.scanStatus === "error" &&
-              props.state.scanScope === "migration-source"
-                ? props.state.message
-                : undefined
-            }
+            message={undefined}
             task={sourceScanTask}
           />
           <div className="migration-asset-list">
@@ -188,15 +212,22 @@ export function MigrationView(props: {
               <p>{t(locale, "No differences for this asset type.")}</p>
             ) : (
               activeGroup.assets.map((asset) => (
-                <label key={asset.id} className="asset-option">
+                <label
+                  key={asset.id}
+                  className={`asset-option${asset.status === "disabled" ? " is-disabled" : ""}`}
+                >
                   <input
                     type="checkbox"
+                    disabled={asset.status === "disabled"}
                     checked={props.state.migration.sourceAssetIds.includes(asset.id)}
                     onChange={(event) =>
                       props.onToggleSource(asset.id, event.currentTarget.checked)
                     }
                   />
-                  <span>{asset.logicalKey}</span>
+                  <span>
+                    {asset.logicalKey}
+                    {asset.status === "disabled" ? ` · ${t(locale, "Disabled")}` : ""}
+                  </span>
                   <small>
                     {toolLabel(asset.toolKey)} / {resourceTypeLabel(locale, asset.resourceType)}
                   </small>
@@ -308,13 +339,7 @@ export function MigrationView(props: {
             ariaLabel={t(locale, "Target scan status")}
             heading={t(locale, "Target scan")}
             locale={locale}
-            message={
-              hasTargetProject &&
-              props.state.scanStatus === "error" &&
-              props.state.scanScope === "migration-target"
-                ? props.state.message
-                : undefined
-            }
+            message={undefined}
             task={targetScanTask}
           />
           <div className="migration-asset-list">
@@ -359,12 +384,15 @@ export function MigrationView(props: {
         </section>
       </section>
 
-      {preview === undefined && activeTask === undefined ? null : (
+      {preview === undefined &&
+      activeTask === undefined &&
+      props.state.recoveryLock === undefined ? null : (
         <section className="migration-preview-details">
           <MigrationExecutionPanel
             activeTask={activeTask}
             deploymentBlockers={deploymentBlockers}
             deploymentConfirmed={props.state.deploymentConfirmed}
+            recoveryLock={props.state.recoveryLock}
             grantedConfirmations={grantedConfirmations}
             locale={locale}
             preview={preview}
@@ -372,6 +400,9 @@ export function MigrationView(props: {
             onConfirmMigration={props.onConfirmMigration}
             onConfirmRequirement={props.onConfirmRequirement}
             onExecuteMigration={props.onExecuteMigration}
+            {...(props.onResolveRecovery === undefined
+              ? {}
+              : { onResolveRecovery: props.onResolveRecovery })}
           />
           {preview === undefined ? null : (
             <>
@@ -822,6 +853,7 @@ function MigrationExecutionPanel(props: {
   readonly activeTask: NonNullable<AppState["activeTask"]> | undefined;
   readonly deploymentBlockers: readonly string[];
   readonly deploymentConfirmed: boolean;
+  readonly recoveryLock: AppState["recoveryLock"];
   readonly grantedConfirmations: ReadonlySet<DeploymentConfirmation>;
   readonly locale: DesktopLocale;
   readonly preview: AppState["preview"];
@@ -829,6 +861,7 @@ function MigrationExecutionPanel(props: {
   readonly onConfirmMigration: (confirmed: boolean) => void;
   readonly onConfirmRequirement: (confirmation: DeploymentConfirmation, granted: boolean) => void;
   readonly onExecuteMigration: () => void;
+  readonly onResolveRecovery?: () => void;
 }) {
   return (
     <section className="migration-execution-panel" aria-label={t(props.locale, "Migration run")}>
@@ -852,12 +885,17 @@ function MigrationExecutionPanel(props: {
         )}
       </header>
       {props.activeTask === undefined ? null : (
-        <section className="migration-run-status" aria-label={t(props.locale, "Migration status")}>
+        <section
+          className="migration-run-status"
+          aria-label={t(props.locale, "Migration status")}
+          aria-live="polite"
+          role="status"
+        >
           <h3>{t(props.locale, "Migration status")}</h3>
           <p className="task-status-summary">
             <span>
               {t(props.locale, "Status: {status}", {
-                status: phaseLabel(props.locale, props.activeTask.phase),
+                status: migrationTaskStatusLabel(props.locale, props.activeTask),
               })}
             </span>
             {props.activeTask.progress === undefined ? null : (
@@ -867,12 +905,24 @@ function MigrationExecutionPanel(props: {
           {props.activeTask.message === undefined ? null : (
             <p>{migrationTaskMessage(props.locale, props.activeTask)}</p>
           )}
-          {props.activeTask.recoveryLock ? (
-            <div className="recovery-lock">
-              <p>{t(props.locale, "Recovery lock active. Resolve it before retrying.")}</p>
-            </div>
-          ) : null}
         </section>
+      )}
+      {props.recoveryLock === undefined && props.activeTask?.recoveryLock !== true ? null : (
+        <div className="recovery-lock" role="alert">
+          <p>{t(props.locale, "Recovery lock active. Resolve it before retrying.")}</p>
+          {props.recoveryLock?.deploymentId === undefined ||
+          props.onResolveRecovery === undefined ? null : (
+            <button
+              type="button"
+              disabled={
+                props.activeTask?.status === "running" && props.activeTask.phase !== "completed"
+              }
+              onClick={props.onResolveRecovery}
+            >
+              {t(props.locale, "Roll back failed deployment")}
+            </button>
+          )}
+        </div>
       )}
       {props.preview === undefined ? null : (
         <section
@@ -1029,6 +1079,25 @@ function phaseLabel(
       return t(locale, "Rolling back");
     case "completed":
       return t(locale, "Completed");
+  }
+}
+
+function migrationTaskStatusLabel(
+  locale: DesktopLocale,
+  task: NonNullable<AppState["activeTask"]>,
+): string {
+  if (task.status === "running") return phaseLabel(locale, task.phase);
+  switch (task.status) {
+    case "succeeded":
+      return t(locale, "Succeeded");
+    case "partially_succeeded":
+      return t(locale, "Partially succeeded");
+    case "cancelled":
+      return t(locale, "Cancelled");
+    case "failed":
+      return t(locale, "Failed");
+    case "rolled_back":
+      return t(locale, "Rolled back");
   }
 }
 
@@ -1217,6 +1286,37 @@ function resourceTypePriority(resourceType: string): number {
     default:
       return 10;
   }
+}
+
+function migrationTypeTabId(resourceType: string): string {
+  return `migration-tab-${encodeURIComponent(resourceType)}`;
+}
+
+function migrationTypePanelId(resourceType: string): string {
+  return `migration-panel-${encodeURIComponent(resourceType)}`;
+}
+
+function moveMigrationTypeTab(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  groups: readonly MigrationAssetGroup[],
+  currentResourceType: string,
+  onSelect: (resourceType: string) => void,
+): void {
+  const currentIndex = groups.findIndex((group) => group.resourceType === currentResourceType);
+  if (currentIndex < 0 || groups.length === 0) return;
+  let nextIndex: number | undefined;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = groups.length - 1;
+  else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (currentIndex + 1) % groups.length;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex = (currentIndex - 1 + groups.length) % groups.length;
+  }
+  const resourceType = nextIndex === undefined ? undefined : groups[nextIndex]?.resourceType;
+  if (resourceType === undefined) return;
+  event.preventDefault();
+  onSelect(resourceType);
+  document.getElementById(migrationTypeTabId(resourceType))?.focus();
 }
 
 function differenceCountForGroup(state: AppState, group: MigrationAssetGroup): number {

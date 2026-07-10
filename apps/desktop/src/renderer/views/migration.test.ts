@@ -7,6 +7,41 @@ import { initialState, type AppState } from "../model.js";
 import { MigrationView } from "./migration.js";
 
 describe("MigrationView", () => {
+  it("shows and disables the pending preview action", () => {
+    const html = renderMigration(
+      {
+        migration: {
+          ...initialState.migration,
+          sourceProjectRoot: "/workspace/source",
+          sourceAssetIds: [AssetIdSchema.parse("asset-source")],
+          targetScopeId: "/workspace/target",
+        },
+        migrationSourceAssets: [assetSummaryFixture("asset-source", "rule:AGENTS")],
+      },
+      { previewPending: true },
+    );
+
+    expect(html).toContain("Creating preview</button>");
+    expect(html).toContain('disabled=""');
+  });
+
+  it("keeps a recovery action visible after another task replaces active status", () => {
+    const html = renderMigration({
+      recoveryLock: { deploymentId: "deployment-record:failed-write" },
+      activeTask: {
+        taskId: "task:scan:later",
+        taskKind: "scan",
+        phase: "reading",
+        status: "running",
+        recoveryLock: false,
+      },
+    });
+
+    expect(html).toContain('class="recovery-lock"');
+    expect(html).toContain("Recovery lock active. Resolve it before retrying.");
+    expect(html).toContain(">Roll back failed deployment</button>");
+  });
+
   it("keeps resource type labels consistent with English in Simplified Chinese", () => {
     const html = renderMigration({
       settings: {
@@ -60,11 +95,32 @@ describe("MigrationView", () => {
     expect(html).not.toContain("Cannot migrate duplicate source assets with the same name");
   });
 
+  it("shows disabled migration sources without allowing selection", () => {
+    const html = renderMigration({
+      migration: {
+        ...initialState.migration,
+        sourceProjectRoot: "/workspace/source",
+        targetScopeId: "/workspace/target",
+      },
+      migrationSourceAssets: [
+        assetSummaryFixture("asset-disabled", "rule:disabled", { status: "disabled" }),
+      ],
+    });
+
+    expect(html).toContain('class="asset-option is-disabled"');
+    expect(html).toContain('type="checkbox" disabled=""');
+    expect(html).toContain("rule:disabled · Disabled");
+  });
+
   it("highlights refreshed source and target list differences before preview", () => {
     const html = renderMigration({
       migration: {
         ...initialState.migration,
         sourceProjectRoot: "/workspace/source",
+        sourceAssetIds: [
+          AssetIdSchema.parse("asset-source-shared"),
+          AssetIdSchema.parse("asset-source-new"),
+        ],
         targetScopeId: "/workspace/target",
       },
       migrationSourceAssets: [
@@ -260,10 +316,16 @@ describe("MigrationView", () => {
   });
 });
 
-function renderMigration(statePatch: Partial<AppState>): string {
+function renderMigration(
+  statePatch: Partial<AppState>,
+  propsPatch: Pick<Parameters<typeof MigrationView>[0], "previewPending"> = {},
+): string {
   return renderToStaticMarkup(
     createElement(MigrationView, {
       state: { ...initialState, ...statePatch },
+      ...(propsPatch.previewPending === undefined
+        ? {}
+        : { previewPending: propsPatch.previewPending }),
       onPreview: vi.fn(),
       onToggleSource: vi.fn(),
       onTargetTool: vi.fn(),
@@ -271,6 +333,7 @@ function renderMigration(statePatch: Partial<AppState>): string {
       onConfirmMigration: vi.fn(),
       onConfirmRequirement: vi.fn(),
       onExecuteMigration: vi.fn(),
+      onResolveRecovery: vi.fn(),
     }),
   );
 }
@@ -279,7 +342,7 @@ function assetSummaryFixture(
   id: string,
   logicalKey: string,
   overrides: Partial<
-    Pick<AppState["assets"][number], "contentHash" | "resourceType" | "toolKey">
+    Pick<AppState["assets"][number], "contentHash" | "resourceType" | "status" | "toolKey">
   > = {},
 ): AppState["assets"][number] {
   return {
@@ -297,7 +360,7 @@ function assetSummaryFixture(
     },
     loadState: "loaded",
     contentHash: overrides.contentHash ?? ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-    status: "enabled",
+    status: overrides.status ?? "enabled",
     diagnosticCounts: { info: 0, warning: 0, error: 0 },
   };
 }

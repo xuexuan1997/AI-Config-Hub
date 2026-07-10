@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { opendir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AdapterDiscoveryLimitError } from "@ai-config-hub/adapters";
 import type {
   AdapterFileSnapshot,
   AdapterReadApi,
@@ -31,12 +32,31 @@ export interface NodeFileAccessOptions {
   readonly allowedRoots: readonly AbsolutePath[];
   readonly platform?: NodeJS.Platform;
   readonly beforeFinalStat?: () => Promise<void>;
+  readonly maxDirectoryEntries?: number;
+  readonly maxSnapshotBytes?: number;
+  readonly readFile?: (path: AbsolutePath) => Promise<Buffer>;
 }
 
 export interface NodeFileAccess {
   readonly read: AdapterReadApi;
   readonly snapshots: FileSnapshotPort;
   readonly pathPolicy: NodePathPolicy;
+}
+
+export const MAX_DIRECTORY_LIST_ENTRIES = 10_000;
+export const MAX_SOURCE_SNAPSHOT_BYTES = 5 * 1024 * 1024;
+
+export class FileSnapshotLimitError extends Error {
+  readonly code = "FILE_SNAPSHOT_TOO_LARGE";
+
+  constructor(
+    readonly path: AbsolutePath,
+    readonly limit: number,
+    readonly observed: number,
+  ) {
+    super(`File snapshot exceeds the ${String(limit)} byte limit: ${path}`);
+    this.name = "FileSnapshotLimitError";
+  }
 }
 
 function identity(value: BigIntStats): FileIdentity {
@@ -70,6 +90,15 @@ export async function createNodeFileAccess(
   options: NodeFileAccessOptions,
 ): Promise<NodeFileAccess> {
   const pathPolicy = await NodePathPolicy.create(options);
+  const maxDirectoryEntries = Math.max(
+    1,
+    Math.min(MAX_DIRECTORY_LIST_ENTRIES, options.maxDirectoryEntries ?? MAX_DIRECTORY_LIST_ENTRIES),
+  );
+  const maxSnapshotBytes = Math.max(
+    1,
+    Math.min(MAX_SOURCE_SNAPSHOT_BYTES, options.maxSnapshotBytes ?? MAX_SOURCE_SNAPSHOT_BYTES),
+  );
+  const readBytes = options.readFile ?? ((path: AbsolutePath) => readFile(path));
 
   async function canonical(
     path: AbsolutePath,
@@ -103,10 +132,16 @@ export async function createNodeFileAccess(
       }
       throw error;
     }
+    if (before.isFile() && before.size > BigInt(maxSnapshotBytes)) {
+      throw new FileSnapshotLimitError(canonicalPath, maxSnapshotBytes, Number(before.size));
+    }
 
     let bytes: Buffer;
     try {
-      bytes = await readFile(canonicalPath);
+      bytes = await readBytes(canonicalPath);
+      if (bytes.byteLength > maxSnapshotBytes) {
+        throw new FileSnapshotLimitError(canonicalPath, maxSnapshotBytes, bytes.byteLength);
+      }
       await options.beforeFinalStat?.();
       const after = await stat(canonicalPath, { bigint: true });
       if (!before.isFile() || !after.isFile() || !sameIdentity(identity(before), identity(after))) {
@@ -196,14 +231,22 @@ export async function createNodeFileAccess(
     },
     async list(path: AbsolutePath): Promise<readonly AbsolutePath[]> {
       const directory = await canonical(path);
-      const children = await readdir(directory);
-      return Object.freeze(
-        await Promise.all(
-          children
-            .sort()
-            .map(async (child) => canonical(AbsolutePathSchema.parse(join(directory, child)))),
-        ),
-      );
+      const children: string[] = [];
+      for await (const child of await opendir(directory)) {
+        if (children.length === maxDirectoryEntries) {
+          throw new AdapterDiscoveryLimitError(
+            directory,
+            maxDirectoryEntries,
+            maxDirectoryEntries + 1,
+          );
+        }
+        children.push(child.name);
+      }
+      const canonicalChildren: AbsolutePath[] = [];
+      for (const child of children.sort()) {
+        canonicalChildren.push(await canonical(AbsolutePathSchema.parse(join(directory, child))));
+      }
+      return Object.freeze(canonicalChildren);
     },
     async readText(path: AbsolutePath): Promise<string> {
       const result = await snapshotFile(path);

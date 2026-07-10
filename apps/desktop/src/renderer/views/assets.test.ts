@@ -111,6 +111,20 @@ describe("AssetsView", () => {
     expect(html).not.toContain("/workspace/.codex");
   });
 
+  it("selects the first tool that actually has assets", () => {
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture("asset-codex", "rule:AGENTS", {
+          toolKey: "codex",
+          resourceType: "rule",
+        }),
+      ],
+    });
+
+    expect(html).toContain("rule:AGENTS");
+    expect(html).not.toContain("No assets match the selected tool.");
+  });
+
   it("summarizes multi-file skill rows by package folder", () => {
     const html = renderAssets({
       assets: [
@@ -282,22 +296,131 @@ describe("AssetsView", () => {
     expect(html).toContain("No, covered by mcp:docs");
   });
 
-  it("does not render effective configuration JSON in the asset detail dialog", () => {
+  it("offers an explicit effective configuration action and shows the unloaded state", () => {
+    const html = renderAssets({
+      assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+    });
+
+    expect(html).toContain('<button type="button">Load effective configuration</button>');
+    expect(html).toContain('class="asset-effective-explanation"');
+    expect(html).toContain('aria-label="Effective configuration"');
+    expect(html).toContain("<h3>Effective configuration</h3>");
+    expect(html).toContain('class="asset-effective-empty">Not loaded</p>');
+    expect(html).not.toContain("<h3>Contributors</h3>");
+  });
+
+  it("renders every effective configuration explanation section with readable labels", () => {
+    const html = renderAssets({
+      assets: [
+        assetSummaryFixture("asset-1", "rule:AGENTS"),
+        assetSummaryFixture("asset-2", "rule:.cursor/rules/agents.mdc"),
+        assetSummaryFixture("asset-3", "rule:CLAUDE.md"),
+      ],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      effective: {
+        effective: { rules: ["Use tests."] },
+        contributors: [
+          {
+            assetId: AssetIdSchema.parse("asset-1"),
+            action: "inherit",
+            reasonCode: "highest_priority_scope",
+          },
+        ],
+        ignored: [
+          {
+            assetId: AssetIdSchema.parse("asset-2"),
+            reasonCode: "target_conflict",
+            coveredByAssetId: AssetIdSchema.parse("asset-3"),
+          },
+        ],
+        diagnostics: [
+          {
+            id: DiagnosticIdSchema.parse("effective-diagnostic"),
+            code: "PARTIAL_CONVERSION",
+            severity: "warning",
+            assetId: AssetIdSchema.parse("asset-1"),
+            message: "One effective field cannot be represented by the target tool.",
+            suggestedAction: "Review the generated output before deployment.",
+            blocking: false,
+          },
+        ],
+        snapshotRevision: "revision-1",
+      },
+    });
+
+    expect(html).toContain("<h3>Effective configuration</h3>");
+    expect(html).toContain("Use tests.");
+    expect(html).toContain("<h3>Contributors</h3>");
+    expect(html).toContain("<strong>rule:AGENTS</strong>");
+    expect(html).toContain("Inherited from highest priority scope.");
+    expect(html).toContain("<h3>Ignored assets</h3>");
+    expect(html).toContain("<strong>rule:.cursor/rules/agents.mdc</strong>");
+    expect(html).toContain("Ignored because target conflict.");
+    expect(html).toContain("Covered by rule:CLAUDE.md.");
+    expect(html).toContain("<h3>Effective diagnostics</h3>");
+    expect(html).toContain("One effective field cannot be represented by the target tool.");
+    expect(html).toContain("<h3>Snapshot revision</h3>");
+    expect(html).toContain("<code>revision-1</code>");
+    expect(html).not.toContain("asset-1 inherit highest_priority_scope");
+    expect(html).not.toContain("asset-2 target_conflict");
+  });
+
+  it("renders empty states for a loaded explanation without effective entries", () => {
     const html = renderAssets({
       assets: [assetSummaryFixture("asset-1", "rule:AGENTS")],
       assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
       effective: {
-        effective: { rules: ["Use tests."] },
+        effective: {},
         contributors: [],
         ignored: [],
+        diagnostics: [],
+        snapshotRevision: "revision-empty",
+      },
+    });
+
+    expect(html).toContain("No effective configuration values.");
+    expect(html).toContain("No contributing assets.");
+    expect(html).toContain("No ignored assets.");
+    expect(html).toContain("No effective diagnostics.");
+    expect(html).toContain("<code>revision-empty</code>");
+    expect(html).not.toContain('class="asset-effective-empty">Not loaded</p>');
+  });
+
+  it("localizes stable effective-resolution reason codes", () => {
+    const html = renderAssets({
+      settings: {
+        ...initialState.settings,
+        values: { ...initialState.settings.values, language: "zh-CN" },
+      },
+      assets: [
+        assetSummaryFixture("asset-1", "rule:AGENTS"),
+        assetSummaryFixture("asset-2", "rule:disabled"),
+      ],
+      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      effective: {
+        effective: { rules: ["Use tests."] },
+        contributors: [
+          {
+            assetId: AssetIdSchema.parse("asset-1"),
+            action: "inherit",
+            reasonCode: "TARGET_SCOPE_APPLIES",
+          },
+        ],
+        ignored: [
+          {
+            assetId: AssetIdSchema.parse("asset-2"),
+            reasonCode: "ASSET_DISABLED",
+          },
+        ],
         diagnostics: [],
         snapshotRevision: "revision-1",
       },
     });
 
-    expect(html).not.toContain("Load effective configuration");
-    expect(html).not.toContain("Effective configuration");
-    expect(html).not.toContain("Use tests.");
+    expect(html).toContain("继承自适用于所选目标范围。");
+    expect(html).toContain("由于资产已禁用而忽略。");
+    expect(html).not.toContain("TARGET_SCOPE_APPLIES");
   });
 
   it("renders disablement options as an accessible radio group defaulting to the recommended method", () => {
@@ -359,9 +482,10 @@ describe("AssetsView", () => {
   });
 
   it("shows asset status operation messages inside the open detail dialog", () => {
+    const detail = assetDetailFixture("asset-1", "rule:AGENTS");
     const html = renderAssets({
       assets: [assetSummaryFixture("asset-1", "rule:AGENTS", { status: "disabled" })],
-      assetDetail: assetDetailFixture("asset-1", "rule:AGENTS"),
+      assetDetail: { ...detail, asset: { ...detail.asset, status: "disabled" } },
       message: "Cannot restore disabled asset because a file already exists at the original path",
     });
 
@@ -369,6 +493,7 @@ describe("AssetsView", () => {
     expect(html).toContain(
       "Cannot restore disabled asset because a file already exists at the original path",
     );
+    expect(html).toContain('type="button" disabled="">Load effective configuration</button>');
   });
 
   it("clears inspected asset detail and effective configuration when inspect closes", () => {

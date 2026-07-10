@@ -25,6 +25,7 @@ import {
   previewRequestForState,
   reducer,
   refreshAssets,
+  refreshDiagnostics,
   settingsUpdateRequestForState,
   settingsClearLocalDataRequestForState,
   taskActionForTaskEvent,
@@ -218,9 +219,155 @@ describe("renderer project selection state", () => {
       "project:93fabdbc021c4fc11c24322a46ec5b7995a259a5fba13c71ed02faf3627ec9eb",
     );
     expect(invoke).toHaveBeenCalledWith("assets.list", {
-      limit: 50,
+      limit: 200,
       projectId: await projectIdForRoot("/workspace/source"),
     });
+  });
+
+  it("loads every asset and diagnostic page without silently truncating at the first page", async () => {
+    const firstAsset = migrationAssetFixture("asset-page-1", "rule:first");
+    const secondAsset = migrationAssetFixture("asset-page-2", "rule:second");
+    const firstDiagnostic = {
+      id: DiagnosticIdSchema.parse("diagnostic-page-1"),
+      code: "FIRST_PAGE",
+      severity: "warning" as const,
+      message: "First page warning",
+      suggestedAction: "Review it",
+      blocking: false,
+    };
+    const secondDiagnostic = {
+      id: DiagnosticIdSchema.parse("diagnostic-page-2"),
+      code: "SECOND_PAGE",
+      severity: "error" as const,
+      message: "Second page error",
+      suggestedAction: "Fix it",
+      blocking: true,
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [firstAsset],
+          nextCursor: "asset-page-1",
+          snapshotRevision: "revision-1",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [secondAsset],
+          nextCursor: null,
+          snapshotRevision: "revision-1",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [firstDiagnostic],
+          nextCursor: "diagnostic-page-1",
+          countsBySeverity: { info: 0, warning: 1, error: 0 },
+          snapshotRevision: "revision-1",
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [secondDiagnostic],
+          nextCursor: null,
+          countsBySeverity: { info: 0, warning: 0, error: 1 },
+          snapshotRevision: "revision-1",
+        },
+      });
+    const api = { invoke } as unknown as DesktopApi;
+
+    await expect(refreshAssets(api)).resolves.toEqual([firstAsset, secondAsset]);
+    await expect(refreshDiagnostics(api)).resolves.toEqual({
+      diagnostics: [firstDiagnostic, secondDiagnostic],
+      diagnosticCounts: { info: 0, warning: 1, error: 1 },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "assets.list", {
+      limit: 200,
+      cursor: "asset-page-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(4, "diagnostics.list", {
+      limit: 200,
+      cursor: "diagnostic-page-1",
+    });
+  });
+
+  it("restarts pagination when the index revision changes between pages", async () => {
+    const staleAsset = migrationAssetFixture("asset-stale", "rule:stale");
+    const firstAsset = migrationAssetFixture("asset-current-1", "rule:current-1");
+    const secondAsset = migrationAssetFixture("asset-current-2", "rule:current-2");
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [staleAsset],
+          nextCursor: "asset-stale",
+          snapshotRevision: "revision-1",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [],
+          nextCursor: null,
+          snapshotRevision: "revision-2",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [firstAsset],
+          nextCursor: "asset-current-1",
+          snapshotRevision: "revision-3",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [secondAsset],
+          nextCursor: null,
+          snapshotRevision: "revision-3",
+          stale: false,
+        },
+      });
+
+    await expect(refreshAssets({ invoke } as unknown as DesktopApi)).resolves.toEqual([
+      firstAsset,
+      secondAsset,
+    ]);
+    expect(invoke).toHaveBeenCalledTimes(4);
+  });
+
+  it("surfaces a later page failure instead of replacing current data with an empty result", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          items: [migrationAssetFixture("asset-page-1", "rule:first")],
+          nextCursor: "asset-page-1",
+          snapshotRevision: "revision-1",
+          stale: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { message: "Temporary index read failure" },
+      });
+
+    await expect(refreshAssets({ invoke } as unknown as DesktopApi)).rejects.toThrow(
+      "Temporary index read failure",
+    );
   });
 
   it("turns missing file chooser errors into a retryable picker message", () => {
@@ -249,6 +396,40 @@ describe("renderer project selection state", () => {
 
     expect(selected.projectRoot).toBe("/home/user/workspace");
     expect(selected.message).toBeUndefined();
+  });
+
+  it("clears the previous review project data as soon as a different project is selected", () => {
+    const previous: AppState = {
+      ...initialState,
+      projectRoot: "/workspace/a",
+      scanStatus: "complete",
+      scanScope: "asset-review",
+      assets: [migrationAssetFixture("asset-project-a", "rule:project-a")],
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-project-a"),
+          code: "PROJECT_A_WARNING",
+          severity: "warning",
+          message: "Old project warning",
+          suggestedAction: "Review it",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+      message: "Scan complete: 1 succeeded.",
+    };
+
+    const selected = reducer(previous, { type: "project", root: "/workspace/b" });
+
+    expect(selected).toMatchObject({
+      projectRoot: "/workspace/b",
+      scanStatus: "idle",
+      assets: [],
+      diagnostics: [],
+      diagnosticCounts: { info: 0, warning: 0, error: 0 },
+    });
+    expect(selected.message).toBeUndefined();
+    expect(selected.scanScope).toBeUndefined();
   });
 
   it("keeps asset review project selection out of migration previews", () => {
@@ -342,6 +523,26 @@ describe("renderer project selection state", () => {
     expect(swapped.preview).toBeUndefined();
   });
 
+  it("retires a preview and every confirmation immediately", () => {
+    const withPreview = {
+      ...initialState,
+      preview: migrationPreviewFixture({
+        planId: DeploymentPlanIdSchema.parse("deployment-plan:watcher-invalidated"),
+        planHash: ContentHashSchema.parse(`sha256:${"b".repeat(64)}`),
+        sourceHashes: {},
+        compatibility: "full",
+      }),
+      deploymentConfirmed: true,
+      deploymentConfirmationGrants: ["overwrite" as const],
+    };
+
+    const invalidated = reducer(withPreview, { type: "previewInvalidated" });
+
+    expect(invalidated.preview).toBeUndefined();
+    expect(invalidated.deploymentConfirmed).toBe(false);
+    expect(invalidated.deploymentConfirmationGrants).toEqual([]);
+  });
+
   it("builds migration previews for an explicit target project", () => {
     const withSourceProject = reducer(initialState, {
       type: "migrationSourceProject",
@@ -368,6 +569,33 @@ describe("renderer project selection state", () => {
     });
     expect(switchedReviewProject.migration.sourceProjectRoot).toBe("/home/user/source-workspace");
     expect(switchedReviewProject.migration.targetScopeId).toBe("/home/user/target-workspace");
+  });
+
+  it("clears stale scan task and error state when a project scan is retried", () => {
+    const stale: AppState = {
+      ...initialState,
+      message: "Previous source scan failed.",
+      activeTask: {
+        taskId: "task:scan:old-source",
+        taskKind: "scan",
+        scanScope: "migration-source",
+        phase: "completed",
+        status: "failed",
+        recoveryLock: false,
+      },
+    };
+    const selected = reducer(stale, {
+      type: "migrationSourceProject",
+      sourceProjectRoot: "/workspace/new-source",
+    });
+    const retried = reducer(selected, {
+      type: "scan",
+      status: "queued",
+      scanScope: "migration-source",
+    });
+
+    expect(selected.activeTask).toBeUndefined();
+    expect(retried.message).toBeUndefined();
   });
 
   it("blocks migration previews when selected source assets have duplicate names", () => {
@@ -398,6 +626,45 @@ describe("renderer project selection state", () => {
       "Cannot migrate duplicate source assets with the same name: AGENTS.md.",
     );
     expect(previewRequestForState(withDuplicateSelected)).toBeUndefined();
+  });
+
+  it("does not select a disabled migration source", () => {
+    const disabledAsset = migrationAssetFixture("asset-disabled", "AGENTS.md", {
+      status: "disabled",
+    });
+    const withAssets: AppState = {
+      ...initialState,
+      migrationSourceAssets: [disabledAsset],
+    };
+
+    const selected = reducer(withAssets, {
+      type: "migrationSource",
+      assetId: disabledAsset.id,
+      selected: true,
+    });
+
+    expect(selected).toBe(withAssets);
+    expect(selected.migration.sourceAssetIds).toEqual([]);
+  });
+
+  it("blocks preview and repeated execution while a migration task is running", () => {
+    const running: AppState = {
+      ...initialState,
+      activeTask: {
+        taskId: "task:deployment:running",
+        taskKind: "deployment",
+        phase: "writing",
+        status: "running",
+        recoveryLock: false,
+      },
+    };
+
+    expect(migrationPreviewBlockersForState(running)).toContain(
+      "Wait for the active task to finish before creating a migration preview.",
+    );
+    expect(deploymentBlockersForState(running)).toContain(
+      "Wait for the active migration task to finish.",
+    );
   });
 
   it("builds migration previews from explicit migration selections", () => {
@@ -636,7 +903,17 @@ describe("renderer project selection state", () => {
       },
     });
 
-    const disabled = reducer(withDetail, {
+    const withEffective = reducer(withDetail, {
+      type: "effective",
+      effective: {
+        effective: { rules: ["Use tests."] },
+        contributors: [],
+        ignored: [],
+        diagnostics: [],
+        snapshotRevision: "revision-before-disable",
+      },
+    });
+    const disabled = reducer(withEffective, {
       type: "assetStatus",
       assetId: AssetIdSchema.parse("asset-1"),
       status: "disabled",
@@ -650,12 +927,13 @@ describe("renderer project selection state", () => {
     expect(disabled.assets[0]?.status).toBe("disabled");
     expect(disabled.migrationSourceAssets[0]?.status).toBe("disabled");
     expect(disabled.assetDetail?.asset.status).toBe("disabled");
-    expect(disabled.migration.sourceAssetIds).toEqual(["asset-1"]);
-    expect(disabled.preview).toBe(withPreview.preview);
+    expect(disabled.migration.sourceAssetIds).toEqual([]);
+    expect(disabled.preview).toBeUndefined();
+    expect(disabled.effective).toBeUndefined();
     expect(enabled.assets[0]?.status).toBe("enabled");
     expect(enabled.migrationSourceAssets[0]?.status).toBe("enabled");
     expect(enabled.assetDetail?.asset.status).toBe("enabled");
-    expect(enabled.migration.sourceAssetIds).toEqual(["asset-1"]);
+    expect(enabled.migration.sourceAssetIds).toEqual([]);
   });
 
   it("maps task completion events onto scan status without global messages", () => {
@@ -678,6 +956,48 @@ describe("renderer project selection state", () => {
     ).toEqual({
       type: "scan",
       status: "complete",
+    });
+    expect(
+      scanActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:replayed"),
+        sequence: null,
+        emittedAt: "2026-06-28T08:00:01.000Z",
+        type: "snapshot",
+        payload: {
+          taskKind: "scan",
+          phase: "completed",
+          status: "failed",
+          progress: { phase: "completed", completed: 1, total: 1, unit: "items" },
+          lastSequence: 205,
+          cancellable: false,
+          systemRecoveryLock: false,
+        },
+      }),
+    ).toEqual({ type: "scan", status: "error" });
+  });
+
+  it("marks scan cancellation requests as no longer cancellable", () => {
+    const action = taskActionForTaskEvent(
+      {
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:scan:cancel"),
+        sequence: 3,
+        emittedAt: "2026-06-28T08:00:02.000Z",
+        type: "cancel.requested",
+        payload: { reason: "user", effectiveAfterPhase: "reading" },
+      },
+      "asset-review",
+    );
+
+    expect(action).toMatchObject({
+      taskId: "task:scan:cancel",
+      taskKind: "scan",
+      scanScope: "asset-review",
+      cancellable: false,
+      message: "Scan cancellation requested.",
     });
   });
 
@@ -728,6 +1048,43 @@ describe("renderer project selection state", () => {
     expect(accepted.activeTask?.scanScope).toBe("migration-target");
     expect(progressed.activeTask?.scanScope).toBe("migration-target");
     expect(progressed.activeTask?.message).toBe("scan reading: 3/8 files");
+  });
+
+  it("hydrates the matching route and project selection for a restored scan", () => {
+    const review = reducer(initialState, {
+      type: "runtimeScanRestored",
+      scanScope: "asset-review",
+      projectRoot: "/workspace/review",
+    });
+    const source = reducer(initialState, {
+      type: "runtimeScanRestored",
+      scanScope: "migration-source",
+      projectRoot: "/workspace/source",
+    });
+    const target = reducer(initialState, {
+      type: "runtimeScanRestored",
+      scanScope: "migration-target",
+      projectRoot: "/workspace/target",
+    });
+
+    expect(review).toMatchObject({
+      route: "assets",
+      projectRoot: "/workspace/review",
+      scanStatus: "queued",
+      scanScope: "asset-review",
+    });
+    expect(source).toMatchObject({
+      route: "migration",
+      scanStatus: "queued",
+      scanScope: "migration-source",
+      migration: { sourceProjectRoot: "/workspace/source" },
+    });
+    expect(target).toMatchObject({
+      route: "migration",
+      scanStatus: "queued",
+      scanScope: "migration-target",
+      migration: { targetScopeId: "/workspace/target" },
+    });
   });
 
   it("clears transient messages when navigating to another workspace route", () => {
@@ -862,6 +1219,12 @@ describe("renderer project selection state", () => {
       expectedRevision: 3,
       patch: { language: "en" },
     });
+    const saving = reducer(loaded, {
+      type: "settingsSaving",
+      patch: { language: "en" },
+    });
+    expect(saving.settings.status).toBe("saving");
+    expect(saving.settings.values.language).toBe("en");
     expect(saved.settings).toMatchObject({
       values: { theme: "light", language: "en" },
       revision: 4,
@@ -928,6 +1291,14 @@ describe("renderer project selection state", () => {
       }),
       deploymentConfirmed: true,
       deploymentConfirmationGrants: ["overwrite"],
+      activeTask: {
+        taskId: "task:scan:cleanup",
+        taskKind: "scan",
+        scanScope: "asset-review",
+        phase: "parsing",
+        status: "running",
+        recoveryLock: false,
+      },
     };
 
     const cleared = reducer(withData, {
@@ -962,11 +1333,58 @@ describe("renderer project selection state", () => {
     expect(cleared.diagnostics).toEqual([]);
     expect(cleared.diagnosticCounts).toEqual({ info: 0, warning: 0, error: 0 });
     expect(cleared.preview).toBeUndefined();
+    expect(cleared.activeTask).toBeUndefined();
     expect(cleared.deploymentConfirmed).toBe(false);
     expect(cleared.settings.values).toEqual({ theme: "system", language: "system" });
     expect(cleared.settings.revision).toBe(0);
     expect(cleared.settings.clearLocalData.status).toBe("cleared");
     expect(cleared.settings.clearLocalData.confirmed).toBe(false);
+  });
+
+  it("retires a stale migration preview and deployment task after deployment history cleanup", () => {
+    const withDeploymentState: AppState = {
+      ...initialState,
+      preview: migrationPreviewFixture(),
+      deploymentConfirmed: true,
+      deploymentConfirmationGrants: ["overwrite"],
+      activeTask: {
+        taskId: TaskIdSchema.parse("task:deployment:cleanup"),
+        taskKind: "deployment",
+        phase: "completed",
+        status: "succeeded",
+        recoveryLock: false,
+      },
+    };
+
+    const cleared = reducer(withDeploymentState, {
+      type: "settingsClearLocalDataCompleted",
+      result: {
+        clearedAt: "2026-07-04T08:00:00.000Z",
+        categories: ["deployment_history"],
+        counts: {
+          scanRuns: 0,
+          projects: 0,
+          scopes: 0,
+          assets: 0,
+          diagnostics: 0,
+          deploymentRecords: 1,
+          deploymentOperations: 1,
+          settings: 0,
+          localHistoryDirectories: 1,
+        },
+        retained: {
+          databaseBackups: true,
+          deploymentBackups: true,
+          disabledAssets: true,
+        },
+        requiresRestart: false,
+      },
+    });
+
+    expect(cleared.preview).toBeUndefined();
+    expect(cleared.deploymentConfirmed).toBe(false);
+    expect(cleared.deploymentConfirmationGrants).toEqual([]);
+    expect(cleared.activeTask).toBeUndefined();
   });
 
   it("maps deployment task events to active task progress and recovery state", () => {
@@ -1088,6 +1506,149 @@ describe("renderer project selection state", () => {
       progress: { phase: "verifying", completed: 1, total: 2, unit: "operations" },
       recoveryLock: false,
     });
+
+    const failedWithoutLock = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:preflight-replay"),
+        sequence: null,
+        emittedAt: "2026-06-28T08:00:04.000Z",
+        type: "snapshot",
+        payload: {
+          taskKind: "deployment",
+          phase: "completed",
+          status: "failed",
+          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+          lastSequence: 220,
+          cancellable: false,
+          systemRecoveryLock: false,
+        },
+      })!,
+    });
+    expect(failedWithoutLock.activeTask?.recoveryLock).toBe(false);
+  });
+
+  it("keeps a recovery lock across later scans until rollback succeeds", () => {
+    const locked = reducer(initialState, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:failed-write"),
+        sequence: 8,
+        emittedAt: "2026-06-28T08:00:05.000Z",
+        type: "completed",
+        payload: {
+          status: "failed",
+          succeededCount: 0,
+          failedCount: 1,
+          skippedCount: 0,
+          resultRef: "deployment-record:failed-write",
+          systemRecoveryLock: true,
+        },
+      })!,
+    });
+    const scanning = reducer(locked, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent(
+        {
+          apiVersion: 1,
+          eventVersion: 1,
+          taskId: TaskIdSchema.parse("task:scan:after-failure"),
+          sequence: 1,
+          emittedAt: "2026-06-28T08:00:06.000Z",
+          type: "accepted",
+          payload: {
+            taskKind: "scan",
+            phase: "queued",
+            acceptedAt: "2026-06-28T08:00:06.000Z",
+          },
+        },
+        "asset-review",
+      )!,
+    });
+    const failedRollback = reducer(scanning, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:rollback:failed-recovery"),
+        sequence: 8,
+        emittedAt: "2026-06-28T08:00:06.500Z",
+        type: "completed",
+        payload: {
+          status: "failed",
+          succeededCount: 0,
+          failedCount: 1,
+          skippedCount: 0,
+          resultRef: "rollback-record:failed-recovery",
+          systemRecoveryLock: true,
+        },
+      })!,
+    });
+    const recovered = reducer(failedRollback, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:rollback:recovery"),
+        sequence: 8,
+        emittedAt: "2026-06-28T08:00:07.000Z",
+        type: "completed",
+        payload: {
+          status: "succeeded",
+          succeededCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          resultRef: "rollback-record:recovery",
+          systemRecoveryLock: false,
+        },
+      })!,
+    });
+
+    expect(locked.recoveryLock).toEqual({ deploymentId: "deployment-record:failed-write" });
+    expect(scanning.recoveryLock).toEqual({ deploymentId: "deployment-record:failed-write" });
+    expect(failedRollback.recoveryLock).toEqual({
+      deploymentId: "deployment-record:failed-write",
+    });
+    expect(deploymentBlockersForState(scanning)).toContain(
+      "Resolve the active recovery lock before migrating.",
+    );
+    expect(recovered.recoveryLock).toBeUndefined();
+  });
+
+  it("retires a consumed preview after a failed deployment preflight", () => {
+    const planned: AppState = {
+      ...initialState,
+      preview: migrationPreviewFixture(),
+      deploymentConfirmed: true,
+      deploymentConfirmationGrants: ["overwrite"],
+    };
+    const failed = reducer(planned, {
+      type: "taskEvent",
+      action: taskActionForTaskEvent({
+        apiVersion: 1,
+        eventVersion: 1,
+        taskId: TaskIdSchema.parse("task:deployment:failed-preflight"),
+        sequence: 4,
+        emittedAt: "2026-06-28T08:00:08.000Z",
+        type: "completed",
+        payload: {
+          status: "failed",
+          succeededCount: 0,
+          failedCount: 1,
+          skippedCount: 0,
+          resultRef: "deployment-record:failed-preflight",
+          systemRecoveryLock: false,
+        },
+      })!,
+    });
+
+    expect(failed.preview).toBeUndefined();
+    expect(failed.deploymentConfirmed).toBe(false);
+    expect(failed.deploymentConfirmationGrants).toEqual([]);
   });
 
   it("stores asset details and diagnostics for the assets workspace", () => {
@@ -1171,6 +1732,58 @@ describe("renderer project selection state", () => {
     expect(withEffective.effective).toBe(effective);
   });
 
+  it("does not relabel diagnostics while asset detail scope is changing", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+        status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
+      },
+      source: assetDetailSourceFixture,
+      redactions: [],
+    };
+    const workspaceDiagnostics: AppState = {
+      ...initialState,
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-workspace"),
+          code: "WORKSPACE_WARNING",
+          severity: "warning",
+          message: "Workspace warning",
+          suggestedAction: "Review it",
+          blocking: false,
+        },
+      ],
+      diagnosticCounts: { info: 0, warning: 1, error: 0 },
+    };
+    const opened = reducer(workspaceDiagnostics, { type: "assetDetail", detail });
+    const withAssetDiagnostics = reducer(opened, {
+      type: "diagnostics",
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-asset"),
+          code: "ASSET_WARNING",
+          severity: "warning",
+          assetId: AssetIdSchema.parse("asset-1"),
+          message: "Asset warning",
+          suggestedAction: "Review it",
+          blocking: false,
+        },
+      ],
+      counts: { info: 0, warning: 1, error: 0 },
+    });
+    const closed = reducer(withAssetDiagnostics, { type: "assetDetailClosed" });
+
+    expect(opened.diagnostics).toEqual([]);
+    expect(opened.diagnosticCounts).toEqual({ info: 0, warning: 0, error: 0 });
+    expect(closed.diagnostics).toEqual([]);
+    expect(closed.diagnosticCounts).toEqual({ info: 0, warning: 0, error: 0 });
+  });
+
   it("opens source files by selected asset id only", () => {
     const detail = {
       asset: {
@@ -1251,6 +1864,41 @@ describe("renderer project selection state", () => {
     expect(switched.effective).toBeUndefined();
   });
 
+  it("drops late review results from a previously selected project", () => {
+    const current = reducer(initialState, { type: "project", root: "/workspace/b" });
+    const asset = migrationAssetFixture("asset-old", "rule:old");
+    const lateAssets = reducer(current, {
+      type: "assets",
+      projectRoot: "/workspace/a",
+      assets: [asset],
+    });
+    const lateDiagnostics = reducer(current, {
+      type: "diagnostics",
+      projectRoot: "/workspace/a",
+      diagnostics: [
+        {
+          id: DiagnosticIdSchema.parse("diagnostic-old"),
+          code: "OLD_PROJECT",
+          severity: "warning",
+          message: "Old project result",
+          suggestedAction: "Ignore it",
+          blocking: false,
+        },
+      ],
+      counts: { info: 0, warning: 1, error: 0 },
+    });
+    const lateScan = reducer(current, {
+      type: "scan",
+      status: "complete",
+      scanScope: "asset-review",
+      projectRoot: "/workspace/a",
+    });
+
+    expect(lateAssets).toBe(current);
+    expect(lateDiagnostics).toBe(current);
+    expect(lateScan).toBe(current);
+  });
+
   it("prunes stale asset details after refreshes", () => {
     const detail = {
       asset: {
@@ -1278,6 +1926,30 @@ describe("renderer project selection state", () => {
 
     expect(assetsRefreshed.assetDetail).toBeUndefined();
     expect(assetsRefreshed.effective).toBeUndefined();
+  });
+
+  it("closes inspected detail when its index snapshot refreshes", () => {
+    const detail = {
+      asset: {
+        id: AssetIdSchema.parse("asset-1"),
+        toolKey: "codex" as const,
+        resourceType: "rule" as const,
+        scopeId: ScopeIdSchema.parse("scope-1"),
+        logicalKey: "AGENTS.md",
+        status: "enabled" as const,
+        disablementOptions: disablementOptionsFixture,
+      },
+      source: assetDetailSourceFixture,
+      redactions: [],
+    };
+    const withDetail = reducer(initialState, { type: "assetDetail", detail });
+    const refreshed = reducer(withDetail, {
+      type: "assets",
+      assets: [migrationAssetFixture("asset-1", "rule:AGENTS")],
+    });
+
+    expect(refreshed.assetDetail).toBeUndefined();
+    expect(refreshed.effective).toBeUndefined();
   });
 
   it("requires explicit deployment confirmation for each fresh preview", () => {
@@ -1325,7 +1997,14 @@ describe("renderer project selection state", () => {
       ],
       expiresAt: "2026-06-28T08:10:00.000Z",
     });
-    const withPreview = reducer(initialState, { type: "preview", preview });
+    const selected: AppState = {
+      ...initialState,
+      migration: {
+        ...initialState.migration,
+        sourceAssetIds: [AssetIdSchema.parse("asset-source")],
+      },
+    };
+    const withPreview = reducer(selected, { type: "preview", preview });
     const confirmed = reducer(withPreview, { type: "deploymentConfirmation", confirmed: true });
     const granted = reducer(confirmed, {
       type: "deploymentConfirmationGrant",
@@ -1355,6 +2034,7 @@ describe("renderer project selection state", () => {
     expect(completed.preview).toBeUndefined();
     expect(completed.deploymentConfirmed).toBe(false);
     expect(completed.deploymentConfirmationGrants).toEqual([]);
+    expect(completed.migration.sourceAssetIds).toEqual([]);
     expect(completed.activeTask?.message).toBe("Deployment complete: 1 succeeded.");
     expect(deploymentBlockersForState(completed, "2026-06-28T08:00:04.000Z")).toEqual([
       "Create a migration preview before migrating.",
@@ -1674,10 +2354,50 @@ describe("renderer project selection state", () => {
     );
 
     expect(state.preview).toBeUndefined();
+    expect(state.migration.sourceAssetIds).toEqual(["asset-source-shared"]);
     expect(migrationDifferenceSummaryForState(state)).toEqual({
+      addedToTarget: 0,
+      overwrittenInTarget: 1,
+      targetOnlyKept: 1,
+      conflictsOrWarnings: 0,
+    });
+
+    const withBothSources = reducer(state, {
+      type: "migrationSource",
+      assetId: AssetIdSchema.parse("asset-source-new"),
+      selected: true,
+    });
+    expect(migrationDifferenceSummaryForState(withBothSources)).toEqual({
       addedToTarget: 1,
       overwrittenInTarget: 1,
       targetOnlyKept: 1,
+      conflictsOrWarnings: 0,
+    });
+  });
+
+  it("shows selected source assets as additions when the target project is empty", () => {
+    const withProjects = reducer(
+      reducer(initialState, {
+        type: "migrationSourceProject",
+        sourceProjectRoot: "/workspace/source",
+      }),
+      { type: "migrationTargetProject", targetScopeId: "/workspace/empty-target" },
+    );
+    const withSource = reducer(withProjects, {
+      type: "migrationSourceAssets",
+      sourceProjectRoot: "/workspace/source",
+      assets: [migrationAssetFixture("asset-source-new", "rule:new", { toolKey: "codex" })],
+    });
+    const withEmptyTarget = reducer(withSource, {
+      type: "migrationTargetAssets",
+      targetScopeId: "/workspace/empty-target",
+      assets: [],
+    });
+
+    expect(migrationDifferenceSummaryForState(withEmptyTarget)).toEqual({
+      addedToTarget: 1,
+      overwrittenInTarget: 0,
+      targetOnlyKept: 0,
       conflictsOrWarnings: 0,
     });
   });

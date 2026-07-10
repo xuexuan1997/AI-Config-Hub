@@ -778,10 +778,14 @@ pre {
 }
 
 .asset-detail-message {
+  align-items: center;
   background: var(--warning-bg);
   border: 1px solid var(--warning-border);
   border-radius: 8px;
   color: var(--warning-text);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
   margin-bottom: 1rem;
   padding: 0.75rem 0.85rem;
 }
@@ -963,6 +967,68 @@ pre {
 
 .asset-detail-diagnostics h3 {
   margin-top: 0;
+}
+
+.asset-effective-explanation {
+  border-top: 1px solid var(--panel-border);
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.asset-effective-explanation > h3,
+.asset-effective-section h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.asset-effective-empty,
+.asset-effective-section > p {
+  color: var(--muted-text);
+  margin: 0;
+}
+
+.asset-effective-section {
+  background: var(--soft-panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+}
+
+.asset-effective-section pre {
+  margin: 0;
+}
+
+.asset-effective-list {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.asset-effective-list li {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.asset-effective-list span {
+  color: var(--muted-text);
+}
+
+.asset-effective-section .diagnostic-list {
+  margin: 0;
+}
+
+.asset-effective-revision code {
+  overflow-wrap: anywhere;
 }
 
 .diagnostic-filter-bar {
@@ -1659,6 +1725,26 @@ main {
   gap: 1rem;
   max-width: none;
   padding: 1.1rem;
+}
+
+.app-message {
+  align-items: center;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.75rem 0.9rem;
+}
+
+.app-message span {
+  overflow-wrap: anywhere;
+}
+
+.app-message button {
+  background: var(--secondary-button-bg);
+  color: var(--text);
 }
 
 .page-heading {

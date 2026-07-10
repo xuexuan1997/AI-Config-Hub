@@ -29,6 +29,7 @@ import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
 import {
   candidate,
+  createAdapterDiscoveryBudget,
   markerPath,
   scopeKindFromEvidence,
   uniquePaths,
@@ -421,12 +422,15 @@ async function declarativeDiscoveryFiles(input: {
   const markers = declaredMarkers(input.evidence);
   const roots = markers.length === 0 ? [input.root] : markers;
   const files = [];
+  const budget = createAdapterDiscoveryBudget(await input.read.realpath(input.root));
   for (const root of roots) {
     const stat = await input.read.stat(root);
     if (stat.kind === "file") {
       files.push(await input.read.realpath(root));
     } else if (stat.kind === "directory") {
-      files.push(...(await walkFiles(input.read, await input.read.realpath(root), input.signal)));
+      files.push(
+        ...(await walkFiles(input.read, await input.read.realpath(root), input.signal, budget)),
+      );
     }
   }
   return uniquePaths(files);

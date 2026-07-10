@@ -1,3 +1,6 @@
+import { useEffect, useRef } from "react";
+
+import { inertAppShellOutside } from "../components/modal-background.js";
 import { localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import type { AppState } from "../model.js";
 
@@ -7,29 +10,61 @@ export function ScanTaskModal(props: {
   readonly heading: string;
   readonly locale: DesktopLocale;
   readonly task: ScanTask | undefined;
+  readonly onCancel?: (taskId: string) => void;
 }) {
-  if (props.task === undefined || !isActiveScanTask(props.task)) return null;
+  const task = props.task;
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (task === undefined || !isActiveScanTask(task)) return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const modalRoot = dialogRef.current;
+    const restoreBackground = modalRoot === null ? undefined : inertAppShellOutside(modalRoot);
+    (cancelButtonRef.current ?? dialogRef.current)?.focus();
+    const keepFocusInside = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      (cancelButtonRef.current ?? dialogRef.current)?.focus();
+    };
+    document.addEventListener("keydown", keepFocusInside);
+    return () => {
+      document.removeEventListener("keydown", keepFocusInside);
+      restoreBackground?.();
+      previousFocus?.focus();
+    };
+  }, [task?.taskId, task?.status, task?.phase, task?.cancellable]);
+
+  if (task === undefined || !isActiveScanTask(task)) return null;
 
   return (
     <div
       className="scan-task-modal"
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="scan-task-modal-title"
+      tabIndex={-1}
     >
-      <div className="scan-task-dialog" role="status" aria-live="polite">
+      <div className="scan-task-dialog">
         <div className="scan-task-spinner" aria-hidden="true" />
         <ScanTaskPanel
           ariaLabel={t(props.locale, "Active scan status")}
           heading={props.heading}
           locale={props.locale}
           message={undefined}
-          task={props.task}
+          task={task}
           titleId="scan-task-modal-title"
         />
         <p className="scan-task-modal-hint">
           {t(props.locale, "Keep this window open while AI Config Hub scans your assets.")}
         </p>
+        {task.cancellable === false || props.onCancel === undefined ? null : (
+          <button ref={cancelButtonRef} type="button" onClick={() => props.onCancel?.(task.taskId)}>
+            {t(props.locale, "Cancel scan")}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -57,7 +92,13 @@ export function ScanTaskPanel(props: {
       : scanTaskHeading(props.locale, props.heading, props.task);
 
   return (
-    <section className="scan-task-panel" aria-label={props.ariaLabel}>
+    <section
+      className="scan-task-panel"
+      aria-label={props.ariaLabel}
+      aria-atomic="false"
+      aria-live="polite"
+      role="status"
+    >
       <header className="scan-task-heading">
         <div>
           <span className="eyebrow">{t(props.locale, "Scan status")}</span>

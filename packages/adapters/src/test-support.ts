@@ -114,13 +114,14 @@ export async function fixtureSnapshot(
   read: AdapterReadApi,
   path: AbsolutePath,
 ): Promise<FileSnapshot> {
-  const text = await read.readText(path);
+  const snapshot = await read.snapshotFile(path);
+  if (snapshot?.text === undefined) throw new Error(`Missing text fixture: ${path}`);
   return {
-    canonicalPath: path,
-    text,
-    contentHash: ContentHashSchema.parse(`sha256:${"a".repeat(64)}`),
-    modifiedAt: IsoDateTimeSchema.parse("2026-06-21T08:00:00.000Z"),
-    size: text.length,
+    canonicalPath: snapshot.canonicalPath,
+    text: snapshot.text,
+    contentHash: snapshot.contentHash,
+    modifiedAt: snapshot.modifiedAt,
+    size: snapshot.size,
   };
 }
 

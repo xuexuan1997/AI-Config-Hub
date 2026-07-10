@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
+import { inertAppShellOutside } from "../components/modal-background.js";
 import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import type { AppState, AssetDisablementMethod } from "../model.js";
 import { ScanTaskModal, ScanTaskPanel } from "./scan-task-panel.js";
@@ -21,6 +28,8 @@ export function AssetsView(props: {
   ) => void;
   readonly onRescanAfterEdit?: () => void;
   readonly onCloseInspect: () => void;
+  readonly onCancelScan?: (taskId: string) => void;
+  readonly onDismissMessage?: () => void;
   readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
   readonly onSelectProject?: () => void;
   readonly onUseProjectPath?: (path: string) => void;
@@ -35,17 +44,20 @@ export function AssetsView(props: {
     (activeTask.scanScope === undefined || activeTask.scanScope === "asset-review")
       ? activeTask
       : undefined;
-  const scanMessage =
-    props.state.scanStatus === "error" &&
-    (props.state.scanScope === undefined || props.state.scanScope === "asset-review")
-      ? props.state.message
-      : undefined;
   const assetsById = new Map(props.state.assets.map((asset) => [asset.id, asset]));
   const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
   const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
+  const firstAvailableToolKey = toolOptions.find((toolKey) =>
+    props.state.assets.some((asset) => asset.toolKey === toolKey),
+  );
+  const activeToolKey =
+    props.state.assets.length === 0 ||
+    props.state.assets.some((asset) => asset.toolKey === selectedToolKey)
+      ? selectedToolKey
+      : (firstAvailableToolKey ?? selectedToolKey);
   const visibleAssets = useMemo(
-    () => props.state.assets.filter((asset) => asset.toolKey === selectedToolKey),
-    [props.state.assets, selectedToolKey],
+    () => props.state.assets.filter((asset) => asset.toolKey === activeToolKey),
+    [activeToolKey, props.state.assets],
   );
   const assetGroups = useMemo(() => assetGroupsByResourceType(visibleAssets), [visibleAssets]);
   const firstResourceType = assetGroups[0]?.resourceType;
@@ -77,6 +89,10 @@ export function AssetsView(props: {
   );
 
   useEffect(() => {
+    if (selectedToolKey !== activeToolKey) setSelectedToolKey(activeToolKey);
+  }, [activeToolKey, selectedToolKey]);
+
+  useEffect(() => {
     if (
       firstResourceType !== undefined &&
       !assetGroups.some((group) => group.resourceType === selectedResourceType)
@@ -93,7 +109,12 @@ export function AssetsView(props: {
 
   return (
     <>
-      <ScanTaskModal heading={t(locale, "Scanning assets")} locale={locale} task={scanTask} />
+      <ScanTaskModal
+        heading={t(locale, "Scanning assets")}
+        locale={locale}
+        task={scanTask}
+        {...(props.onCancelScan === undefined ? {} : { onCancel: props.onCancelScan })}
+      />
       <section className="page-heading">
         <div>
           <h1>{t(locale, "Asset Review")}</h1>
@@ -114,6 +135,16 @@ export function AssetsView(props: {
           <small>{t(locale, "Scans automatically after project selection.")}</small>
         </div>
         <div className="review-project-actions">
+          {props.state.projectRoot === undefined ? null : (
+            <>
+              <button type="button" onClick={props.onRefresh}>
+                {t(locale, "Refresh assets")}
+              </button>
+              <button type="button" onClick={props.onRescanAfterEdit}>
+                {t(locale, "Rescan after edit")}
+              </button>
+            </>
+          )}
           <button type="button" onClick={props.onSelectProject}>
             {t(locale, "Choose project")}
           </button>
@@ -123,14 +154,14 @@ export function AssetsView(props: {
         ariaLabel={t(locale, "Scan status")}
         heading={t(locale, "Scanning assets")}
         locale={locale}
-        message={scanMessage}
+        message={undefined}
         task={scanTask}
       />
       <section className="review-workspace">
         <aside className="review-filters">
           <h2>{t(locale, "Review filters")}</h2>
           <ToolFilterList
-            activeToolKey={selectedToolKey}
+            activeToolKey={activeToolKey}
             locale={locale}
             tools={toolOptions}
             onSelectToolKey={setSelectedToolKey}
@@ -190,9 +221,15 @@ export function AssetsView(props: {
         <AssetDetailDialog
           detail={detail}
           summary={assetsById.get(detail.asset.id)}
+          assetsById={assetsById}
+          effective={props.state.effective}
           diagnostics={props.state.diagnostics}
           locale={locale}
           message={props.state.message}
+          {...(props.onDismissMessage === undefined
+            ? {}
+            : { onDismissMessage: props.onDismissMessage })}
+          onLoadEffective={props.onLoadEffective}
           onOpenSource={props.onOpenSource}
           onToggleAssetStatus={props.onToggleAssetStatus}
           onCloseInspect={props.onCloseInspect}
@@ -381,8 +418,17 @@ function AssetTypeTabs(props: {
               id={tabId}
               key={group.resourceType}
               role="tab"
+              tabIndex={selected ? 0 : -1}
               type="button"
               onClick={() => props.onSelectResourceType(group.resourceType)}
+              onKeyDown={(event) =>
+                moveAssetTypeTab(
+                  event,
+                  props.groups,
+                  group.resourceType,
+                  props.onSelectResourceType,
+                )
+              }
             >
               <strong>{resourceTypeLabel(props.locale, group.resourceType)}</strong>
               <span>{formatAssetCount(props.locale, group.assets.length)}</span>
@@ -400,6 +446,30 @@ function AssetTypeTabs(props: {
       </section>
     </div>
   );
+}
+
+function moveAssetTypeTab(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  groups: readonly { readonly resourceType: string }[],
+  currentResourceType: string,
+  onSelect: (resourceType: string) => void,
+): void {
+  const currentIndex = groups.findIndex((group) => group.resourceType === currentResourceType);
+  const nextIndex = tabIndexForKey(event.key, currentIndex, groups.length);
+  const nextResourceType = nextIndex === undefined ? undefined : groups[nextIndex]?.resourceType;
+  if (nextResourceType === undefined) return;
+  event.preventDefault();
+  onSelect(nextResourceType);
+  document.getElementById(assetTypeTabId(nextResourceType))?.focus();
+}
+
+function tabIndexForKey(key: string, currentIndex: number, count: number): number | undefined {
+  if (count === 0 || currentIndex < 0) return undefined;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "ArrowRight" || key === "ArrowDown") return (currentIndex + 1) % count;
+  if (key === "ArrowLeft" || key === "ArrowUp") return (currentIndex - 1 + count) % count;
+  return undefined;
 }
 
 function AssetTypeTable(props: {
@@ -630,6 +700,38 @@ function scopeKindLabel(locale: DesktopLocale, scopeKind: string): string {
   return `${label} scope`;
 }
 
+function assetLabel(
+  assetId: AppState["assets"][number]["id"],
+  assetsById: ReadonlyMap<AppState["assets"][number]["id"], AssetSummary>,
+): string {
+  return assetsById.get(assetId)?.logicalKey ?? displayIdentifier(assetId);
+}
+
+function contributionLabel(
+  locale: DesktopLocale,
+  action: NonNullable<AppState["effective"]>["contributors"][number]["action"],
+  reasonCode: string,
+): string {
+  const reason = reasonLabel(locale, reasonCode);
+  switch (action) {
+    case "inherit":
+      return t(locale, "Inherited from {reason}.", { reason });
+    case "merge":
+      return t(locale, "Merged because {reason}.", { reason });
+    case "override":
+      return t(locale, "Overrode lower-priority values because {reason}.", { reason });
+  }
+}
+
+function reasonLabel(locale: DesktopLocale, reasonCode: string): string {
+  return t(locale, lowerFirst(sentenceCaseIdentifier(reasonCode)));
+}
+
+function displayIdentifier(identifier: string): string {
+  const delimiterIndex = identifier.indexOf(":");
+  return delimiterIndex === -1 ? identifier : identifier.slice(delimiterIndex + 1);
+}
+
 function formatTimestamp(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
   if (Number.isNaN(date.getTime())) return isoTimestamp;
@@ -674,6 +776,10 @@ function properNounIdentifierWord(word: string): string | undefined {
     default:
       return undefined;
   }
+}
+
+function lowerFirst(value: string): string {
+  return value.length === 0 ? value : value[0]?.toLowerCase() + value.slice(1);
 }
 
 const ZH_DIAGNOSTIC_CODE_LABELS: Readonly<Record<string, string>> = {
@@ -1012,9 +1118,13 @@ function selectedDefaultDisablementMethod(
 function AssetDetailDialog(props: {
   readonly detail: NonNullable<AppState["assetDetail"]>;
   readonly summary: AssetSummary | undefined;
+  readonly assetsById: ReadonlyMap<AppState["assets"][number]["id"], AssetSummary>;
+  readonly effective: AppState["effective"];
   readonly diagnostics: AppState["diagnostics"];
   readonly locale: DesktopLocale;
   readonly message: string | undefined;
+  readonly onDismissMessage?: () => void;
+  readonly onLoadEffective: () => void;
   readonly onOpenSource: () => void;
   readonly onToggleAssetStatus: (
     assetId: AppState["assets"][number]["id"],
@@ -1032,26 +1142,90 @@ function AssetDetailDialog(props: {
   const defaultDisablementMethod = selectedDefaultDisablementMethod(disablementOptions);
   const [selectedDisablementMethod, setSelectedDisablementMethod] =
     useState(defaultDisablementMethod);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const statusActionRef = useRef<HTMLButtonElement | null>(null);
+  const previousStatusRef = useRef(status);
+  const closeInspectRef = useRef(props.onCloseInspect);
+  closeInspectRef.current = props.onCloseInspect;
   const showsDisablementOptions = status === "enabled" && disablementOptions.length > 0;
 
   useEffect(() => {
     setSelectedDisablementMethod(defaultDisablementMethod);
   }, [defaultDisablementMethod, detail.asset.id]);
 
+  useEffect(() => {
+    if (previousStatusRef.current !== status) {
+      (statusActionRef.current ?? dialogRef.current)?.focus();
+      previousStatusRef.current = status;
+    }
+  }, [status]);
+
+  useEffect(() => {
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const modalRoot = dialogRef.current?.closest<HTMLElement>(".asset-detail-modal");
+    const restoreBackground =
+      modalRoot === null || modalRoot === undefined ? undefined : inertAppShellOutside(modalRoot);
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInspectRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = focusableElements(dialogRef.current);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last?.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      restoreBackground?.();
+      previousFocus?.focus();
+    };
+  }, [detail.asset.id]);
+
   return (
     <div className="asset-detail-modal">
       <section
         className="asset-detail-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={t(props.locale, "Asset detail")}
+        tabIndex={-1}
       >
         <header className="asset-detail-header">
           <div>
             <span className="eyebrow">{t(props.locale, "Inspect asset")}</span>
             <h2>{detail.asset.logicalKey}</h2>
           </div>
-          <button className="asset-detail-close" type="button" onClick={props.onCloseInspect}>
+          <button
+            className="asset-detail-close"
+            ref={closeButtonRef}
+            type="button"
+            onClick={props.onCloseInspect}
+          >
             {t(props.locale, "Close")}
           </button>
         </header>
@@ -1060,10 +1234,18 @@ function AssetDetailDialog(props: {
             <button type="button" onClick={props.onOpenSource}>
               {t(props.locale, "Open source")}
             </button>
+            <button type="button" disabled={status === "disabled"} onClick={props.onLoadEffective}>
+              {t(props.locale, "Load effective configuration")}
+            </button>
           </div>
           {props.message === undefined ? null : (
             <div className="asset-detail-message" role="status">
-              {localizeUiMessage(props.locale, props.message)}
+              <span>{localizeUiMessage(props.locale, props.message)}</span>
+              {props.onDismissMessage === undefined ? null : (
+                <button type="button" onClick={props.onDismissMessage}>
+                  {t(props.locale, "Close")}
+                </button>
+              )}
             </div>
           )}
           <dl>
@@ -1136,6 +1318,7 @@ function AssetDetailDialog(props: {
               </div>
               <button
                 className="enable-asset-primary"
+                ref={statusActionRef}
                 type="button"
                 onClick={() => props.onToggleAssetStatus(detail.asset.id, "enabled")}
               >
@@ -1172,6 +1355,7 @@ function AssetDetailDialog(props: {
               </div>
               <button
                 className="disable-asset-primary"
+                ref={statusActionRef}
                 type="button"
                 onClick={() =>
                   props.onToggleAssetStatus(detail.asset.id, "disabled", selectedDisablementMethod)
@@ -1209,10 +1393,123 @@ function AssetDetailDialog(props: {
               <pre>{JSON.stringify(detail.asset.normalized, null, 2)}</pre>
             </>
           )}
+          <EffectiveConfigurationExplanation
+            assetsById={props.assetsById}
+            effective={props.effective}
+            locale={props.locale}
+            onLocateDiagnostic={props.onLocateDiagnostic}
+          />
         </div>
       </section>
     </div>
   );
+}
+
+function focusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (root === null) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute("hidden"));
+}
+
+function EffectiveConfigurationExplanation(props: {
+  readonly assetsById: ReadonlyMap<AppState["assets"][number]["id"], AssetSummary>;
+  readonly effective: AppState["effective"];
+  readonly locale: DesktopLocale;
+  readonly onLocateDiagnostic: (assetId: AppState["assets"][number]["id"]) => void;
+}) {
+  const effective = props.effective;
+  return (
+    <section
+      aria-label={t(props.locale, "Effective configuration")}
+      className="asset-effective-explanation"
+    >
+      {effective === undefined ? (
+        <>
+          <h3>{t(props.locale, "Effective configuration")}</h3>
+          <p className="asset-effective-empty">{t(props.locale, "Not loaded")}</p>
+        </>
+      ) : (
+        <>
+          <section className="asset-effective-section">
+            <h3>{t(props.locale, "Effective configuration")}</h3>
+            {isEmptyJsonValue(effective.effective) ? (
+              <p>{t(props.locale, "No effective configuration values.")}</p>
+            ) : (
+              <pre>{JSON.stringify(effective.effective, null, 2)}</pre>
+            )}
+          </section>
+          <section className="asset-effective-section">
+            <h3>{t(props.locale, "Contributors")}</h3>
+            {effective.contributors.length === 0 ? (
+              <p>{t(props.locale, "No contributing assets.")}</p>
+            ) : (
+              <ul className="asset-effective-list">
+                {effective.contributors.map((contributor) => (
+                  <li
+                    key={`${contributor.assetId}:${contributor.action}:${contributor.reasonCode}`}
+                  >
+                    <strong>{assetLabel(contributor.assetId, props.assetsById)}</strong>
+                    <span>
+                      {contributionLabel(props.locale, contributor.action, contributor.reasonCode)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="asset-effective-section">
+            <h3>{t(props.locale, "Ignored assets")}</h3>
+            {effective.ignored.length === 0 ? (
+              <p>{t(props.locale, "No ignored assets.")}</p>
+            ) : (
+              <ul className="asset-effective-list">
+                {effective.ignored.map((ignored) => (
+                  <li key={`${ignored.assetId}:${ignored.reasonCode}`}>
+                    <strong>{assetLabel(ignored.assetId, props.assetsById)}</strong>
+                    <span>
+                      {t(props.locale, "Ignored because {reason}.", {
+                        reason: reasonLabel(props.locale, ignored.reasonCode),
+                      })}
+                      {ignored.coveredByAssetId === undefined
+                        ? null
+                        : ` ${t(props.locale, "Covered by {asset}.", {
+                            asset: assetLabel(ignored.coveredByAssetId, props.assetsById),
+                          })}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="asset-effective-section">
+            <h3>{t(props.locale, "Effective diagnostics")}</h3>
+            {effective.diagnostics.length === 0 ? (
+              <p>{t(props.locale, "No effective diagnostics.")}</p>
+            ) : (
+              <DiagnosticList
+                diagnostics={effective.diagnostics}
+                locale={props.locale}
+                onLocateDiagnostic={props.onLocateDiagnostic}
+              />
+            )}
+          </section>
+          <section className="asset-effective-section asset-effective-revision">
+            <h3>{t(props.locale, "Snapshot revision")}</h3>
+            <code>{effective.snapshotRevision}</code>
+          </section>
+        </>
+      )}
+    </section>
+  );
+}
+
+function isEmptyJsonValue(value: NonNullable<AppState["effective"]>["effective"]): boolean {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === "object" && Object.keys(value).length === 0;
 }
 
 function AssetSourceSummaryPanel(props: {

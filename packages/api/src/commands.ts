@@ -57,6 +57,7 @@ const ScanStartRequestSchema = z
     toolKeys: z.array(ToolIdSchema).min(1).max(4).optional().readonly(),
     roots: z.array(AuthorizedRootIdSchema).min(1).max(100).optional().readonly(),
     changedPaths: z.array(RegisteredPathIdSchema).min(1).max(1_000).optional().readonly(),
+    clientContext: z.enum(["asset-review", "migration-source", "migration-target"]).optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -195,6 +196,7 @@ const HistoryListRequestSchema = z
     from: IsoDateTimeSchema.optional(),
     to: IsoDateTimeSchema.optional(),
     cursor: PaginationCursorSchema.optional(),
+    snapshotRevision: RevisionSchema.optional(),
     limit: PageLimitSchema,
   })
   .strict()
@@ -716,6 +718,7 @@ const HistoryListResponseSchema = z
   .object({
     items: z.array(HistoryEntrySchema).max(200).readonly(),
     nextCursor: PaginationCursorSchema.nullable(),
+    snapshotRevision: RevisionSchema,
   })
   .strict()
   .readonly();

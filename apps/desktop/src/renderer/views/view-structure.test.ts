@@ -49,6 +49,7 @@ describe("desktop renderer view structure", () => {
         onOpenSource: vi.fn(),
         onToggleAssetStatus: vi.fn(),
         onCloseInspect: vi.fn(),
+        onCancelScan: vi.fn(),
         onLocateDiagnostic: vi.fn(),
         onSelectProject: vi.fn(),
       }),
@@ -60,8 +61,8 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain(`title="${projectRoot}"`);
     expect(html).toContain("Choose project");
     expect(html).toContain("Scans automatically after project selection.");
-    expect(html).not.toContain("Refresh assets");
-    expect(html).not.toContain("Scan current project");
+    expect(html).toContain("Refresh assets");
+    expect(html).toContain("Rescan after edit");
     expect(html).not.toContain("Manual path fallback");
     expect(html).not.toContain("Use typed path");
   });
@@ -85,6 +86,7 @@ describe("desktop renderer view structure", () => {
         onOpenSource: vi.fn(),
         onToggleAssetStatus: vi.fn(),
         onCloseInspect: vi.fn(),
+        onCancelScan: vi.fn(),
         onLocateDiagnostic: vi.fn(),
         onSelectProject: vi.fn(),
       }),
@@ -94,6 +96,7 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('role="dialog"');
     expect(html).toContain("Scanning assets");
     expect(html).toContain("12/80 files");
+    expect(html).toContain(">Cancel scan</button>");
   });
 
   it("localizes scan modal progress units in Simplified Chinese", () => {
@@ -184,6 +187,7 @@ describe("desktop renderer view structure", () => {
         onConfirmMigration: vi.fn(),
         onConfirmRequirement: vi.fn(),
         onExecuteMigration: vi.fn(),
+        onCancelScan: vi.fn(),
         onSelectSourceProject: vi.fn(),
         onSelectTargetProject: vi.fn(),
         onSwapProjects: vi.fn(),
@@ -193,6 +197,7 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="scan-task-modal"');
     expect(html).toContain("Scanning migration assets");
     expect(html).toContain("4 items");
+    expect(html).toContain(">Cancel scan</button>");
   });
 
   it("keeps asset review scan status out of migration before a source project is selected", () => {
@@ -272,7 +277,8 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('aria-label="Target scan status"');
     expect(html).toContain("Target scan");
     expect(html).toContain("2/9 files");
-    expect(html).toContain("Target scan failed.");
+    expect(html).toContain("Scan failed: 2 succeeded, 1 failed.");
+    expect(html).not.toContain("Target scan failed.");
     expect(html).not.toContain('aria-label="Source scan status"');
     expect(html).not.toContain("<h2>Source scan</h2>");
   });
@@ -290,17 +296,37 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('<section class="workspace" data-route="migration">');
   });
 
-  it("does not render global status banners above workspace content", () => {
+  it("renders actionable global messages above workspace content", () => {
+    const onDismissMessage = vi.fn();
     const html = renderToStaticMarkup(
       createElement(AppShell, {
         state: { ...initialState, message: "Scan complete: 2 succeeded, 1 skipped." },
         onRoute: vi.fn(),
+        onDismissMessage,
         children: createElement("span", null, "Workspace"),
       }),
     );
 
-    expect(html).not.toContain('class="status-banner"');
-    expect(html).not.toContain("Scan complete: 2 succeeded, 1 skipped.");
+    expect(html).toContain('class="app-message"');
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Scan complete: 2 succeeded, 1 skipped.");
+    expect(html).toContain(">Close</button>");
+  });
+
+  it("uses the modal message host instead of duplicating a global live region", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        state: {
+          ...initialState,
+          message: "Asset disabled.",
+          assetDetail: {} as NonNullable<AppState["assetDetail"]>,
+        },
+        onRoute: vi.fn(),
+        children: createElement("span", null, "Dialog host"),
+      }),
+    );
+
+    expect(html).not.toContain('class="app-message"');
   });
 
   it("adds settings to desktop navigation", () => {
@@ -420,6 +446,40 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Check for updates");
     expect(html).toContain("Download update");
     expect(html).not.toContain("Restart and install");
+  });
+
+  it("blocks local data cleanup while a task is still running", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: "task:scan:running",
+            taskKind: "scan",
+            phase: "reading",
+            status: "running",
+            recoveryLock: false,
+          },
+          settings: {
+            ...initialState.settings,
+            status: "ready",
+            clearLocalData: {
+              ...initialState.settings.clearLocalData,
+              confirmed: true,
+            },
+          },
+        },
+        onThemeChange: vi.fn(),
+        onLanguageChange: vi.fn(),
+        onReload: vi.fn(),
+        onLocalDataCategoryChange: vi.fn(),
+        onLocalDataConfirmationChange: vi.fn(),
+        onClearLocalData: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('class="danger-button" disabled=""');
+    expect(html).toContain("Wait for the active task to finish before clearing local data.");
   });
 
   it("renders core desktop chrome and settings in Simplified Chinese", () => {
@@ -586,12 +646,45 @@ describe("desktop renderer view structure", () => {
     expect(executionPanelStart).toBeGreaterThan(-1);
     expect(statusStart).toBeGreaterThan(executionPanelStart);
     expect(html).toContain('class="task-status-summary"');
-    expect(html).toContain("Status: Completed");
+    expect(html).toContain("Status: Succeeded");
     expect(html).toContain("1/1 operations");
     expect(html).toContain("Migration complete: 1 succeeded.");
     expect(html).not.toContain("Deployment complete: 1 succeeded.");
     expect(html).not.toContain('<section class="task-status">');
     expect(html).not.toContain("<p>completed ");
+  });
+
+  it.each([
+    ["failed", "Status: Failed"],
+    ["cancelled", "Status: Cancelled"],
+  ] as const)("shows the %s result instead of the completed phase", (status, expectedStatus) => {
+    const html = renderToStaticMarkup(
+      createElement(MigrationView, {
+        state: {
+          ...initialState,
+          activeTask: {
+            taskId: `task:deployment:${status}`,
+            taskKind: "deployment",
+            phase: "completed",
+            status,
+            progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+            message: `Deployment ${status}: 1 operation.`,
+            recoveryLock: false,
+          },
+        },
+        onPreview: vi.fn(),
+        onToggleSource: vi.fn(),
+        onTargetTool: vi.fn(),
+        onConflictPolicy: vi.fn(),
+        onConfirmMigration: vi.fn(),
+        onConfirmRequirement: vi.fn(),
+        onExecuteMigration: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain(expectedStatus);
+    expect(html).not.toContain("Status: Completed");
+    expect(html).toContain("1/1 operations");
   });
 
   it("does not show stale migration confirmation controls after completion retires the preview", () => {
@@ -856,9 +949,11 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain("<strong>Partial conversion</strong>");
     expect(selectedAssetHtml).toContain('class="diagnostic-action"');
     expect(selectedAssetHtml).toContain("<strong>rule:AGENTS</strong>");
-    expect(selectedAssetHtml).not.toContain("Effective configuration");
-    expect(selectedAssetHtml).not.toContain("Inherited from highest priority scope.");
-    expect(selectedAssetHtml).not.toContain("Ignored because target conflict.");
+    expect(selectedAssetHtml).toContain("Effective configuration");
+    expect(selectedAssetHtml).toContain("Inherited from highest priority scope.");
+    expect(selectedAssetHtml).toContain("Ignored because target conflict.");
+    expect(selectedAssetHtml).toContain("<h3>Snapshot revision</h3>");
+    expect(selectedAssetHtml).toContain("<code>revision-1</code>");
     expect(selectedAssetHtml).not.toContain("warning PARTIAL_CONVERSION");
     expect(selectedAssetHtml).not.toContain("2026-06-28T08:00:00.000Z");
     expect(selectedAssetHtml).not.toContain("asset-1 inherit highest_priority_scope");
@@ -1367,9 +1462,12 @@ describe("desktop renderer view structure", () => {
     expect(assetsHtml).toContain("<h3>引用</h3>");
     expect(assetsHtml).toContain("<h3>标准化</h3>");
     expect(assetsHtml).toContain("加载结果</dt>");
-    expect(assetsHtml).not.toContain("<h3>有效配置</h3>");
-    expect(assetsHtml).not.toContain("无贡献资产。");
-    expect(assetsHtml).not.toContain("无有效诊断。");
+    expect(assetsHtml).toContain("加载有效配置");
+    expect(assetsHtml).toContain("<h3>有效配置</h3>");
+    expect(assetsHtml).toContain("无贡献资产。");
+    expect(assetsHtml).toContain("无已忽略资产。");
+    expect(assetsHtml).toContain("无有效诊断。");
+    expect(assetsHtml).toContain("<h3>快照修订版本</h3>");
     expect(migrationHtml).toContain("计划 audit-preview");
     expect(migrationHtml).toContain("兼容性：部分");
     expect(migrationHtml).toContain("确认项：覆盖现有目标文件。 部署包含警告的部分转换。");

@@ -8,6 +8,7 @@ import {
   type DeploymentPlan,
   type DeploymentRecord,
   type DeploymentRepository,
+  type FileSnapshot,
   type FileSnapshotPort,
 } from "@ai-config-hub/core";
 import {
@@ -20,6 +21,7 @@ import {
   type ContentHash,
   type DeploymentRecordId,
   type IsoDateTime,
+  type TaskId,
 } from "@ai-config-hub/shared";
 
 import type { PathLockManager } from "./path-locks.js";
@@ -34,7 +36,15 @@ export interface DeploymentRollbackServiceOptions {
 export interface ExecuteRollbackRequest {
   readonly deploymentRecordId: DeploymentRecordId;
   readonly rollbackPlanHash: ContentHash;
+  readonly rollbackRecordId?: DeploymentRecordId;
+  readonly taskId?: TaskId;
+  readonly allowFailedRecovery?: boolean;
   readonly now: IsoDateTime;
+}
+
+export interface PreviewRollbackOptions {
+  readonly allowFailedRecovery?: boolean;
+  readonly attemptId?: DeploymentRecordId;
 }
 
 interface RollbackDraft {
@@ -61,6 +71,37 @@ function hash(namespace: string, value: string): ContentHash {
   );
 }
 
+function generatedContentHash(text: string): ContentHash {
+  return ContentHashSchema.parse(`sha256:${createHash("sha256").update(text).digest("hex")}`);
+}
+
+function expectedWrittenHash(
+  record: DeploymentRecord,
+  operation: DeploymentOperation,
+): ContentHash | undefined {
+  const recorded = record.resultingHashes[operation.targetPath];
+  if (recorded !== undefined) return recorded;
+  const journaled = [...(record.operationJournal ?? [])]
+    .reverse()
+    .find((entry) => entry.targetPath === operation.targetPath)?.resultingHash;
+  if (journaled !== undefined) return journaled;
+  if (operation.kind === "delete") return undefined;
+  if (operation.deploymentType === "copy" || operation.deploymentType === "symlink") {
+    return operation.sourceHash;
+  }
+  return operation.nextText === undefined ? undefined : generatedContentHash(operation.nextText);
+}
+
+function recoveryAlreadyCompleteError(): AppError {
+  return new AppError({
+    code: "CONFLICT",
+    message: "Deployment targets are already in their recovered state",
+    retryable: false,
+    suggestedActions: ["Refresh deployment history"],
+    safeContext: { recoveryAlreadyComplete: true },
+  });
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
@@ -75,21 +116,33 @@ function stableJson(value: unknown): string {
 export class DeploymentRollbackService {
   constructor(private readonly options: DeploymentRollbackServiceOptions) {}
 
-  async preview(deploymentRecordId: DeploymentRecordId): Promise<DeploymentPlan> {
-    return (await this.buildRollbackDraft(deploymentRecordId)).plan;
+  async preview(
+    deploymentRecordId: DeploymentRecordId,
+    options: PreviewRollbackOptions = {},
+  ): Promise<DeploymentPlan> {
+    return (await this.buildRollbackDraft(deploymentRecordId, options)).plan;
   }
 
   async execute(input: ExecuteRollbackRequest): Promise<DeploymentRecord> {
-    const draft = await this.buildRollbackDraft(input.deploymentRecordId);
+    const draft = await this.buildRollbackDraft(input.deploymentRecordId, {
+      ...(input.allowFailedRecovery === undefined
+        ? {}
+        : { allowFailedRecovery: input.allowFailedRecovery }),
+      ...(input.rollbackRecordId === undefined ? {} : { attemptId: input.rollbackRecordId }),
+    });
     if (draft.plan.planHash !== input.rollbackPlanHash) {
       throw appError("VALIDATION_FAILED", "Rollback plan hash does not match current preview");
     }
     const record = DeploymentRecordSchema.parse({
-      deploymentRecordId: DeploymentRecordIdSchema.parse(
-        `rollback-record:${draft.plan.planHash.slice("sha256:".length)}`,
-      ),
+      deploymentRecordId:
+        input.rollbackRecordId ??
+        DeploymentRecordIdSchema.parse(
+          `rollback-record:${draft.plan.planHash.slice("sha256:".length)}`,
+        ),
       deploymentPlanId: draft.plan.deploymentPlanId,
       rollbackOfRecordId: draft.original.deploymentRecordId,
+      ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+      ...(draft.original.projectId === undefined ? {} : { projectId: draft.original.projectId }),
       status: "planned",
       operations: draft.plan.operations,
       backupLocations: Object.fromEntries(
@@ -185,10 +238,19 @@ export class DeploymentRollbackService {
     }
   }
 
-  private async buildRollbackDraft(deploymentRecordId: DeploymentRecordId): Promise<RollbackDraft> {
+  private async buildRollbackDraft(
+    deploymentRecordId: DeploymentRecordId,
+    options: PreviewRollbackOptions,
+  ): Promise<RollbackDraft> {
     const original = await this.options.deploymentRepository.getRecord(deploymentRecordId);
     if (original === undefined) throw appError("NOT_FOUND", "Deployment record not found");
-    if (original.status !== "succeeded") {
+    const recoveryMode =
+      options.allowFailedRecovery === true &&
+      (original.status === "succeeded" ||
+        ["writing", "verifying", "rolling_back"].includes(original.status) ||
+        (original.status === "failed" &&
+          original.rollbackResults.some(({ status }) => status === "failed")));
+    if (original.status !== "succeeded" && !recoveryMode) {
       throw appError("VALIDATION_FAILED", "Only succeeded deployments can be rolled back");
     }
     const originalPlan = await this.options.deploymentRepository.getPlan(original.deploymentPlanId);
@@ -201,6 +263,50 @@ export class DeploymentRollbackService {
         path: operation.targetPath,
         allowedRoots: [operation.targetPath],
       });
+      if (recoveryMode) {
+        if (operation.kind === "create") {
+          if (live === undefined) continue;
+          const resultingHash = expectedWrittenHash(original, operation);
+          if (resultingHash === undefined || live.contentHash !== resultingHash) {
+            throw appError("STALE_INDEX", `Recovery target drifted: ${operation.targetPath}`, true);
+          }
+          operations.push({
+            kind: "delete",
+            targetPath: operation.targetPath,
+            expectedTargetHash: resultingHash,
+          });
+          expectedTargetHashes[operation.targetPath] = resultingHash;
+          continue;
+        }
+
+        const backup = await this.rollbackBackup(original, operation);
+        if (live?.contentHash === backup.contentHash) continue;
+        if (operation.kind === "replace") {
+          const resultingHash = expectedWrittenHash(original, operation);
+          if (resultingHash === undefined || live?.contentHash !== resultingHash) {
+            throw appError("STALE_INDEX", `Recovery target drifted: ${operation.targetPath}`, true);
+          }
+          operations.push({
+            kind: "replace",
+            targetPath: operation.targetPath,
+            nextText: backup.text,
+            expectedTargetHash: resultingHash,
+          });
+          expectedTargetHashes[operation.targetPath] = resultingHash;
+          continue;
+        }
+        if (live !== undefined) {
+          throw appError("STALE_INDEX", `Recovery target drifted: ${operation.targetPath}`, true);
+        }
+        operations.push({
+          kind: "create",
+          targetPath: operation.targetPath,
+          nextText: backup.text,
+          expectedTargetHash: "absent",
+        });
+        expectedTargetHashes[operation.targetPath] = "absent";
+        continue;
+      }
       if (operation.kind === "create") {
         const resultingHash = original.resultingHashes[operation.targetPath];
         if (resultingHash === undefined || live?.contentHash !== resultingHash) {
@@ -261,8 +367,16 @@ export class DeploymentRollbackService {
         expectedTargetHashes[operation.targetPath] = "absent";
       }
     }
+    if (operations.length === 0) {
+      if (recoveryMode) throw recoveryAlreadyCompleteError();
+      throw appError("CONFLICT", "Deployment targets are already in their recovered state", true);
+    }
     const payload = {
-      conversionResultIds: [`rollback:${deploymentRecordId}`],
+      conversionResultIds: [
+        options.attemptId === undefined
+          ? `rollback:${deploymentRecordId}`
+          : `rollback:${deploymentRecordId}:${options.attemptId}`,
+      ],
       operations,
       diffs: [],
       expectedSourceHashes: {},
@@ -286,6 +400,24 @@ export class DeploymentRollbackService {
         planHash,
       }),
     };
+  }
+
+  private async rollbackBackup(
+    original: DeploymentRecord,
+    operation: DeploymentOperation,
+  ): Promise<FileSnapshot> {
+    const backupLocation = original.backupLocations[operation.targetPath];
+    if (backupLocation === undefined || backupLocation === "previously-absent") {
+      throw appError("BACKUP_MISSING", `Missing rollback backup for ${operation.targetPath}`);
+    }
+    const backup = await this.options.snapshots.snapshot({
+      path: backupLocation,
+      allowedRoots: [backupLocation],
+    });
+    if (backup === undefined || operation.expectedTargetHash !== backup.contentHash) {
+      throw appError("BACKUP_MISSING", `Rollback backup hash mismatch for ${operation.targetPath}`);
+    }
+    return backup;
   }
 
   private async assertHash(path: AbsolutePath, expectedHash: ContentHash): Promise<void> {

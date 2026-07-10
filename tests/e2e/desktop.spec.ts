@@ -73,22 +73,27 @@ test.describe("Desktop end to end", () => {
 
       await page.getByRole("button", { name: "Codex" }).click();
       await expect(page.getByRole("heading", { name: exactText("Rule资产") })).toBeVisible();
-      await page
+      const inspectCodexRule = page
         .locator("tbody tr")
         .filter({ hasText: "AGENTS" })
-        .getByRole("button", { name: exactText("检查") })
-        .click();
+        .getByRole("button", { name: exactText("检查") });
+      await inspectCodexRule.click();
 
       const assetDetail = page.getByRole("dialog", { name: exactText("资产详情") });
       await expect(assetDetail).toContainText("AGENTS");
       await expect(assetDetail).toContainText(workspace.projectRoot);
+      await expect(assetDetail.getByRole("button", { name: exactText("关闭") })).toBeFocused();
+      await assetDetail.getByRole("button", { name: exactText("加载有效配置") }).click();
+      await expect(assetDetail.getByText(exactText("快照修订版本"))).toBeVisible();
+      await expect(assetDetail.getByText(exactText("贡献者"))).toBeVisible();
       await captureDesktopScreenshot(page, testInfo, "03-asset-detail");
       await assetDetail.getByRole("button", { name: exactText("禁用资产") }).click();
       await expect(assetDetail).toContainText("已禁用");
       await assetDetail.getByRole("button", { name: exactText("启用资产") }).click();
       await expect(assetDetail).toContainText("已启用");
-      await assetDetail.getByRole("button", { name: exactText("关闭") }).click();
+      await page.keyboard.press("Escape");
       await expect(assetDetail).toBeHidden();
+      await expect(inspectCodexRule).toBeFocused();
 
       await page.getByRole("button", { name: exactText("资产迁移") }).click();
       await expect(page.getByRole("heading", { name: exactText("资产迁移") })).toBeVisible();
@@ -127,6 +132,14 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByText(exactText("请选择同一种资源类型的源资产。"))).toBeVisible();
       await codexSkill.uncheck();
       await page.getByRole("tab", { name: /Rule/ }).click();
+      await page.locator("#migration-conflict").selectOption("fail");
+      await page.getByRole("button", { name: exactText("预览写入") }).click();
+      await expect(page.locator(".app-message")).toContainText(/目标已存在|Target already exists/, {
+        timeout: 30_000,
+      });
+      await captureDesktopScreenshot(page, testInfo, "05-migration-conflict-visible");
+      await page.locator(".app-message button").click();
+      await page.locator("#migration-conflict").selectOption("replace");
       await page.getByRole("button", { name: exactText("预览写入") }).click();
       await expect(page.locator(".preview-summary")).toContainText(/计划 [0-9a-f]{64}/, {
         timeout: 30_000,
@@ -136,7 +149,7 @@ test.describe("Desktop end to end", () => {
           name: /替换文件 .*\.cursor\/rules\/agents\.mdc/,
         }),
       ).toBeVisible();
-      await captureDesktopScreenshot(page, testInfo, "05-migration-preview");
+      await captureDesktopScreenshot(page, testInfo, "06-migration-preview");
 
       await expect(page.getByRole("button", { name: "Deployment" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "History" })).toHaveCount(0);
@@ -148,25 +161,124 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByText(migrationCompletePattern())).toBeVisible({
         timeout: 30_000,
       });
-      await captureDesktopScreenshot(page, testInfo, "06-migration-complete");
+      await captureDesktopScreenshot(page, testInfo, "07-migration-complete");
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
       expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor Rule.");
+      await expect(page.locator(".migration-target-panel .target-change-row")).toHaveCount(1);
+
+      await page.getByRole("button", { name: exactText("资产审查") }).click();
+      await expect(page.locator(".review-workspace")).not.toContainText(
+        workspace.targetProjectRoot,
+      );
 
       await page.getByRole("button", { name: exactText("设置") }).click();
       await expect(page.getByRole("heading", { name: exactText("设置") })).toBeVisible();
       await expect(page.getByText(exactText("软件更新"))).toBeVisible();
+      await expect(page.getByText(exactText("当前版本 0.2.18"))).toBeVisible();
       const clearSelectedData = page.getByRole("button", { name: exactText("清理所选数据") });
       await expect(clearSelectedData).toBeDisabled();
       await clearSelectedData.scrollIntoViewIfNeeded();
-      await captureDesktopScreenshot(page, testInfo, "07-settings");
+      await captureDesktopScreenshot(page, testInfo, "08-settings");
       await expectDirectoryPickerInvocations(app, 3);
     } finally {
       await app.close();
       await workspace.dispose();
     }
   });
+
+  test("shows empty-target additions and blocks a stale source before writing", async ({
+    browserName,
+  }, testInfo) => {
+    testInfo.annotations.push({ type: "browser", description: browserName });
+    const workspace = await createFixtureWorkspace();
+    const targetRulePath = join(workspace.emptyTargetProjectRoot, ".cursor/rules/agents.mdc");
+    const app = await launchDesktop(workspace.userData);
+
+    try {
+      await stubDirectoryPicker(app, [workspace.projectRoot, workspace.emptyTargetProjectRoot]);
+      const page = await app.firstWindow();
+      // This scenario exercises deployment preflight drift detection. Disable
+      // live watching so it cannot retire the preview before Execute is clicked.
+      await setFileWatching(page, false);
+      await page.getByRole("button", { name: exactText("资产迁移") }).click();
+      await page.locator(".migration-project-card.source").getByRole("button").click();
+      const sourceAssets = page.locator(".migration-source-panel");
+      await expect(sourceAssets).toContainText("AGENTS", { timeout: 30_000 });
+      await page.locator(".migration-project-card.target").getByRole("button").click();
+      await expect(page.locator(".migration-project-card.target")).toContainText(
+        workspace.emptyTargetProjectRoot,
+      );
+      await clearMigrationSourceSelection(page, sourceAssets);
+      await page.getByRole("tab", { name: /Rule/ }).click();
+      await sourceAssets
+        .locator("label")
+        .filter({ hasText: "rule:AGENTS" })
+        .filter({ hasText: "Codex" })
+        .getByRole("checkbox")
+        .check();
+
+      await expect(page.locator(".migration-difference-summary")).toContainText("新增到目标1");
+      await expect(
+        page.locator(".migration-target-panel .target-change-row.is-create"),
+      ).toHaveCount(1);
+      await page.getByRole("button", { name: exactText("预览写入") }).click();
+      await expect(page.locator(".preview-summary")).toBeVisible({ timeout: 30_000 });
+
+      await writeFile(join(workspace.projectRoot, "AGENTS.md"), "Use freshly edited rules.\n", {
+        encoding: "utf8",
+      });
+      await page.getByLabel(exactText("我确认这会写入已验证的配置文件。")).check();
+      await page.getByRole("button", { name: exactText("执行迁移") }).click();
+      await expect(page.locator(".app-message")).toContainText(
+        /部署前源资产已变更|Source changed before deployment/,
+        { timeout: 30_000 },
+      );
+      const failedMigrationStatus = page.locator(".migration-run-status");
+      await expect(failedMigrationStatus).toContainText(/状态：\s*失败|Status:\s*Failed/);
+      await expect(failedMigrationStatus).not.toContainText(/状态：\s*已完成|Status:\s*Completed/);
+      expect(existsSync(targetRulePath)).toBe(false);
+      await expect(page.getByText(/恢复锁已激活|Recovery lock active/)).toHaveCount(0);
+      await captureDesktopScreenshot(page, testInfo, "09-source-drift-blocked");
+      await expectDirectoryPickerInvocations(app, 2);
+    } finally {
+      await app.close();
+      await workspace.dispose();
+    }
+  });
+
+  test("launches two isolated desktop profiles concurrently", async () => {
+    const firstWorkspace = await createFixtureWorkspace();
+    const secondWorkspace = await createFixtureWorkspace();
+    const firstApp = await launchDesktop(firstWorkspace.userData);
+    const secondApp = await launchDesktop(secondWorkspace.userData);
+
+    try {
+      await expect(
+        (await firstApp.firstWindow()).getByText("AI Config Hub", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        (await secondApp.firstWindow()).getByText("AI Config Hub", { exact: true }),
+      ).toBeVisible();
+    } finally {
+      await Promise.all([firstApp.close(), secondApp.close()]);
+      await Promise.all([firstWorkspace.dispose(), secondWorkspace.dispose()]);
+    }
+  });
 });
+
+function launchDesktop(userData: string): Promise<ElectronApplication> {
+  return electron.launch({
+    args: ["--lang=zh-CN", mainEntry],
+    env: {
+      ...process.env,
+      AI_CONFIG_HUB_USER_DATA: userData,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+      LANG: "zh_CN.UTF-8",
+      LC_ALL: "zh_CN.UTF-8",
+    },
+  });
+}
 
 async function stubDirectoryPicker(
   app: ElectronApplication,
@@ -226,12 +338,41 @@ async function expectDirectoryPickerInvocations(
   expect(state).toEqual({ errors: [], invocations: expectedCount });
 }
 
+async function setFileWatching(page: Page, enabled: boolean): Promise<void> {
+  await page.evaluate(async (nextValue) => {
+    const api = (
+      globalThis as typeof globalThis & {
+        aiConfigHub: {
+          invoke(
+            name: string,
+            payload: unknown,
+          ): Promise<{
+            readonly ok: boolean;
+            readonly data?: { readonly revision?: number };
+            readonly error?: { readonly message?: string };
+          }>;
+        };
+      }
+    ).aiConfigHub;
+    const current = await api.invoke("settings.get", {});
+    const revision = current.data?.revision;
+    if (!current.ok || revision === undefined) {
+      throw new Error(current.error?.message ?? "Could not read desktop settings");
+    }
+    const updated = await api.invoke("settings.update", {
+      patch: { fileWatching: nextValue },
+      expectedRevision: revision,
+    });
+    if (!updated.ok) throw new Error(updated.error?.message ?? "Could not update desktop settings");
+  }, enabled);
+}
+
 async function captureDesktopScreenshot(
   page: Page,
   testInfo: TestInfo,
   name: string,
 ): Promise<void> {
-  await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
 }
 
 async function clearMigrationSourceSelection(page: Page, sourceAssets: Locator): Promise<void> {
@@ -265,15 +406,18 @@ function escapeRegExp(value: string): string {
 
 async function createFixtureWorkspace(): Promise<{
   readonly projectRoot: string;
+  readonly emptyTargetProjectRoot: string;
   readonly targetProjectRoot: string;
   readonly userData: string;
   readonly dispose: () => Promise<void>;
 }> {
   const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-e2e-"));
   const projectRoot = join(root, "source-project");
+  const emptyTargetProjectRoot = join(root, "empty-target-project");
   const targetProjectRoot = join(root, "target-project");
   const userData = join(root, "user-data");
   await mkdir(projectRoot, { recursive: true });
+  await mkdir(emptyTargetProjectRoot, { recursive: true });
   await mkdir(targetProjectRoot, { recursive: true });
   await mkdir(userData, { recursive: true });
   await mkdir(join(projectRoot, ".agents", "skills", "release"), { recursive: true });
@@ -300,6 +444,7 @@ async function createFixtureWorkspace(): Promise<{
   );
   return {
     projectRoot,
+    emptyTargetProjectRoot,
     targetProjectRoot,
     userData,
     dispose: () => rm(root, { recursive: true, force: true }),

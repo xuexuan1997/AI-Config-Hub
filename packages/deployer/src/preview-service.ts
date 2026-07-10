@@ -34,6 +34,7 @@ import {
   type ContentHash,
   type CorrelationId,
   type IsoDateTime,
+  type ProjectId,
   type ResourceKind,
 } from "@ai-config-hub/shared";
 
@@ -50,6 +51,7 @@ export interface PreviewRequest {
   readonly conflictPolicy?: PreviewConflictPolicy;
   readonly now: IsoDateTime;
   readonly correlationId: CorrelationId;
+  readonly projectId?: ProjectId;
   readonly signal: AbortSignal;
 }
 
@@ -761,6 +763,7 @@ export class DeploymentPreviewService {
         `deployment-record:${recordHash.slice("sha256:".length)}`,
       ),
       deploymentPlanId,
+      ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
       status: "planned",
       operations: plan.operations,
       backupLocations: {},

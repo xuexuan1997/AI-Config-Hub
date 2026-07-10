@@ -638,10 +638,13 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
     "history.list": async (payload) => {
       const request = payload as {
         readonly kinds?: readonly ("deployment" | "rollback")[];
+        readonly taskId?: string;
+        readonly projectId?: string;
         readonly statuses?: readonly string[];
         readonly from?: string;
         readonly to?: string;
         readonly cursor?: string;
+        readonly snapshotRevision?: string;
         readonly limit?: number;
       };
       const page = await runtime.repositories.deployments.listRecords({
@@ -649,11 +652,18 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
         ...(request.statuses === undefined
           ? {}
           : { statuses: request.statuses.map((status) => DeploymentStatusSchema.parse(status)) }),
+        ...(request.taskId === undefined ? {} : { taskId: TaskIdSchema.parse(request.taskId) }),
+        ...(request.projectId === undefined
+          ? {}
+          : { projectId: ProjectIdSchema.parse(request.projectId) }),
         ...(request.from === undefined ? {} : { from: IsoDateTimeSchema.parse(request.from) }),
         ...(request.to === undefined ? {} : { to: IsoDateTimeSchema.parse(request.to) }),
         ...(request.cursor === undefined
           ? {}
           : { cursor: PaginationCursorSchema.parse(request.cursor) }),
+        ...(request.snapshotRevision === undefined
+          ? {}
+          : { snapshotRevision: request.snapshotRevision }),
         limit: request.limit ?? 50,
       });
       const snapshots = await snapshotMetadataForRecords(runtime, page.items);
@@ -662,6 +672,7 @@ function createServices(runtime: CliRuntime, options: CliServiceOptions): Comman
           historyEntry(record, snapshots.get(record.deploymentRecordId)),
         ),
         nextCursor: page.nextCursor ?? null,
+        snapshotRevision: page.snapshotRevision,
       };
     },
     "history.get": async (payload) => {
@@ -1818,6 +1829,8 @@ function historyEntry(record: DeploymentRecord, snapshot: SnapshotMetadata | und
     id: record.deploymentRecordId,
     kind: record.rollbackOfRecordId === undefined ? ("deployment" as const) : ("rollback" as const),
     status: record.status,
+    ...(record.taskId === undefined ? {} : { taskId: record.taskId }),
+    ...(record.projectId === undefined ? {} : { projectId: record.projectId }),
     createdAt: record.createdAt,
     ...(record.finishedAt === undefined ? {} : { finishedAt: record.finishedAt }),
     phase:

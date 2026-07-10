@@ -23,7 +23,9 @@ import {
 import { BaseToolAdapter } from "./base-adapter.js";
 import { conversionCapabilities } from "./conversion.js";
 import {
+  type AdapterDiscoveryBudget,
   candidate,
+  createAdapterDiscoveryBudget,
   documentedFiles,
   markerPath,
   scopeKindFromEvidence,
@@ -267,7 +269,9 @@ class OpenCodeAdapter extends BaseToolAdapter {
   async discover(context: DiscoveryContext): Promise<DiscoveryResult> {
     const candidates = [];
     const scopeKind = scopeKindFromEvidence(context.tool.evidence);
+    let budget: ReturnType<typeof createAdapterDiscoveryBudget> | undefined;
     for (const root of [...context.tool.configRoots].sort()) {
+      budget ??= createAdapterDiscoveryBudget(await context.read.realpath(root));
       const files = await documentedFiles({
         read: context.read,
         root,
@@ -281,6 +285,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
             ? ["agents", "skills"]
             : [".opencode/agents", ".opencode/skills", ".agents/skills", ".claude/skills"],
         signal: context.signal,
+        budget,
       });
       for (const sourcePath of files) {
         const leaf = basename(sourcePath);
@@ -353,6 +358,7 @@ class OpenCodeAdapter extends BaseToolAdapter {
             baseRoot: dirname(sourcePath),
             instructions: stringList(document["instructions"]),
             signal: context.signal,
+            budget,
           })) {
             candidates.push(
               candidate({
@@ -402,6 +408,7 @@ async function configuredInstructionPaths(input: {
   readonly baseRoot: AbsolutePath;
   readonly instructions: readonly string[];
   readonly signal: DiscoveryContext["signal"];
+  readonly budget: AdapterDiscoveryBudget;
 }): Promise<readonly AbsolutePath[]> {
   const files = [];
   for (const instruction of input.instructions) {
@@ -427,7 +434,7 @@ async function configuredInstructionPaths(input: {
       staticRoot.length === 0 ? input.baseRoot : markerPath(input.baseRoot, ...staticRoot);
     const candidates =
       (await input.read.stat(searchRoot)).kind === "directory"
-        ? await walkRelativeDirectories(input.read, searchRoot, ["."], input.signal)
+        ? await walkRelativeDirectories(input.read, searchRoot, ["."], input.signal, input.budget)
         : [];
     const pattern = globPattern(instruction);
     for (const path of candidates) {

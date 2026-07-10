@@ -247,6 +247,7 @@ function services(overrides: Partial<CommandServiceMap> = {}): CommandServiceMap
           },
         ],
         nextCursor: null,
+        snapshotRevision: "42",
       }),
     "history.get": () =>
       Promise.resolve({

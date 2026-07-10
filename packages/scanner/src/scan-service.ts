@@ -1,3 +1,6 @@
+import { dirname } from "node:path";
+
+import { AdapterDiscoveryLimitError } from "@ai-config-hub/adapters";
 import type {
   AdapterDiagnostic,
   AdapterEffectiveConfigDraft,
@@ -23,10 +26,13 @@ import {
   ScopeSchema,
 } from "@ai-config-hub/core";
 import {
+  AbsolutePathSchema,
+  AppError,
   AssetIdSchema,
   DiagnosticIdSchema,
   EffectiveConfigIdSchema,
   IsoDateTimeSchema,
+  JsonPointerSchema,
   PaginationCursorSchema,
   ProjectIdSchema,
   ScanRunIdSchema,
@@ -34,7 +40,8 @@ import {
   type AbsolutePath,
 } from "@ai-config-hub/shared";
 
-import { normalizeAdapterDiagnostic } from "./diagnostics.js";
+import { normalizeAdapterDiagnostic, uniqueAdapterDiagnostics } from "./diagnostics.js";
+import { FileSnapshotLimitError } from "./file-reader.js";
 import { stableId } from "./identity.js";
 
 export type ScanPhase =
@@ -91,6 +98,12 @@ interface ParsedItem extends ReadItem {
   readonly diagnostics: readonly AdapterDiagnostic[];
 }
 
+interface DiscoveryFailure {
+  readonly itemRef: AbsolutePath;
+  readonly diagnostic: AdapterDiagnostic;
+  readonly tool: ToolInstallation;
+}
+
 export class ScanService {
   private readonly maxConcurrency: number;
   private readonly now: () => string;
@@ -114,6 +127,7 @@ export class ScanService {
     const tools: ToolInstallation[] = [];
     const work: WorkItem[] = [];
     const adapterDiagnostics: AdapterDiagnostic[] = [];
+    const discoveryFailures: DiscoveryFailure[] = [];
     for (const adapter of adapters) {
       input.signal.throwIfAborted();
       const detection = await adapter.detect({
@@ -128,22 +142,43 @@ export class ScanService {
         left.installationId.localeCompare(right.installationId),
       )) {
         tools.push(tool);
-        const discovery = await adapter.discover({
-          tool,
-          allowedRoots: tool.configRoots,
-          read: this.options.read,
-          signal: input.signal,
-        });
-        adapterDiagnostics.push(...discovery.diagnostics);
-        for (const candidate of discovery.candidates) work.push({ adapter, tool, candidate });
+        try {
+          const discovery = await adapter.discover({
+            tool,
+            allowedRoots: tool.configRoots,
+            read: this.options.read,
+            signal: input.signal,
+          });
+          adapterDiagnostics.push(...discovery.diagnostics);
+          for (const candidate of discovery.candidates) work.push({ adapter, tool, candidate });
+        } catch (error) {
+          input.signal.throwIfAborted();
+          if (!(error instanceof AdapterDiscoveryLimitError)) throw error;
+          const diagnostic = discoveryLimitDiagnostic(error, tool);
+          adapterDiagnostics.push(diagnostic);
+          discoveryFailures.push({ itemRef: error.root, diagnostic, tool });
+        }
       }
     }
-    const indexedAssetsForChange =
-      input.changedPaths === undefined ? [] : await listAllAssets(this.options.indexRepository);
+    const failedInstallationIds = new Set<string>(
+      discoveryFailures.map(({ tool }) => tool.installationId),
+    );
+    const indexedAssets =
+      input.changedPaths === undefined && failedInstallationIds.size === 0
+        ? []
+        : await listAllAssets(this.options.indexRepository);
+    const indexedScopes =
+      failedInstallationIds.size === 0 ? [] : await this.options.indexRepository.listScopes();
+    const preservedScopes = indexedScopes.filter((scope) => {
+      const installationId = scope.discoveryEvidence["installationId"];
+      return typeof installationId === "string" && failedInstallationIds.has(installationId);
+    });
+    const preservedScopeIds = new Set(preservedScopes.map(({ scopeId }) => scopeId));
+    const preservedAssets = indexedAssets.filter(({ scopeId }) => preservedScopeIds.has(scopeId));
     const changedPaths =
       input.changedPaths === undefined
         ? undefined
-        : expandChangedPaths(input.changedPaths, indexedAssetsForChange);
+        : expandChangedPaths(input.changedPaths, indexedAssets);
     const affectedInstallationIds =
       changedPaths === undefined ? undefined : affectedInstallations(tools, work, changedPaths);
     const narrowedWork =
@@ -167,8 +202,34 @@ export class ScanService {
             path: item.candidate.sourcePath,
             allowedRoots: item.tool.configRoots,
           });
-          return snapshot === undefined ? item : { ...item, snapshot };
-        } catch {
+          if (snapshot !== undefined) return { ...item, snapshot };
+          return item.candidate.resourceKindHint === "skill"
+            ? {
+                ...item,
+                readDiagnostic: skillPrimaryDiagnostic(
+                  item.candidate.sourcePath,
+                  "SKILL_PRIMARY_FILE_MISSING",
+                  {},
+                ),
+              }
+            : item;
+        } catch (error) {
+          if (
+            item.candidate.resourceKindHint === "skill" &&
+            error instanceof FileSnapshotLimitError
+          ) {
+            return {
+              ...item,
+              readDiagnostic: skillPrimaryDiagnostic(
+                item.candidate.sourcePath,
+                "SKILL_PRIMARY_FILE_TOO_LARGE",
+                {
+                  limitBytes: error.limit,
+                  observedBytes: error.observed,
+                },
+              ),
+            };
+          }
           return {
             ...item,
             readDiagnostic: {
@@ -269,20 +330,43 @@ export class ScanService {
             changedPaths,
             affectedInstallationIds,
           });
-    const scopes = uniqueScopes([...cached.scopes, ...parsedScopes]);
-    const assetsForResolution = uniqueAssets([...cached.assets, ...parsedAssetsWithStatuses]);
-    const assetsForCommit =
-      changedPaths === undefined ? assetsForResolution : parsedAssetsWithStatuses;
+    if (changedPaths !== undefined && cached.assets.length > 0) {
+      allAdapterDiagnostics.push(
+        ...(await cachedParsingDiagnostics({
+          repository: this.options.indexRepository,
+          assets: cached.assets,
+          scopes: cached.scopes,
+        })),
+      );
+    }
+    const scopes = uniqueScopes([...preservedScopes, ...cached.scopes, ...parsedScopes]);
+    const assetsForResolution = uniqueAssets([
+      ...preservedAssets,
+      ...cached.assets,
+      ...parsedAssetsWithStatuses,
+    ]);
+    // Incremental diagnosis evaluates the complete affected installation, so
+    // commit those cached assets too. Storage can then replace their diagnostic
+    // summaries and retire diagnostics that disappeared instead of accumulating
+    // one copy per scan run.
+    const assetsForCommit = assetsForResolution;
     const effectiveConfigs = [];
-    const resolvedInstallations =
+    const resolvedInstallations = mergeResolutionTargets(
       affectedInstallationIds === undefined
         ? uniqueResolutionTargets(parsedItems)
-        : uniqueDetectedResolutionTargets(adapters, tools, affectedInstallationIds);
+        : uniqueDetectedResolutionTargets(adapters, tools, affectedInstallationIds),
+      uniqueDetectedResolutionTargets(adapters, tools, failedInstallationIds),
+    );
     for (const { adapter, tool } of resolvedInstallations) {
       input.signal.throwIfAborted();
-      const toolAssets = assetsForResolution.filter(({ toolId }) => toolId === tool.toolId);
+      const toolScopes = scopes.filter(
+        (scope) =>
+          scope.toolId === tool.toolId &&
+          scope.discoveryEvidence["installationId"] === tool.installationId,
+      );
+      const toolScopeIds = new Set(toolScopes.map(({ scopeId }) => scopeId));
+      const toolAssets = assetsForResolution.filter(({ scopeId }) => toolScopeIds.has(scopeId));
       const enabledToolAssets = toolAssets.filter(({ status }) => status !== "disabled");
-      const toolScopes = scopes.filter(({ toolId }) => toolId === tool.toolId);
       for (const targetPath of tool.configRoots) {
         const resolution = await adapter.resolveEffective({
           tool,
@@ -332,10 +416,17 @@ export class ScanService {
     const diagnostics = uniqueAdapterDiagnostics(allAdapterDiagnostics).map((diagnostic) =>
       normalizeAdapterDiagnostic({ diagnostic, scanRunId, createdAt }),
     );
-    const itemFailures = scanItemFailures({ parsedItems, scanRunId, createdAt });
-    const assetsWithDiagnosticSummaries = summarizeAssetDiagnostics(assetsForCommit, diagnostics);
+    const itemFailures = [
+      ...scanItemFailures({ parsedItems, scanRunId, createdAt }),
+      ...discoveryItemFailures({ discoveryFailures, scanRunId, createdAt }),
+    ].sort((left, right) => left.itemRef.localeCompare(right.itemRef));
+    const assetsWithDiagnosticSummaries = summarizeAssetDiagnostics(
+      assetsForCommit,
+      diagnostics,
+      scopes,
+    );
     const succeededCount = parsedItems.filter(({ status }) => status === "parsed").length;
-    const failedCount = parsedItems.length - succeededCount;
+    const failedCount = parsedItems.length - succeededCount + discoveryFailures.length;
     const status =
       failedCount === 0 ? "succeeded" : succeededCount === 0 ? "failed" : "partially_succeeded";
 
@@ -344,6 +435,10 @@ export class ScanService {
     input.signal.throwIfAborted();
     const replacement = {
       scanRunId,
+      scanCoverage: {
+        roots: input.candidateRoots,
+        toolIds: adapters.map(({ toolId }) => toolId),
+      },
       tools: uniqueTools(tools),
       scopes,
       assets: assetsWithDiagnosticSummaries,
@@ -351,7 +446,7 @@ export class ScanService {
       diagnostics,
     };
     const commitChangedPaths =
-      input.changedPaths ??
+      changedPaths ??
       (input.commitMode === "merge-scoped"
         ? await scopedCommitChangedPaths({
             repository: this.options.indexRepository,
@@ -424,6 +519,71 @@ function scanItemFailures(input: {
   });
 }
 
+function discoveryLimitDiagnostic(
+  error: AdapterDiscoveryLimitError,
+  tool: ToolInstallation,
+): AdapterDiagnostic {
+  return withToolDiagnosticOwnership(
+    {
+      code: error.code,
+      severity: "error",
+      message: `Configuration discovery stopped after ${String(error.limit)} entries`,
+      location: { path: error.root },
+      evidence: {
+        limitEntries: error.limit,
+        observedEntriesAtLeast: error.observedAtLeast,
+      },
+      suggestedActions: [
+        "Reduce the configuration search scope or remove generated directories, then scan again",
+      ],
+      blocking: true,
+    },
+    tool,
+  );
+}
+
+function skillPrimaryDiagnostic(
+  path: AbsolutePath,
+  code: "SKILL_PRIMARY_FILE_MISSING" | "SKILL_PRIMARY_FILE_TOO_LARGE",
+  evidence: Readonly<Record<string, unknown>>,
+): AdapterDiagnostic {
+  return {
+    code,
+    severity: "error",
+    message:
+      code === "SKILL_PRIMARY_FILE_MISSING"
+        ? "The Skill package primary file no longer exists"
+        : "The Skill package primary file exceeds the safe snapshot limit",
+    location: { path },
+    evidence: { relativePath: "SKILL.md", ...evidence },
+    suggestedActions:
+      code === "SKILL_PRIMARY_FILE_MISSING"
+        ? ["Restore SKILL.md or remove the incomplete Skill package, then scan again"]
+        : ["Reduce SKILL.md below the reported byte limit, then scan again"],
+    blocking: true,
+  };
+}
+
+function discoveryItemFailures(input: {
+  readonly discoveryFailures: readonly DiscoveryFailure[];
+  readonly scanRunId: string;
+  readonly createdAt: string;
+}): readonly ScanItemFailure[] {
+  return input.discoveryFailures.map(({ itemRef, diagnostic }) => {
+    const normalized = normalizeAdapterDiagnostic({
+      diagnostic,
+      scanRunId: input.scanRunId,
+      createdAt: input.createdAt,
+    });
+    return {
+      itemRef,
+      diagnosticId: normalized.diagnosticId,
+      errorCode: normalized.code,
+      retryable: false,
+    };
+  });
+}
+
 function withDiagnosticOwnership(
   diagnostic: AdapterDiagnostic,
   item: ParsedItem,
@@ -437,6 +597,7 @@ function withDiagnosticOwnership(
       sourcePath: item.candidate.sourcePath,
       scopeKind: item.candidate.scope.kind,
       scopeRoot: item.candidate.scope.canonicalRootPath,
+      diagnosticPhase: "parsing",
       ...(item.candidate.scope.projectRoot === undefined
         ? {}
         : { projectRoot: item.candidate.scope.projectRoot }),
@@ -458,29 +619,10 @@ function withToolDiagnosticOwnership(
   };
 }
 
-function uniqueAdapterDiagnostics(
-  diagnostics: readonly AdapterDiagnostic[],
-): readonly AdapterDiagnostic[] {
-  const seen = new Set<string>();
-  const unique: AdapterDiagnostic[] = [];
-  for (const diagnostic of diagnostics) {
-    const key = [
-      diagnostic.code,
-      diagnostic.location?.path ?? "",
-      diagnostic.location?.line ?? "",
-      diagnostic.location?.column ?? "",
-      diagnostic.message,
-    ].join("\0");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(diagnostic);
-  }
-  return unique;
-}
-
-function summarizeAssetDiagnostics(
+export function summarizeAssetDiagnostics(
   assets: readonly Asset[],
   diagnostics: readonly Diagnostic[],
+  scopes: readonly Scope[],
 ): readonly Asset[] {
   const diagnosticsByAsset = new Map(
     assets.map((asset) => [
@@ -489,6 +631,12 @@ function summarizeAssetDiagnostics(
     ]),
   );
   const assetsByPath = new Map<string, Asset[]>();
+  const installationByScope = new Map(
+    scopes.flatMap((scope) => {
+      const installationId = scope.discoveryEvidence["installationId"];
+      return typeof installationId === "string" ? [[scope.scopeId, installationId] as const] : [];
+    }),
+  );
   for (const asset of assets) {
     const paths =
       asset.sourceFiles.length === 0
@@ -506,11 +654,20 @@ function summarizeAssetDiagnostics(
     if (diagnostic.location?.path !== undefined) paths.add(diagnostic.location.path);
     const sourcePath = diagnostic.evidence.sourcePath;
     if (typeof sourcePath === "string") paths.add(sourcePath);
+    const diagnosticToolId = diagnostic.evidence["toolId"];
+    const diagnosticInstallationId = diagnostic.evidence["toolInstallationId"];
 
     const countedAssetIds = new Set<string>();
     for (const path of paths) {
       for (const asset of assetsByPath.get(path) ?? []) {
         if (countedAssetIds.has(asset.assetId)) continue;
+        if (typeof diagnosticToolId === "string" && asset.toolId !== diagnosticToolId) continue;
+        if (
+          typeof diagnosticInstallationId === "string" &&
+          installationByScope.get(asset.scopeId) !== diagnosticInstallationId
+        ) {
+          continue;
+        }
         countedAssetIds.add(asset.assetId);
         const summary = diagnosticsByAsset.get(asset.assetId);
         if (summary !== undefined) summary[diagnostic.severity] += 1;
@@ -552,8 +709,11 @@ function disabledApplicableAssets(
     .filter(({ status }) => status === "disabled")
     .filter((asset) => {
       const scope = scopesById.get(asset.scopeId);
-      void targetPath;
-      return scope === undefined || scope.toolId === toolId;
+      return (
+        scope !== undefined &&
+        scope.toolId === toolId &&
+        pathWithinRoot(targetPath, scope.canonicalRootPath)
+      );
     })
     .sort((left, right) => left.assetId.localeCompare(right.assetId));
 }
@@ -647,23 +807,150 @@ async function cachedClosure(input: {
   const assets = (await listAllAssets(input.repository)).filter(
     (asset) =>
       scopeIds.has(asset.scopeId) &&
-      !assetSourcePaths(asset).some((sourcePath) => changed.has(normalizePath(sourcePath))),
+      !assetSourcePaths(asset).some(
+        (sourcePath) =>
+          changed.has(normalizePath(sourcePath)) ||
+          pathMatchesAnyChangedPath(sourcePath, input.changedPaths),
+      ),
   );
   return { assets, scopes };
 }
 
-async function listAllAssets(repository: IndexRepository) {
-  const assets = [];
-  let cursor: ReturnType<typeof PaginationCursorSchema.parse> | undefined;
-  for (;;) {
-    const page = await repository.listAssets({
-      ...(cursor === undefined ? {} : { cursor }),
-      limit: 200,
-    });
-    assets.push(...page.items);
-    if (page.nextCursor === undefined) return assets;
-    cursor = PaginationCursorSchema.parse(page.nextCursor);
+async function cachedParsingDiagnostics(input: {
+  readonly repository: IndexRepository;
+  readonly assets: readonly Asset[];
+  readonly scopes: readonly Scope[];
+}): Promise<readonly AdapterDiagnostic[]> {
+  const installationByScope = new Map(
+    input.scopes.flatMap((scope) => {
+      const installationId = scope.discoveryEvidence["installationId"];
+      return typeof installationId === "string" ? [[scope.scopeId, installationId] as const] : [];
+    }),
+  );
+  const pathsByInstallation = new Map<string, Set<string>>();
+  for (const asset of input.assets) {
+    const installationId = installationByScope.get(asset.scopeId);
+    if (installationId === undefined) continue;
+    const paths = pathsByInstallation.get(installationId) ?? new Set<string>();
+    for (const path of assetSourcePaths(asset)) paths.add(normalizePath(path));
+    pathsByInstallation.set(installationId, paths);
   }
+
+  return (await listAllDiagnostics(input.repository)).flatMap((diagnostic) => {
+    const installationId = diagnostic.evidence["toolInstallationId"];
+    if (typeof installationId !== "string") return [];
+    const paths = pathsByInstallation.get(installationId);
+    if (paths === undefined) return [];
+    const diagnosticPhase = diagnostic.evidence["diagnosticPhase"];
+    const isParsingDiagnostic =
+      diagnosticPhase === "parsing" ||
+      (diagnosticPhase === undefined &&
+        typeof diagnostic.evidence["scopeRoot"] === "string" &&
+        typeof diagnostic.evidence["sourcePath"] === "string");
+    if (!isParsingDiagnostic) return [];
+    const diagnosticPaths = [diagnostic.location?.path, diagnostic.evidence["sourcePath"]].filter(
+      (path): path is AbsolutePath => typeof path === "string",
+    );
+    if (!diagnosticPaths.some((path) => paths.has(normalizePath(path)))) return [];
+    const location =
+      diagnostic.location === undefined
+        ? undefined
+        : {
+            path: AbsolutePathSchema.parse(diagnostic.location.path),
+            ...(diagnostic.location.line === undefined ? {} : { line: diagnostic.location.line }),
+            ...(diagnostic.location.column === undefined
+              ? {}
+              : { column: diagnostic.location.column }),
+            ...(diagnostic.location.pointer === undefined
+              ? {}
+              : { pointer: JsonPointerSchema.parse(diagnostic.location.pointer) }),
+          };
+    return [
+      {
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        message: diagnostic.message,
+        ...(location === undefined ? {} : { location }),
+        evidence: diagnostic.evidence,
+        suggestedActions: diagnostic.suggestedActions,
+        blocking: diagnostic.blocking,
+      },
+    ];
+  });
+}
+
+async function listAllAssets(repository: IndexRepository) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const assets = [];
+    const visitedCursors = new Set<string>();
+    let cursor: ReturnType<typeof PaginationCursorSchema.parse> | undefined;
+    let snapshotRevision: string | undefined;
+    for (;;) {
+      const page = await repository.listAssets({
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: 200,
+      });
+      snapshotRevision ??= page.snapshotRevision;
+      if (page.snapshotRevision !== snapshotRevision) {
+        break;
+      }
+      assets.push(...page.items);
+      if (page.nextCursor === undefined) return assets;
+      const nextCursor = PaginationCursorSchema.parse(page.nextCursor);
+      if (visitedCursors.has(nextCursor)) {
+        throw new AppError({
+          code: "STALE_INDEX",
+          message: "Asset pagination returned a repeated cursor",
+          retryable: true,
+          suggestedActions: ["Retry the scan after the current index update completes"],
+        });
+      }
+      visitedCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+  }
+  throw new AppError({
+    code: "STALE_INDEX",
+    message: "Asset index changed repeatedly while the scan was reading it",
+    retryable: true,
+    suggestedActions: ["Retry the scan after the current index update completes"],
+  });
+}
+
+async function listAllDiagnostics(repository: IndexRepository) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const diagnostics = [];
+    const visitedCursors = new Set<string>();
+    let cursor: ReturnType<typeof PaginationCursorSchema.parse> | undefined;
+    let snapshotRevision: string | undefined;
+    for (;;) {
+      const page = await repository.listDiagnostics({
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: 200,
+      });
+      snapshotRevision ??= page.snapshotRevision;
+      if (page.snapshotRevision !== snapshotRevision) break;
+      diagnostics.push(...page.items);
+      if (page.nextCursor === undefined) return diagnostics;
+      const nextCursor = PaginationCursorSchema.parse(page.nextCursor);
+      if (visitedCursors.has(nextCursor)) {
+        throw new AppError({
+          code: "STALE_INDEX",
+          message: "Diagnostic pagination returned a repeated cursor",
+          retryable: true,
+          suggestedActions: ["Retry the scan after the current index update completes"],
+        });
+      }
+      visitedCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+  }
+  throw new AppError({
+    code: "STALE_INDEX",
+    message: "Diagnostic index changed repeatedly while the scan was reading it",
+    retryable: true,
+    suggestedActions: ["Retry the scan after the current index update completes"],
+  });
 }
 
 async function scopedCommitChangedPaths(input: {
@@ -720,9 +1007,16 @@ function expandChangedPaths(
   indexedAssets: readonly Asset[],
 ): readonly AbsolutePath[] {
   const expanded = new Map(changedPaths.map((path) => [normalizePath(path), path]));
-  const changed = new Set(expanded.keys());
   for (const asset of indexedAssets) {
-    if (!assetSourcePaths(asset).some((path) => changed.has(normalizePath(path)))) continue;
+    const existingSourceChanged = assetSourcePaths(asset).some((sourcePath) =>
+      pathMatchesAnyChangedPath(sourcePath, changedPaths),
+    );
+    const newSkillPackageEntry =
+      asset.resource.kind === "skill" &&
+      changedPaths.some((changedPath) =>
+        pathWithinRoot(changedPath, dirname(primaryAssetSourcePath(asset))),
+      );
+    if (!existingSourceChanged && !newSkillPackageEntry) continue;
     expanded.set(normalizePath(asset.canonicalSourcePath), asset.canonicalSourcePath);
   }
   return [...expanded.entries()]
@@ -730,13 +1024,17 @@ function expandChangedPaths(
     .map(([, path]) => path);
 }
 
+function primaryAssetSourcePath(asset: Pick<Asset, "canonicalSourcePath" | "sourceFiles">) {
+  return (
+    asset.sourceFiles.find(({ role }) => role === "primary")?.path ?? asset.canonicalSourcePath
+  );
+}
+
 function pathMatchesAnyChangedPath(
   candidatePath: AbsolutePath,
   changedPaths: readonly AbsolutePath[],
 ): boolean {
-  return changedPaths.some(
-    (changedPath) => normalizePath(changedPath) === normalizePath(candidatePath),
-  );
+  return changedPaths.some((changedPath) => pathWithinRoot(candidatePath, changedPath));
 }
 
 function normalizePath(path: AbsolutePath): string {
@@ -752,7 +1050,10 @@ function assetSourcePaths(asset: Pick<Asset, "canonicalSourcePath" | "sourceFile
 function pathWithinRoot(path: AbsolutePath, root: AbsolutePath): boolean {
   const normalizedPath = normalizePath(path);
   const normalizedRoot = normalizePath(root);
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`)
+  );
 }
 
 function pathWithinAnyRoot(path: AbsolutePath, roots: readonly AbsolutePath[]): boolean {
@@ -783,6 +1084,19 @@ function uniqueDetectedResolutionTargets(
       return adapter === undefined ? [] : [{ adapter, tool }];
     })
     .sort((left, right) => left.tool.installationId.localeCompare(right.tool.installationId));
+}
+
+function mergeResolutionTargets(
+  ...groups: readonly (readonly {
+    readonly adapter: ToolAdapter;
+    readonly tool: ToolInstallation;
+  }[])[]
+) {
+  return [
+    ...new Map(
+      groups.flat().map((target) => [target.tool.installationId, target] as const),
+    ).values(),
+  ].sort((left, right) => left.tool.installationId.localeCompare(right.tool.installationId));
 }
 
 async function mapLimit<T, R>(

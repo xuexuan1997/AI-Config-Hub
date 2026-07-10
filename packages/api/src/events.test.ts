@@ -51,6 +51,23 @@ describe("task event schema", () => {
         payload: { requestedAfterSequence: 1, earliestAvailableSequence: 4, latestSequence: 8 },
       }).success,
     ).toBe(true);
+    expect(
+      TaskEventSchema.safeParse({
+        ...base,
+        sequence: null,
+        type: "snapshot",
+        payload: {
+          taskKind: "deployment",
+          phase: "completed",
+          status: "failed",
+          progress: { phase: "completed", completed: 1, total: 1, unit: "operations" },
+          lastSequence: 208,
+          cancellable: false,
+          systemRecoveryLock: false,
+          resultRef: "deployment-1",
+        },
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -143,6 +160,7 @@ describe("task event cursor", () => {
           itemRef: "deployment-1",
           diagnosticId: "diagnostic:deployment:failure",
           errorCode: "VALIDATION_FAILED",
+          message: "Source changed before deployment: asset-1",
           retryable: false,
         },
       },

@@ -190,7 +190,11 @@ export class SqliteIndexRepository implements IndexRepository {
   ): Promise<{ readonly revision: string }> {
     if (this.readOnly) return Promise.reject(readOnlyError());
     let prepared: ReturnType<typeof prepareReplacement>;
+    let detectedInstallationIds: ReadonlySet<string>;
     try {
+      detectedInstallationIds = new Set(
+        replacement.tools.map(({ installationId }) => installationId),
+      );
       prepared = prepareReplacement(withRecordedDisabledAssets(this.database, replacement));
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error("Index validation failed"));
@@ -201,7 +205,8 @@ export class SqliteIndexRepository implements IndexRepository {
       this.database.exec(
         "DELETE FROM diagnostics; DELETE FROM asset_references; DELETE FROM assets; DELETE FROM scopes; DELETE FROM projects;",
       );
-      const toolIds = insertTools(this.database, prepared);
+      markCoveredInstallationsUndetected(this.database, prepared, detectedInstallationIds);
+      const toolIds = insertTools(this.database, prepared, detectedInstallationIds);
       const projectIds = insertProjects(this.database, prepared);
       const scopeIds = insertScopes(this.database, prepared, toolIds, projectIds);
       const assetIds = insertAssets(this.database, prepared, toolIds, scopeIds, scanId);
@@ -222,7 +227,12 @@ export class SqliteIndexRepository implements IndexRepository {
     if (this.readOnly) return Promise.reject(readOnlyError());
     let prepared: ReturnType<typeof prepareReplacement>;
     let changedPaths: readonly ReturnType<typeof AbsolutePathSchema.parse>[];
+    let detectedInstallationIds: ReadonlySet<string>;
+    const diagnosticRefreshAssetIds = new Set(replacement.assets.map(({ assetId }) => assetId));
     try {
+      detectedInstallationIds = new Set(
+        replacement.tools.map(({ installationId }) => installationId),
+      );
       prepared = prepareReplacement(withRecordedDisabledAssets(this.database, replacement));
       changedPaths = replacement.changedPaths.map((path) => AbsolutePathSchema.parse(path));
     } catch (error) {
@@ -231,10 +241,12 @@ export class SqliteIndexRepository implements IndexRepository {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const scanId = ensureScanRun(this.database, prepared, "incremental");
-      const toolIds = insertTools(this.database, prepared);
+      markCoveredInstallationsUndetected(this.database, prepared, detectedInstallationIds);
+      const toolIds = insertTools(this.database, prepared, detectedInstallationIds);
       const projectIds = insertProjects(this.database, prepared);
       const scopeIds = insertScopes(this.database, prepared, toolIds, projectIds);
       deleteChangedPathRows(this.database, changedPaths);
+      deleteReplacementAssetDiagnostics(this.database, prepared, diagnosticRefreshAssetIds);
       const assetIds = insertAssets(this.database, prepared, toolIds, scopeIds, scanId);
       insertReferences(this.database, prepared, assetIds);
       insertDiagnostics(this.database, prepared, assetIds, scanId);
@@ -587,8 +599,23 @@ function prepareReplacement(replacement: DerivedIndexReplacement) {
     EffectiveConfigSchema.parse(value),
   );
   const diagnostics = replacement.diagnostics.map((value) => DiagnosticSchema.parse(value));
+  const scanCoverage =
+    replacement.scanCoverage === undefined
+      ? undefined
+      : {
+          roots: replacement.scanCoverage.roots.map((path) => AbsolutePathSchema.parse(path)),
+          toolIds: replacement.scanCoverage.toolIds.map((toolId) => ToolIdSchema.parse(toolId)),
+        };
   for (const value of [tools, scopes, assets, effectiveConfigs, diagnostics]) serializeJson(value);
-  return { ...replacement, tools, scopes, assets, effectiveConfigs, diagnostics };
+  return {
+    ...replacement,
+    ...(scanCoverage === undefined ? {} : { scanCoverage }),
+    tools,
+    scopes,
+    assets,
+    effectiveConfigs,
+    diagnostics,
+  };
 }
 
 function ensureScanRun(
@@ -620,16 +647,53 @@ function ensureScanRun(
   return id;
 }
 
-function insertTools(database: DatabaseSync, replacement: ReturnType<typeof prepareReplacement>) {
+function markCoveredInstallationsUndetected(
+  database: DatabaseSync,
+  replacement: ReturnType<typeof prepareReplacement>,
+  detectedInstallationIds: ReadonlySet<string>,
+): void {
+  if (replacement.scanCoverage === undefined) return;
+  const coveredToolIds = new Set(replacement.scanCoverage.toolIds);
+  const coveredRoots = new Set(replacement.scanCoverage.roots.map(normalizePath));
+  const rows = database
+    .prepare(
+      "SELECT tool_installation_id, tool_key, canonical_config_root FROM tools WHERE is_detected = 1",
+    )
+    .all() as {
+    readonly tool_installation_id: string;
+    readonly tool_key: string;
+    readonly canonical_config_root: string;
+  }[];
+  const markAbsent = database.prepare(
+    "UPDATE tools SET is_detected = 0 WHERE tool_installation_id = ?",
+  );
+  for (const row of rows) {
+    if (
+      detectedInstallationIds.has(row.tool_installation_id) ||
+      !coveredToolIds.has(ToolIdSchema.parse(row.tool_key)) ||
+      !pathCoveredByChanges(row.canonical_config_root, coveredRoots)
+    ) {
+      continue;
+    }
+    markAbsent.run(row.tool_installation_id);
+  }
+}
+
+function insertTools(
+  database: DatabaseSync,
+  replacement: ReturnType<typeof prepareReplacement>,
+  detectedInstallationIds: ReadonlySet<string>,
+) {
   const result = new Map<string, string>();
   for (const tool of replacement.tools) {
     const existing = database
       .prepare("SELECT id FROM tools WHERE tool_installation_id = ?")
       .get(tool.installationId) as { id: string } | undefined;
     const id = existing?.id ?? randomUUID();
+    const isDetected = detectedInstallationIds.has(tool.installationId) ? 1 : 0;
     database
       .prepare(
-        `INSERT INTO tools(id, tool_installation_id, tool_key, canonical_config_root, display_name, detected_version, adapter_version, capabilities_json, last_seen_at, is_detected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(tool_installation_id) DO UPDATE SET detected_version=excluded.detected_version, capabilities_json=excluded.capabilities_json, last_seen_at=excluded.last_seen_at, is_detected=1`,
+        `INSERT INTO tools(id, tool_installation_id, tool_key, canonical_config_root, display_name, detected_version, adapter_version, capabilities_json, last_seen_at, is_detected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tool_installation_id) DO UPDATE SET detected_version=excluded.detected_version, capabilities_json=excluded.capabilities_json, last_seen_at=CASE WHEN excluded.is_detected = 1 THEN excluded.last_seen_at ELSE tools.last_seen_at END, is_detected=CASE WHEN excluded.is_detected = 1 THEN 1 ELSE tools.is_detected END`,
       )
       .run(
         id,
@@ -641,6 +705,7 @@ function insertTools(database: DatabaseSync, replacement: ReturnType<typeof prep
         "0.0.0",
         serializeJson(tool.evidence),
         Date.now(),
+        isDetected,
       );
     result.set(tool.installationId, id);
   }
@@ -760,14 +825,14 @@ function insertScopes(
 
 function deleteChangedPathRows(database: DatabaseSync, changedPaths: readonly string[]): void {
   if (changedPaths.length === 0) return;
-  const changed = new Set(changedPaths);
+  const changed = new Set(changedPaths.map(normalizePath));
   const assets = database.prepare("SELECT id, normalized_json FROM assets").all() as {
     id: string;
     normalized_json: string;
   }[];
   for (const row of assets) {
     const asset = parseJson(AssetSchema, row.normalized_json);
-    if (assetSourcePaths(asset).some((path) => changed.has(path))) {
+    if (assetSourcePaths(asset).some((path) => pathCoveredByChanges(path, changed))) {
       database.prepare("DELETE FROM diagnostics WHERE asset_id = ?").run(row.id);
       database.prepare("DELETE FROM assets WHERE id = ?").run(row.id);
     }
@@ -784,12 +849,69 @@ function deleteChangedPathRows(database: DatabaseSync, changedPaths: readonly st
         ? diagnostic.evidence["sourcePath"]
         : undefined;
     if (
-      (diagnostic.location?.path !== undefined && changed.has(diagnostic.location.path)) ||
-      (evidenceSource !== undefined && changed.has(evidenceSource))
+      (diagnostic.location?.path !== undefined &&
+        pathCoveredByChanges(diagnostic.location.path, changed)) ||
+      (evidenceSource !== undefined && pathCoveredByChanges(evidenceSource, changed))
     ) {
       database.prepare("DELETE FROM diagnostics WHERE id = ?").run(row.id);
     }
   }
+}
+
+function deleteReplacementAssetDiagnostics(
+  database: DatabaseSync,
+  replacement: ReturnType<typeof prepareReplacement>,
+  refreshedAssetIds: ReadonlySet<string>,
+): void {
+  const pathsByInstallation = new Map<string, Set<string>>();
+  for (const asset of replacement.assets) {
+    if (!refreshedAssetIds.has(asset.assetId) || asset.status === "disabled") continue;
+    const scope = replacement.scopes.find(({ scopeId }) => scopeId === asset.scopeId);
+    const installationId =
+      scope === undefined ? undefined : installationForScope(scope, replacement);
+    if (installationId === undefined) continue;
+    const paths = pathsByInstallation.get(installationId) ?? new Set<string>();
+    for (const path of assetSourcePaths(asset)) paths.add(normalizePath(path));
+    pathsByInstallation.set(installationId, paths);
+  }
+  if (pathsByInstallation.size === 0) return;
+
+  const diagnostics = database.prepare("SELECT id, evidence_json FROM diagnostics").all() as {
+    readonly id: string;
+    readonly evidence_json: string;
+  }[];
+  const remove = database.prepare("DELETE FROM diagnostics WHERE id = ?");
+  for (const row of diagnostics) {
+    const diagnostic = parseJson(DiagnosticSchema, row.evidence_json);
+    const installationId = diagnostic.evidence["toolInstallationId"];
+    if (typeof installationId !== "string") continue;
+    const paths = pathsByInstallation.get(installationId);
+    if (paths === undefined) continue;
+    const evidenceSource = diagnostic.evidence["sourcePath"];
+    if (
+      (diagnostic.location?.path !== undefined &&
+        paths.has(normalizePath(diagnostic.location.path))) ||
+      (typeof evidenceSource === "string" && paths.has(normalizePath(evidenceSource)))
+    ) {
+      remove.run(row.id);
+    }
+  }
+}
+
+function pathCoveredByChanges(path: string, changedPaths: ReadonlySet<string>): boolean {
+  const normalizedPath = normalizePath(path);
+  for (const changedPath of changedPaths) {
+    if (
+      normalizedPath === changedPath ||
+      normalizedPath.startsWith(changedPath.endsWith("/") ? changedPath : `${changedPath}/`)
+    )
+      return true;
+  }
+  return false;
+}
+
+function normalizePath(path: string): string {
+  return path.replaceAll("\\", "/");
 }
 
 function assetSourcePaths(asset: Asset): readonly string[] {
@@ -823,31 +945,65 @@ function insertAssets(
     if (toolId === undefined || scopeId === undefined)
       throw new Error(`Asset has unresolved ownership: ${item.assetId}`);
     const serialized = serializeJson(item);
-    const id = randomUUID();
+    const existing = database
+      .prepare("SELECT id FROM assets WHERE domain_id = ?")
+      .get(item.assetId) as { readonly id: string } | undefined;
+    const id = existing?.id ?? randomUUID();
     const observed = Date.parse(item.discoveredAt);
-    database
-      .prepare(
-        `INSERT INTO assets(id, domain_id, tool_id, scope_id, last_scan_run_id, resource_type, logical_key, source_path_display, source_path_normalized, content_hash, observed_mtime_ms, observed_size, normalized_json, normalized_schema_version, adapter_version, parse_status, sensitive_summary_json, first_seen_at, last_seen_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'parsed', '{}', ?, ?)`,
-      )
-      .run(
-        id,
-        item.assetId,
-        toolId,
-        scopeId,
-        scanId,
-        item.resource.kind,
-        item.locator,
-        item.canonicalSourcePath,
-        item.canonicalSourcePath,
-        item.contentHash,
-        observed,
-        Buffer.byteLength(serialized),
-        serialized,
-        item.normalizedSchemaVersion,
-        item.adapterVersion,
-        observed,
-        observed,
-      );
+    if (existing === undefined) {
+      database
+        .prepare(
+          `INSERT INTO assets(id, domain_id, tool_id, scope_id, last_scan_run_id, resource_type, logical_key, source_path_display, source_path_normalized, content_hash, observed_mtime_ms, observed_size, normalized_json, normalized_schema_version, adapter_version, parse_status, sensitive_summary_json, first_seen_at, last_seen_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'parsed', '{}', ?, ?)`,
+        )
+        .run(
+          id,
+          item.assetId,
+          toolId,
+          scopeId,
+          scanId,
+          item.resource.kind,
+          item.locator,
+          item.canonicalSourcePath,
+          item.canonicalSourcePath,
+          item.contentHash,
+          observed,
+          Buffer.byteLength(serialized),
+          serialized,
+          item.normalizedSchemaVersion,
+          item.adapterVersion,
+          observed,
+          observed,
+        );
+    } else {
+      database
+        .prepare(
+          `UPDATE assets SET
+             tool_id = ?, scope_id = ?, last_scan_run_id = ?, resource_type = ?, logical_key = ?,
+             source_path_display = ?, source_path_normalized = ?, content_hash = ?,
+             observed_mtime_ms = ?, observed_size = ?, normalized_json = ?,
+             normalized_schema_version = ?, adapter_version = ?, parse_status = 'parsed',
+             sensitive_summary_json = '{}', last_seen_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          toolId,
+          scopeId,
+          scanId,
+          item.resource.kind,
+          item.locator,
+          item.canonicalSourcePath,
+          item.canonicalSourcePath,
+          item.contentHash,
+          observed,
+          Buffer.byteLength(serialized),
+          serialized,
+          item.normalizedSchemaVersion,
+          item.adapterVersion,
+          observed,
+          id,
+        );
+      database.prepare("DELETE FROM asset_references WHERE source_asset_id = ?").run(id);
+    }
     result.set(item.assetId, id);
   }
   return result;
