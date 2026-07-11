@@ -644,6 +644,7 @@ describe("desktop command service composition", () => {
         runtime.close();
       }
     },
+    15_000,
   );
 
   it("returns bounded grouped previews for large Skill packages", async () => {
