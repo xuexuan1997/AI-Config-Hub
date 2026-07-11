@@ -149,7 +149,7 @@ describe("AssetsView", () => {
     expect(html).not.toContain("/workspace/.codex/skills/release</td>");
   });
 
-  it("labels zero diagnostics as normal in the Simplified Chinese review table", () => {
+  it("uses a compact dash for zero diagnostics in the Simplified Chinese review table", () => {
     const html = renderAssets({
       settings: {
         ...initialState.settings,
@@ -169,8 +169,9 @@ describe("AssetsView", () => {
       ],
     });
 
-    expect(html).toContain("<td>正常</td>");
-    expect(html).not.toContain("<td>无诊断</td>");
+    expect(html).toContain('<span class="asset-diagnostic-empty">—</span>');
+    expect(html).not.toContain("正常");
+    expect(html).not.toContain("无诊断");
   });
 
   it("opens the rule tab first when assets arrive in another order", () => {
@@ -191,7 +192,7 @@ describe("AssetsView", () => {
     });
 
     expect(html).toContain('aria-controls="asset-panel-rule" aria-selected="true"');
-    expect(html).toContain("<h2>Rule assets</h2>");
+    expect(html).toContain('class="asset-type-group" aria-label="Rule assets"');
     expect(html).toContain("rule:AGENTS");
     expect(html).not.toContain("skill:release");
   });
@@ -208,6 +209,7 @@ describe("AssetsView", () => {
     expect(html).toContain('aria-label="Asset detail"');
     expect(html).toContain('class="asset-detail-dialog"');
     expect(html).toContain('class="asset-detail-scroll"');
+    expect(html).toContain('<h2 title="rule:AGENTS">rule:AGENTS</h2>');
     expect(html).toContain("Disable impact");
     expect(html).toContain("Only hide it in AI Config Hub");
     expect(html).toContain("Also disables it in the AI tool");
@@ -534,7 +536,7 @@ describe("AssetsView", () => {
     expect(html).toContain('class="asset-detail-diagnostics"');
     expect(html).toContain("<h3>Diagnostics</h3>");
     expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
-    expect(html).toContain("<strong>Partial conversion</strong>");
+    expect(html).toContain('<strong title="Partial conversion">Partial conversion</strong>');
     expect(html).toContain("One field cannot be represented by the target tool.");
     expect(html).not.toContain(
       '<section class="detail-panel" aria-label="Diagnostics for rule:AGENTS">',
@@ -602,9 +604,15 @@ describe("AssetsView", () => {
       diagnosticCounts: { info: 0, warning: 2, error: 1 },
     });
 
-    expect(html).toContain("<strong>MCP literal secret risk</strong>");
-    expect(html).toContain("<strong>Cursor legacy Rule format</strong>");
-    expect(html).toContain("<strong>Unresolved Skill reference</strong>");
+    expect(html).toContain(
+      '<strong title="MCP literal secret risk">MCP literal secret risk</strong>',
+    );
+    expect(html).toContain(
+      '<strong title="Cursor legacy Rule format">Cursor legacy Rule format</strong>',
+    );
+    expect(html).toContain(
+      '<strong title="Unresolved Skill reference">Unresolved Skill reference</strong>',
+    );
     expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
     expect(html).not.toContain("<strong>Cursor legacy rule format</strong>");
     expect(html).not.toContain("<strong>Unresolved skill reference</strong>");
@@ -639,8 +647,8 @@ describe("AssetsView", () => {
       diagnosticCounts: { info: 0, warning: 2, error: 0 },
     });
 
-    expect(html).toContain("<strong>Cursor 旧版 Rule 格式</strong>");
-    expect(html).toContain("<strong>未解析的 Skill 引用</strong>");
+    expect(html).toContain('<strong title="Cursor 旧版 Rule 格式">Cursor 旧版 Rule 格式</strong>');
+    expect(html).toContain('<strong title="未解析的 Skill 引用">未解析的 Skill 引用</strong>');
     expect(html).toContain("Rule 资源去除空白后指令为空。");
     expect(html).toContain("无法从 skill:release 解析 Skill 引用。");
     expect(html).not.toContain("旧版规则格式");
@@ -703,7 +711,7 @@ describe("AssetsView", () => {
     );
 
     expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
-    expect(html).toContain("<strong>Scan read failed</strong>");
+    expect(html).toContain('<strong title="Scan read failed">Scan read failed</strong>');
     expect(html).not.toContain('<span class="diagnostic-severity-pill error">Error</span>');
     expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
   });
@@ -721,7 +729,9 @@ describe("AssetsView", () => {
     );
 
     expect(html).toContain('<span class="diagnostic-severity-pill error">Error</span>');
-    expect(html).toContain("<strong>MCP literal secret risk</strong>");
+    expect(html).toContain(
+      '<strong title="MCP literal secret risk">MCP literal secret risk</strong>',
+    );
     expect(html).not.toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
     expect(html).not.toContain("<strong>Scan read failed</strong>");
   });
@@ -740,7 +750,7 @@ describe("AssetsView", () => {
 
     expect(html).toContain('<option value="__all__" selected="">All diagnostic codes</option>');
     expect(html).toContain('<span class="diagnostic-severity-pill warning">Warning</span>');
-    expect(html).toContain("<strong>Scan read failed</strong>");
+    expect(html).toContain('<strong title="Scan read failed">Scan read failed</strong>');
     expect(html).not.toContain('<span class="diagnostic-severity-pill error">Error</span>');
     expect(html).not.toContain("<strong>Mcp literal secret risk</strong>");
   });

@@ -90,10 +90,16 @@ export function ScanTaskPanel(props: {
     props.task === undefined
       ? props.heading
       : scanTaskHeading(props.locale, props.heading, props.task);
+  const taskMessage =
+    props.task?.message === undefined
+      ? undefined
+      : localizeUiMessage(props.locale, props.task.message);
 
   return (
     <section
       className="scan-task-panel"
+      data-phase={props.task?.phase}
+      data-status={props.task?.status}
       aria-label={props.ariaLabel}
       aria-atomic="false"
       aria-live="polite"
@@ -102,7 +108,9 @@ export function ScanTaskPanel(props: {
       <header className="scan-task-heading">
         <div>
           <span className="eyebrow">{t(props.locale, "Scan status")}</span>
-          <h2 id={props.titleId}>{heading}</h2>
+          <h2 id={props.titleId} title={heading}>
+            {heading}
+          </h2>
         </div>
         {props.task === undefined ? null : (
           <span className={`scan-task-state ${props.task.status}`}>
@@ -127,8 +135,10 @@ export function ScanTaskPanel(props: {
           value={progress.completed}
         />
       )}
-      {props.task?.message === undefined ? null : (
-        <p>{localizeUiMessage(props.locale, props.task.message)}</p>
+      {taskMessage === undefined ? null : (
+        <p className="scan-task-detail" title={taskMessage}>
+          {taskMessage}
+        </p>
       )}
       {props.message === undefined ? null : (
         <p className="scan-task-message">{localizeUiMessage(props.locale, props.message)}</p>

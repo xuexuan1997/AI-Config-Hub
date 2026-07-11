@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -19,6 +19,62 @@ import {
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const mainEntry = join(repoRoot, "apps/desktop/dist/main/main/main.js");
+const expectedSingleLineSelectors = [
+  ".brand strong",
+  ".brand span",
+  ".sidebar nav button",
+  ".shell-context small",
+  ".shell-context strong",
+  ".page-heading h1",
+  ".tool-filter-button",
+  ".asset-type-tab .asset-tab-main strong",
+  ".asset-type-tab > span:last-child",
+  ".asset-table-compact th",
+  ".asset-key-label strong",
+  ".asset-row-meta",
+  ".asset-source-cell",
+  ".asset-load-badge",
+  ".diagnostic-severity-filter button",
+  ".diagnostic-code-filter > span",
+  ".diagnostic-row-title strong",
+  ".migration-project-copy span",
+  ".migration-project-copy strong",
+  ".migration-tab-count",
+  ".panel-title > strong",
+  ".panel-title > span",
+  ".panel-title-copy strong",
+  ".panel-title-copy small",
+  ".asset-option > span",
+  ".asset-option > small",
+  ".migration-summary-heading h2",
+  ".migration-summary-heading small",
+  ".summary-card > span",
+  ".summary-card > strong",
+  ".migration-difference-summary .field.compact > label",
+  ".target-change-heading strong",
+  ".target-change-meta span",
+  ".preview-summary > strong",
+  ".preview-summary > span",
+  ".migration-execution-heading h2",
+  ".confirmation-item",
+  ".migration-action-row button",
+  ".blocker-panel li",
+  ".settings-heading h1",
+  ".settings-heading > button",
+  ".settings-grid label",
+  ".settings-meta > span",
+  ".settings-update-actions button",
+  ".settings-section-heading h2",
+  ".settings-check-row strong",
+  ".settings-local-data-actions button",
+  ".asset-detail-header h2",
+  ".asset-detail-close",
+  ".detail-actions button",
+  ".scan-task-heading h2",
+  ".task-status-summary > span",
+  ".scan-task-state",
+  ".scan-task-modal .scan-task-detail",
+] as const;
 
 test.setTimeout(120_000);
 
@@ -59,24 +115,34 @@ test.describe("Desktop end to end", () => {
       ]);
 
       const page = await app.firstWindow();
+      await setDesktopContentSize(app, 1024, 700);
       await expect(page.getByText("AI Config Hub", { exact: true })).toBeVisible();
       expect(existsSync(join(workspace.userData, "ai-config-hub.sqlite"))).toBe(true);
       await expect(page.getByRole("heading", { name: exactText("资产审查") })).toBeVisible();
       await captureDesktopScreenshot(page, testInfo, "01-asset-review-empty");
+      await expectSingleLineUi(page, "asset review empty");
 
       await page.getByRole("button", { name: exactText("选择项目") }).click();
-      await expect(page.getByText(workspace.projectRoot)).toBeVisible();
-      await expect(page.getByText(scanCompletePattern())).toBeVisible({
+      await expectPathSummary(
+        page.locator(".shell-context strong"),
+        page.locator(".shell-context"),
+        workspace.projectRoot,
+      );
+      await expect(page.getByText("rule:AGENTS", { exact: true }).first()).toBeVisible({
         timeout: 30_000,
       });
+      await expect(page.locator(".scan-task-modal")).toHaveCount(0);
       await captureDesktopScreenshot(page, testInfo, "02-asset-review-scanned");
+      await expectSingleLineUi(page, "asset review populated");
 
-      await page.getByRole("button", { name: "Codex" }).click();
-      await expect(page.getByRole("heading", { name: exactText("Rule资产") })).toBeVisible();
+      const codexTool = page.getByRole("button", { name: "Codex" });
+      await codexTool.click();
+      await expect(codexTool).toHaveAttribute("aria-pressed", "true");
       const inspectCodexRule = page
         .locator("tbody tr")
         .filter({ hasText: "AGENTS" })
         .getByRole("button", { name: exactText("检查") });
+      await expect(inspectCodexRule).toBeVisible();
       await inspectCodexRule.click();
 
       const assetDetail = page.getByRole("dialog", { name: exactText("资产详情") });
@@ -87,6 +153,7 @@ test.describe("Desktop end to end", () => {
       await expect(assetDetail.getByText(exactText("快照修订版本"))).toBeVisible();
       await expect(assetDetail.getByText(exactText("贡献者"))).toBeVisible();
       await captureDesktopScreenshot(page, testInfo, "03-asset-detail");
+      await expectSingleLineUi(page, "asset detail");
       await assetDetail.getByRole("button", { name: exactText("禁用资产") }).click();
       await expect(assetDetail).toContainText("已禁用");
       await assetDetail.getByRole("button", { name: exactText("启用资产") }).click();
@@ -98,15 +165,18 @@ test.describe("Desktop end to end", () => {
       await page.getByRole("button", { name: exactText("资产迁移") }).click();
       await expect(page.getByRole("heading", { name: exactText("资产迁移") })).toBeVisible();
       await captureDesktopScreenshot(page, testInfo, "04-migration-empty");
+      await expectSingleLineUi(page, "migration empty");
 
       await page.locator(".migration-project-card.source").getByRole("button").click();
-      await expect(page.locator(".migration-project-card.source")).toContainText(
+      await expectProjectCardPath(
+        page.locator(".migration-project-card.source"),
         workspace.projectRoot,
       );
       const sourceAssets = page.locator(".migration-source-panel");
       await expect(sourceAssets).toContainText("AGENTS", { timeout: 30_000 });
       await page.locator(".migration-project-card.target").getByRole("button").click();
-      await expect(page.locator(".migration-project-card.target")).toContainText(
+      await expectProjectCardPath(
+        page.locator(".migration-project-card.target"),
         workspace.targetProjectRoot,
       );
       await expect(page.locator(".migration-target-panel")).toContainText("rule:agents", {
@@ -150,6 +220,7 @@ test.describe("Desktop end to end", () => {
         }),
       ).toBeVisible();
       await captureDesktopScreenshot(page, testInfo, "06-migration-preview");
+      await expectSingleLineUi(page, "migration preview blocked");
 
       await expect(page.getByRole("button", { name: "Deployment" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "History" })).toHaveCount(0);
@@ -157,11 +228,13 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByRole("button", { name: exactText("执行迁移") })).toBeDisabled();
       await expect(page.getByText(requiredConfirmationBlockerPattern())).toBeVisible();
       await page.getByLabel(exactText("覆盖现有目标文件。")).check();
+      await expectSingleLineUi(page, "migration preview ready");
       await page.getByRole("button", { name: exactText("执行迁移") }).click();
       await expect(page.getByText(migrationCompletePattern())).toBeVisible({
         timeout: 30_000,
       });
       await captureDesktopScreenshot(page, testInfo, "07-migration-complete");
+      await expectSingleLineUi(page, "migration complete");
       await expect.poll(() => existsSync(cursorRulePath)).toBe(true);
       expect(await readFile(cursorRulePath, "utf8")).toContain("Use local TypeScript conventions.");
       expect(await readFile(cursorRulePath, "utf8")).not.toContain("Existing Cursor Rule.");
@@ -176,10 +249,12 @@ test.describe("Desktop end to end", () => {
       await expect(page.getByRole("heading", { name: exactText("设置") })).toBeVisible();
       await expect(page.getByText(exactText("软件更新"))).toBeVisible();
       await expect(page.getByText(exactText("当前版本 0.2.18"))).toBeVisible();
+      await expectSingleLineUi(page, "settings top");
       const clearSelectedData = page.getByRole("button", { name: exactText("清理所选数据") });
       await expect(clearSelectedData).toBeDisabled();
       await clearSelectedData.scrollIntoViewIfNeeded();
       await captureDesktopScreenshot(page, testInfo, "08-settings");
+      await expectSingleLineUi(page, "settings bottom");
       await expectDirectoryPickerInvocations(app, 3);
     } finally {
       await app.close();
@@ -198,6 +273,7 @@ test.describe("Desktop end to end", () => {
     try {
       await stubDirectoryPicker(app, [workspace.projectRoot, workspace.emptyTargetProjectRoot]);
       const page = await app.firstWindow();
+      await setDesktopContentSize(app, 1024, 700);
       // This scenario exercises deployment preflight drift detection. Disable
       // live watching so it cannot retire the preview before Execute is clicked.
       await setFileWatching(page, false);
@@ -206,7 +282,8 @@ test.describe("Desktop end to end", () => {
       const sourceAssets = page.locator(".migration-source-panel");
       await expect(sourceAssets).toContainText("AGENTS", { timeout: 30_000 });
       await page.locator(".migration-project-card.target").getByRole("button").click();
-      await expect(page.locator(".migration-project-card.target")).toContainText(
+      await expectProjectCardPath(
+        page.locator(".migration-project-card.target"),
         workspace.emptyTargetProjectRoot,
       );
       await clearMigrationSourceSelection(page, sourceAssets);
@@ -240,6 +317,7 @@ test.describe("Desktop end to end", () => {
       expect(existsSync(targetRulePath)).toBe(false);
       await expect(page.getByText(/恢复锁已激活|Recovery lock active/)).toHaveCount(0);
       await captureDesktopScreenshot(page, testInfo, "09-source-drift-blocked");
+      await expectSingleLineUi(page, "migration failed");
       await expectDirectoryPickerInvocations(app, 2);
     } finally {
       await app.close();
@@ -375,6 +453,118 @@ async function captureDesktopScreenshot(
   await page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
 }
 
+async function setDesktopContentSize(
+  app: ElectronApplication,
+  width: number,
+  height: number,
+): Promise<void> {
+  await app.evaluate(
+    (electronModule, size) => {
+      const window = electronModule.BrowserWindow.getAllWindows()[0];
+      if (window === undefined) throw new Error("Expected an Electron BrowserWindow");
+      window.webContents.setZoomFactor(1);
+      window.setContentSize(size.width, size.height, false);
+    },
+    { width, height },
+  );
+}
+
+async function expectSingleLineUi(page: Page, stateLabel: string): Promise<void> {
+  const result = await page.evaluate((selectors) => {
+    const findings: Array<Record<string, unknown>> = [];
+    for (const selector of selectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (!(element instanceof HTMLElement)) continue;
+        const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const intersectsViewport =
+          bounds.width > 0 &&
+          bounds.height > 0 &&
+          bounds.bottom > 0 &&
+          bounds.right > 0 &&
+          bounds.top < innerHeight &&
+          bounds.left < innerWidth &&
+          style.visibility !== "hidden";
+        if (!intersectsViewport) continue;
+        const text = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ");
+        if (text.length === 0) continue;
+        const lineTops: number[] = [];
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if ((node.textContent ?? "").trim().length === 0) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) {
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            const top = Math.round(rect.top * 2) / 2;
+            if (!lineTops.some((candidate) => Math.abs(candidate - top) < 1)) lineTops.push(top);
+          }
+        }
+        const overflowX = element.scrollWidth > element.clientWidth + 1;
+        const overflowY = element.scrollHeight > element.clientHeight + 1;
+        const ellipsisAllowed =
+          style.whiteSpace === "nowrap" &&
+          (style.overflowX === "hidden" || style.overflowX === "clip") &&
+          style.textOverflow === "ellipsis";
+        const compactPanel = element.closest('.migration-preview-details[data-layout="compact"]');
+        const compactBounds = compactPanel?.getBoundingClientRect();
+        const compactClipTarget =
+          selector === ".confirmation-item" || selector === ".blocker-panel li";
+        const clippedByCompactPanel =
+          compactClipTarget &&
+          compactBounds !== undefined &&
+          (bounds.top < compactBounds.top - 1 ||
+            bounds.bottom > compactBounds.bottom + 1 ||
+            bounds.left < compactBounds.left - 1 ||
+            bounds.right > compactBounds.right + 1);
+        if (
+          lineTops.length > 1 ||
+          (overflowX && !ellipsisAllowed) ||
+          overflowY ||
+          clippedByCompactPanel
+        ) {
+          findings.push({
+            selector,
+            text,
+            lines: lineTops.length,
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            clientHeight: element.clientHeight,
+            scrollHeight: element.scrollHeight,
+            whiteSpace: style.whiteSpace,
+            overflowX: style.overflowX,
+            textOverflow: style.textOverflow,
+            clippedByCompactPanel,
+          });
+        }
+      }
+    }
+    return {
+      documentOverflowX:
+        document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      findings,
+    };
+  }, expectedSingleLineSelectors);
+
+  expect(result.documentOverflowX, `${stateLabel}: document overflow`).toBe(0);
+  expect(result.findings, `${stateLabel}: unexpected wraps or clipping`).toEqual([]);
+}
+
+async function expectProjectCardPath(card: Locator, expectedPath: string): Promise<void> {
+  const value = card.locator(".migration-project-copy strong");
+  await expectPathSummary(value, value, expectedPath);
+}
+
+async function expectPathSummary(
+  visibleValue: Locator,
+  tooltipOwner: Locator,
+  expectedPath: string,
+): Promise<void> {
+  await expect(visibleValue).toHaveText(basename(expectedPath));
+  await expect(tooltipOwner).toHaveAttribute("title", pathSuffixPattern(expectedPath));
+}
+
 async function clearMigrationSourceSelection(page: Page, sourceAssets: Locator): Promise<void> {
   for (const tab of await page.locator(".migration-tabs [role='tab']").all()) {
     await tab.click();
@@ -388,8 +578,8 @@ function exactText(value: string): RegExp {
   return new RegExp(`^${escapeRegExp(value)}$`);
 }
 
-function scanCompletePattern(): RegExp {
-  return /扫描已完成：.*成功/;
+function pathSuffixPattern(value: string): RegExp {
+  return new RegExp(escapeRegExp(value) + "$");
 }
 
 function migrationCompletePattern(): RegExp {

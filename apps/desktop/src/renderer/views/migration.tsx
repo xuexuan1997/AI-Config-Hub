@@ -1,4 +1,22 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+import { FileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
+import { FolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
+import { LightningIcon } from "@phosphor-icons/react/dist/csr/Lightning";
+import { PlugsConnectedIcon } from "@phosphor-icons/react/dist/csr/PlugsConnected";
+import { PlusCircleIcon } from "@phosphor-icons/react/dist/csr/PlusCircle";
+import { RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
+import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 
 import { localeForState, localizeUiMessage, t, type DesktopLocale } from "../i18n.js";
 import {
@@ -36,6 +54,27 @@ export function MigrationView(props: {
 }) {
   const locale = localeForState(props.state);
   const preview = props.state.preview;
+  const previewSummary =
+    preview === undefined
+      ? undefined
+      : {
+          plan: t(locale, "Plan {plan}", { plan: displayIdentifier(preview.planId) }),
+          planHash: t(locale, "Plan hash: {hash}", { hash: preview.planHash }),
+          compatibility: t(locale, "Compatibility: {compatibility}", {
+            compatibility: compatibilityLabel(locale, preview.compatibility),
+          }),
+          confirmations: t(locale, "Confirmations: {confirmations}", {
+            confirmations:
+              preview.requiredConfirmations.length === 0
+                ? t(locale, "none")
+                : preview.requiredConfirmations
+                    .map((confirmation) => t(locale, deploymentConfirmationLabel(confirmation)))
+                    .join(" "),
+          }),
+          expires: t(locale, "Expires: {expires}", {
+            expires: formatTimestamp(preview.expiresAt),
+          }),
+        };
   const previewBlockers = migrationPreviewBlockersForState(props.state);
   const driftRows = migrationSourceDriftRowsForState(props.state).filter(
     (row) => row.status !== "current",
@@ -69,6 +108,8 @@ export function MigrationView(props: {
     stateActiveTask?.taskKind === "deployment" || stateActiveTask?.taskKind === "rollback"
       ? stateActiveTask
       : undefined;
+  const useCompactPreviewLayout =
+    preview !== undefined && activeTask === undefined && props.state.recoveryLock === undefined;
   const sourceScanTask =
     stateActiveTask?.taskKind === "scan" &&
     stateActiveTask.scanScope === "migration-source" &&
@@ -82,6 +123,14 @@ export function MigrationView(props: {
       ? stateActiveTask
       : undefined;
   const scanTask = sourceScanTask ?? targetScanTask;
+  const persistentSourceScanTask =
+    sourceScanTask?.phase === "completed" && sourceScanTask.status !== "succeeded"
+      ? sourceScanTask
+      : undefined;
+  const persistentTargetScanTask =
+    targetScanTask?.phase === "completed" && targetScanTask.status !== "succeeded"
+      ? targetScanTask
+      : undefined;
   const targetRows = useMemo(
     () => targetRowsForState(props.state, activeResourceType),
     [props.state, activeResourceType],
@@ -114,6 +163,7 @@ export function MigrationView(props: {
           disabled={previewBlockers.length > 0 || props.previewPending === true}
           onClick={props.onPreview}
         >
+          <EyeIcon aria-hidden="true" size={17} />
           {t(locale, props.previewPending === true ? "Creating preview" : "Preview writes")}
         </button>
       </section>
@@ -134,7 +184,7 @@ export function MigrationView(props: {
           type="button"
           onClick={props.onSwapProjects}
         >
-          ⇄
+          <ArrowsLeftRightIcon aria-hidden="true" size={18} weight="bold" />
         </button>
         <ProjectCard
           className="target"
@@ -174,8 +224,11 @@ export function MigrationView(props: {
                 )
               }
             >
-              <strong>{resourceTypeLabel(locale, group.resourceType)}</strong>
-              <span>
+              <span className="asset-tab-main">
+                <MigrationResourceTypeIcon resourceType={group.resourceType} />
+                <strong>{resourceTypeLabel(locale, group.resourceType)}</strong>
+              </span>
+              <span className="migration-tab-count">
                 {formatDifferenceCount(locale, differenceCountForGroup(props.state, group))}
               </span>
             </button>
@@ -183,301 +236,308 @@ export function MigrationView(props: {
         })}
       </div>
 
-      <section
-        aria-labelledby={
-          activeGroup === undefined ? undefined : migrationTypeTabId(activeGroup.resourceType)
-        }
-        className="migration-comparison-body"
-        id={activeGroup === undefined ? undefined : migrationTypePanelId(activeGroup.resourceType)}
-        role="tabpanel"
-      >
-        <section className="migration-source-panel panel">
-          <header className="panel-title">
-            <strong>{t(locale, "Source assets")}</strong>
-            <span>{formatAssetCount(locale, activeGroup?.assets.length ?? 0)}</span>
-          </header>
-          <ScanTaskPanel
-            ariaLabel={t(locale, "Source scan status")}
-            heading={t(locale, "Source scan")}
-            locale={locale}
-            message={undefined}
-            task={sourceScanTask}
-          />
-          <div className="migration-asset-list">
-            {!hasSourceProject ? (
-              <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
-            ) : activeGroup === undefined ? (
-              <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
-            ) : activeGroup.assets.length === 0 ? (
-              <p>{t(locale, "No differences for this asset type.")}</p>
-            ) : (
-              activeGroup.assets.map((asset) => (
-                <label
-                  key={asset.id}
-                  className={`asset-option${asset.status === "disabled" ? " is-disabled" : ""}`}
-                >
-                  <input
-                    type="checkbox"
-                    disabled={asset.status === "disabled"}
-                    checked={props.state.migration.sourceAssetIds.includes(asset.id)}
-                    onChange={(event) =>
-                      props.onToggleSource(asset.id, event.currentTarget.checked)
-                    }
-                  />
-                  <span>
-                    {asset.logicalKey}
-                    {asset.status === "disabled" ? ` · ${t(locale, "Disabled")}` : ""}
-                  </span>
-                  <small>
-                    {toolLabel(asset.toolKey)} / {resourceTypeLabel(locale, asset.resourceType)}
-                  </small>
-                </label>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="migration-difference-summary">
-          <h2>{t(locale, "Difference summary")}</h2>
-          <div className="summary-card">
-            <span>{t(locale, "Added to target")}</span>
-            <strong>{summary.addedToTarget}</strong>
-          </div>
-          <div className="summary-card">
-            <span>{t(locale, "Overwritten in target")}</span>
-            <strong>{summary.overwrittenInTarget}</strong>
-          </div>
-          <div className="summary-card">
-            <span>
-              {t(locale, preview === undefined ? "Target-only kept" : "Unchanged planned outputs")}
-            </span>
-            <strong>{summary.targetOnlyKept}</strong>
-          </div>
-          <div className="summary-card">
-            <span>{t(locale, "Conflicts or warnings")}</span>
-            <strong>{summary.conflictsOrWarnings}</strong>
-          </div>
-          <div className="field compact">
-            <label htmlFor="migration-target">{t(locale, "Target tool")}</label>
-            <select
-              id="migration-target"
-              value={props.state.migration.targetToolKey}
-              onChange={(event) => props.onTargetTool(event.currentTarget.value)}
-            >
-              {MIGRATION_TARGET_TOOL_OPTIONS.map((target) => (
-                <option key={target} value={target}>
-                  {targetToolLabel(target)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field compact">
-            <label htmlFor="migration-conflict">{t(locale, "Existing target files")}</label>
-            <select
-              id="migration-conflict"
-              value={props.state.migration.conflictPolicy}
-              onChange={(event) =>
-                props.onConflictPolicy(event.currentTarget.value as MigrationConflictPolicy)
-              }
-            >
-              {MIGRATION_CONFLICT_POLICY_OPTIONS.map((policy) => (
-                <option key={policy} value={policy}>
-                  {conflictPolicyLabel(locale, policy)}
-                </option>
-              ))}
-            </select>
-          </div>
-          {preview === undefined ? null : (
-            <header className="preview-summary">
-              <strong>
-                {t(locale, "Plan {plan}", { plan: displayIdentifier(preview.planId) })}
-              </strong>
-              <span>{t(locale, "Plan hash: {hash}", { hash: preview.planHash })}</span>
-              <span>
-                {t(locale, "Compatibility: {compatibility}", {
-                  compatibility: compatibilityLabel(locale, preview.compatibility),
-                })}
-              </span>
-              <span>
-                {t(locale, "Confirmations: {confirmations}", {
-                  confirmations:
-                    preview.requiredConfirmations.length === 0
-                      ? t(locale, "none")
-                      : preview.requiredConfirmations
-                          .map((confirmation) =>
-                            t(locale, deploymentConfirmationLabel(confirmation)),
-                          )
-                          .join(" "),
-                })}
-              </span>
-              <span>
-                {t(locale, "Expires: {expires}", { expires: formatTimestamp(preview.expiresAt) })}
-              </span>
+      <div className="migration-stage">
+        <section
+          aria-labelledby={
+            activeGroup === undefined ? undefined : migrationTypeTabId(activeGroup.resourceType)
+          }
+          className="migration-comparison-body"
+          id={
+            activeGroup === undefined ? undefined : migrationTypePanelId(activeGroup.resourceType)
+          }
+          role="tabpanel"
+        >
+          <section className="migration-source-panel panel">
+            <header className="panel-title">
+              <strong>{t(locale, "Source assets")}</strong>
+              <span>{formatAssetCount(locale, activeGroup?.assets.length ?? 0)}</span>
             </header>
-          )}
-          {previewBlockers.length === 0 ? null : (
-            <ul className="migration-blockers">
-              {previewBlockers.map((blocker) => (
-                <li key={blocker}>{localizeUiMessage(locale, blocker)}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="migration-target-panel panel">
-          <header className="panel-title">
-            <strong>{t(locale, "Target assets")}</strong>
-            <span>{formatAssetCount(locale, targetRows.length)}</span>
-          </header>
-          <dl className="target-context">
-            <dt>{t(locale, "Target project")}</dt>
-            <dd>{props.state.migration.targetScopeId || t(locale, "Target project path")}</dd>
-            <dt>{t(locale, "Target tool")}</dt>
-            <dd>{targetToolLabel(props.state.migration.targetToolKey)}</dd>
-          </dl>
-          <ScanTaskPanel
-            ariaLabel={t(locale, "Target scan status")}
-            heading={t(locale, "Target scan")}
-            locale={locale}
-            message={undefined}
-            task={targetScanTask}
-          />
-          <div className="migration-asset-list">
-            {props.state.migration.targetScopeId === undefined ? (
-              <p>{t(locale, "Choose a target project to see target assets.")}</p>
-            ) : targetRows.length === 0 ? (
-              <p>{t(locale, "No target assets for this tool and type.")}</p>
-            ) : (
-              targetRows.map((row) =>
-                row.kind === "asset" ? (
-                  <TargetAssetRow
-                    key={row.asset.id}
-                    asset={row.asset}
-                    change={row.change}
-                    liveDifference={row.liveDifference}
-                    locale={locale}
-                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
-                    targetProject={props.state.migration.targetScopeId}
-                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
-                  />
-                ) : row.kind === "preview" ? (
-                  <PreviewTargetRow
-                    key={row.group.groupId}
-                    group={row.group}
-                    locale={locale}
-                    sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
-                    targetProject={props.state.migration.targetScopeId}
-                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
-                  />
-                ) : (
-                  <SourceOnlyTargetRow
-                    key={`source-only:${row.difference.sourceAsset?.id ?? row.difference.logicalKey}`}
-                    difference={row.difference}
-                    locale={locale}
-                    targetProject={props.state.migration.targetScopeId}
-                    targetTool={targetToolLabel(props.state.migration.targetToolKey)}
-                  />
-                ),
-              )
-            )}
-          </div>
-        </section>
-      </section>
-
-      {preview === undefined &&
-      activeTask === undefined &&
-      props.state.recoveryLock === undefined ? null : (
-        <section className="migration-preview-details">
-          <MigrationExecutionPanel
-            activeTask={activeTask}
-            deploymentBlockers={deploymentBlockers}
-            deploymentConfirmed={props.state.deploymentConfirmed}
-            recoveryLock={props.state.recoveryLock}
-            grantedConfirmations={grantedConfirmations}
-            locale={locale}
-            preview={preview}
-            requiredConfirmations={requiredConfirmations}
-            onConfirmMigration={props.onConfirmMigration}
-            onConfirmRequirement={props.onConfirmRequirement}
-            onExecuteMigration={props.onExecuteMigration}
-            {...(props.onResolveRecovery === undefined
-              ? {}
-              : { onResolveRecovery: props.onResolveRecovery })}
-          />
-          {preview === undefined ? null : (
-            <>
-              {preview.warnings.length === 0 ? null : (
-                <ul className="warning-list">
-                  {preview.warnings.map((warning) => (
-                    <li key={warning.id}>{warning.message}</li>
-                  ))}
-                </ul>
-              )}
-              {preview.fieldLosses.length === 0 ? null : (
-                <section className="field-loss-panel" aria-label={t(locale, "Field loss details")}>
-                  <h2>{t(locale, "Field loss")}</h2>
-                  {preview.fieldLosses.map((loss) => (
-                    <FieldLossDetail
-                      key={loss.assetId}
-                      assetLabels={assetLabels}
-                      locale={locale}
-                      loss={loss}
+            <ScanTaskPanel
+              ariaLabel={t(locale, "Source scan status")}
+              heading={t(locale, "Source scan")}
+              locale={locale}
+              message={undefined}
+              task={persistentSourceScanTask}
+            />
+            <div className="migration-asset-list">
+              {!hasSourceProject ? (
+                <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
+              ) : activeGroup === undefined ? (
+                <p>{t(locale, "Scan a source project before creating a migration preview.")}</p>
+              ) : activeGroup.assets.length === 0 ? (
+                <p>{t(locale, "No differences for this asset type.")}</p>
+              ) : (
+                activeGroup.assets.map((asset) => (
+                  <label
+                    key={asset.id}
+                    className={`asset-option${asset.status === "disabled" ? " is-disabled" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={asset.status === "disabled"}
+                      checked={props.state.migration.sourceAssetIds.includes(asset.id)}
+                      onChange={(event) =>
+                        props.onToggleSource(asset.id, event.currentTarget.checked)
+                      }
                     />
-                  ))}
-                </section>
+                    <MigrationResourceTypeIcon resourceType={asset.resourceType} />
+                    <span title={asset.logicalKey}>
+                      {asset.logicalKey}
+                      {asset.status === "disabled" ? ` · ${t(locale, "Disabled")}` : ""}
+                    </span>
+                    <small>
+                      {toolLabel(asset.toolKey)} / {resourceTypeLabel(locale, asset.resourceType)}
+                    </small>
+                  </label>
+                ))
               )}
-              {driftRows.length === 0 ? null : (
-                <DriftPanel assetLabels={assetLabels} driftRows={driftRows} locale={locale} />
+            </div>
+          </section>
+
+          <section className="migration-difference-summary">
+            <div className="migration-summary-heading">
+              <h2>{t(locale, "Difference summary")}</h2>
+              <small>{t(locale, "All resource types")}</small>
+            </div>
+            <SummaryMetric
+              icon={<PlusCircleIcon aria-hidden="true" size={15} weight="fill" />}
+              label={t(locale, "Added to target")}
+              tone="add"
+              value={summary.addedToTarget}
+            />
+            <SummaryMetric
+              icon={<ArrowsClockwiseIcon aria-hidden="true" size={15} weight="bold" />}
+              label={t(locale, "Overwritten in target")}
+              tone="replace"
+              value={summary.overwrittenInTarget}
+            />
+            <SummaryMetric
+              icon={<CheckCircleIcon aria-hidden="true" size={15} weight="fill" />}
+              label={t(
+                locale,
+                preview === undefined ? "Target-only kept" : "Unchanged planned outputs",
               )}
-              <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
-              {changeGroupsForPreview(preview).map((group) => (
-                <section key={group.groupId} className="planned-change">
-                  <div className="planned-change-summary">
-                    <h2>
-                      {groupOperationLabel(locale, group.operation)} {group.targetRootRelativePath}
-                    </h2>
-                    <span>{formatFileCount(locale, group.changedTargetCount)}</span>
-                  </div>
-                  <details className="planned-change-details">
-                    <summary>{t(locale, "Show diff and hashes")}</summary>
-                    {preview.changes
-                      .filter((change) => changeGroupId(change) === group.groupId)
-                      .map((change) => (
-                        <div className="planned-change-file" key={change.pathDisplay}>
-                          <h3>
-                            {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
-                          </h3>
-                          <dl>
-                            <dt>{t(locale, "Deployment")}</dt>
-                            <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
-                            {change.sourcePathDisplay === undefined ? null : (
-                              <>
-                                <dt>{t(locale, "Source file")}</dt>
-                                <dd>{change.sourcePathDisplay}</dd>
-                              </>
-                            )}
-                            <dt>{t(locale, "Before")}</dt>
-                            <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
-                            <dt>{t(locale, "After")}</dt>
-                            <dd>{change.afterHash ?? t(locale, "absent")}</dd>
-                          </dl>
-                          <pre>{change.diff}</pre>
-                        </div>
-                      ))}
-                    {group.detailsTruncated ? (
-                      <p>
-                        {t(locale, "File details are truncated to {count}.", {
-                          count: group.visibleDetailCount,
-                        })}
-                      </p>
-                    ) : null}
-                  </details>
-                </section>
-              ))}
-            </>
-          )}
+              tone="keep"
+              value={summary.targetOnlyKept}
+            />
+            <SummaryMetric
+              icon={<WarningCircleIcon aria-hidden="true" size={15} weight="fill" />}
+              label={t(locale, "Conflicts or warnings")}
+              tone="warning"
+              value={summary.conflictsOrWarnings}
+            />
+            <div className="field compact">
+              <label htmlFor="migration-target">{t(locale, "Target tool")}</label>
+              <select
+                id="migration-target"
+                value={props.state.migration.targetToolKey}
+                onChange={(event) => props.onTargetTool(event.currentTarget.value)}
+              >
+                {MIGRATION_TARGET_TOOL_OPTIONS.map((target) => (
+                  <option key={target} value={target}>
+                    {targetToolLabel(target)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field compact">
+              <label htmlFor="migration-conflict">{t(locale, "Existing target files")}</label>
+              <select
+                id="migration-conflict"
+                value={props.state.migration.conflictPolicy}
+                onChange={(event) =>
+                  props.onConflictPolicy(event.currentTarget.value as MigrationConflictPolicy)
+                }
+              >
+                {MIGRATION_CONFLICT_POLICY_OPTIONS.map((policy) => (
+                  <option key={policy} value={policy}>
+                    {conflictPolicyLabel(locale, policy)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {previewSummary === undefined ? null : (
+              <header className="preview-summary">
+                <strong title={previewSummary.plan}>{previewSummary.plan}</strong>
+                <span title={previewSummary.planHash}>{previewSummary.planHash}</span>
+                <span title={previewSummary.compatibility}>{previewSummary.compatibility}</span>
+                <span title={previewSummary.confirmations}>{previewSummary.confirmations}</span>
+                <span title={previewSummary.expires}>{previewSummary.expires}</span>
+              </header>
+            )}
+            {previewBlockers.length === 0 ? null : (
+              <ul className="migration-blockers">
+                {previewBlockers.map((blocker) => (
+                  <li key={blocker}>{localizeUiMessage(locale, blocker)}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="migration-target-panel panel">
+            <header className="panel-title">
+              <div className="panel-title-copy">
+                <strong>{t(locale, "Target assets")}</strong>
+                <small title={props.state.migration.targetScopeId}>
+                  {projectDisplayName(
+                    props.state.migration.targetScopeId,
+                    t(locale, "Target project path"),
+                  )}
+                </small>
+              </div>
+              <span>{formatAssetCount(locale, targetRows.length)}</span>
+            </header>
+            <ScanTaskPanel
+              ariaLabel={t(locale, "Target scan status")}
+              heading={t(locale, "Target scan")}
+              locale={locale}
+              message={undefined}
+              task={persistentTargetScanTask}
+            />
+            <div className="migration-asset-list">
+              {props.state.migration.targetScopeId === undefined ? (
+                <p>{t(locale, "Choose a target project to see target assets.")}</p>
+              ) : targetRows.length === 0 ? (
+                <p>{t(locale, "No target assets for this tool and type.")}</p>
+              ) : (
+                targetRows.map((row) =>
+                  row.kind === "asset" ? (
+                    <TargetAssetRow
+                      key={row.asset.id}
+                      asset={row.asset}
+                      change={row.change}
+                      liveDifference={row.liveDifference}
+                      locale={locale}
+                      sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
+                      targetProject={props.state.migration.targetScopeId}
+                      targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                    />
+                  ) : row.kind === "preview" ? (
+                    <PreviewTargetRow
+                      key={row.group.groupId}
+                      group={row.group}
+                      locale={locale}
+                      sourceAssetSummary={sourceAssetSummaryForPreview(preview, assetLabels)}
+                      targetProject={props.state.migration.targetScopeId}
+                      targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                    />
+                  ) : (
+                    <SourceOnlyTargetRow
+                      key={`source-only:${row.difference.sourceAsset?.id ?? row.difference.logicalKey}`}
+                      difference={row.difference}
+                      locale={locale}
+                      targetProject={props.state.migration.targetScopeId}
+                      targetTool={targetToolLabel(props.state.migration.targetToolKey)}
+                    />
+                  ),
+                )
+              )}
+            </div>
+          </section>
         </section>
-      )}
+
+        {preview === undefined &&
+        activeTask === undefined &&
+        props.state.recoveryLock === undefined ? null : (
+          <section
+            className="migration-preview-details"
+            data-layout={useCompactPreviewLayout ? "compact" : "expanded"}
+          >
+            <MigrationExecutionPanel
+              activeTask={activeTask}
+              deploymentBlockers={deploymentBlockers}
+              deploymentConfirmed={props.state.deploymentConfirmed}
+              recoveryLock={props.state.recoveryLock}
+              grantedConfirmations={grantedConfirmations}
+              locale={locale}
+              preview={preview}
+              requiredConfirmations={requiredConfirmations}
+              onConfirmMigration={props.onConfirmMigration}
+              onConfirmRequirement={props.onConfirmRequirement}
+              onExecuteMigration={props.onExecuteMigration}
+              {...(props.onResolveRecovery === undefined
+                ? {}
+                : { onResolveRecovery: props.onResolveRecovery })}
+            />
+            {preview === undefined ? null : (
+              <>
+                {preview.warnings.length === 0 ? null : (
+                  <ul className="warning-list">
+                    {preview.warnings.map((warning) => (
+                      <li key={warning.id}>{warning.message}</li>
+                    ))}
+                  </ul>
+                )}
+                {preview.fieldLosses.length === 0 ? null : (
+                  <section
+                    className="field-loss-panel"
+                    aria-label={t(locale, "Field loss details")}
+                  >
+                    <h2>{t(locale, "Field loss")}</h2>
+                    {preview.fieldLosses.map((loss) => (
+                      <FieldLossDetail
+                        key={loss.assetId}
+                        assetLabels={assetLabels}
+                        locale={locale}
+                        loss={loss}
+                      />
+                    ))}
+                  </section>
+                )}
+                {driftRows.length === 0 ? null : (
+                  <DriftPanel assetLabels={assetLabels} driftRows={driftRows} locale={locale} />
+                )}
+                <HashSnapshot assetLabels={assetLabels} locale={locale} preview={preview} />
+                {changeGroupsForPreview(preview).map((group) => (
+                  <section key={group.groupId} className="planned-change">
+                    <div className="planned-change-summary">
+                      <h2>
+                        {groupOperationLabel(locale, group.operation)}{" "}
+                        {group.targetRootRelativePath}
+                      </h2>
+                      <span>{formatFileCount(locale, group.changedTargetCount)}</span>
+                    </div>
+                    <details className="planned-change-details">
+                      <summary>{t(locale, "Show diff and hashes")}</summary>
+                      {preview.changes
+                        .filter((change) => changeGroupId(change) === group.groupId)
+                        .map((change) => (
+                          <div className="planned-change-file" key={change.pathDisplay}>
+                            <h3>
+                              {changeOperationLabel(locale, change.operation)} {change.pathDisplay}
+                            </h3>
+                            <dl>
+                              <dt>{t(locale, "Deployment")}</dt>
+                              <dd>{deploymentTypeLabel(locale, change.deploymentType)}</dd>
+                              {change.sourcePathDisplay === undefined ? null : (
+                                <>
+                                  <dt>{t(locale, "Source file")}</dt>
+                                  <dd>{change.sourcePathDisplay}</dd>
+                                </>
+                              )}
+                              <dt>{t(locale, "Before")}</dt>
+                              <dd>{change.beforeHash ?? t(locale, "absent")}</dd>
+                              <dt>{t(locale, "After")}</dt>
+                              <dd>{change.afterHash ?? t(locale, "absent")}</dd>
+                            </dl>
+                            <pre>{change.diff}</pre>
+                          </div>
+                        ))}
+                      {group.detailsTruncated ? (
+                        <p>
+                          {t(locale, "File details are truncated to {count}.", {
+                            count: group.visibleDetailCount,
+                          })}
+                        </p>
+                      ) : null}
+                    </details>
+                  </section>
+                ))}
+              </>
+            )}
+          </section>
+        )}
+      </div>
     </>
   );
 }
@@ -555,7 +615,8 @@ function TargetAssetRow(props: {
       }`}
     >
       <div className="target-change-heading">
-        <strong>{props.asset.logicalKey}</strong>
+        <MigrationResourceTypeIcon resourceType={props.asset.resourceType} />
+        <strong title={props.asset.logicalKey}>{props.asset.logicalKey}</strong>
         <span>{statusLabel}</span>
       </div>
       <p className="target-change-meta">
@@ -621,7 +682,10 @@ function PreviewTargetRow(props: {
   return (
     <div className={`target-change-row ${targetChangeTone(props.group.operation)}`}>
       <div className="target-change-heading">
-        <strong>{props.group.targetRootRelativePath}</strong>
+        <MigrationResourceTypeIcon resourceType={props.group.resourceType ?? "asset"} />
+        <strong title={props.group.targetRootRelativePath}>
+          {props.group.targetRootRelativePath}
+        </strong>
         <span>{targetChangeStatusLabel(props.locale, props.group.operation)}</span>
       </div>
       <p className="target-change-meta">
@@ -663,7 +727,8 @@ function SourceOnlyTargetRow(props: {
   return (
     <div className="target-change-row is-create">
       <div className="target-change-heading">
-        <strong>{sourceAsset.logicalKey}</strong>
+        <MigrationResourceTypeIcon resourceType={sourceAsset.resourceType} />
+        <strong title={sourceAsset.logicalKey}>{sourceAsset.logicalKey}</strong>
         <span>{targetChangeStatusLabel(props.locale, "create")}</span>
       </div>
       <p className="target-change-meta">
@@ -876,7 +941,9 @@ function MigrationExecutionPanel(props: {
         {props.preview === undefined ? null : (
           <dl className="migration-run-plan">
             <dt>{t(props.locale, "Plan")}</dt>
-            <dd>{displayIdentifier(props.preview.planId)}</dd>
+            <dd title={displayIdentifier(props.preview.planId)}>
+              {displayIdentifier(props.preview.planId)}
+            </dd>
             <dt>{t(props.locale, "Compatibility")}</dt>
             <dd>{compatibilityLabel(props.locale, props.preview.compatibility)}</dd>
             <dt>{t(props.locale, "Expires")}</dt>
@@ -1014,16 +1081,69 @@ function ProjectCard(props: {
       <div className="migration-project-copy">
         <span id={inputId}>{props.label}</span>
         <strong aria-labelledby={inputId} title={props.value}>
-          {props.value ?? props.placeholder}
+          {projectDisplayName(props.value, props.placeholder)}
         </strong>
       </div>
       <div className="migration-project-actions">
-        <button type="button" onClick={props.onChoose}>
-          {props.chooseLabel}
+        <button
+          aria-label={`${props.chooseLabel} ${props.label}`}
+          title={`${props.chooseLabel} ${props.label}`}
+          type="button"
+          onClick={props.onChoose}
+        >
+          <FolderOpenIcon aria-hidden="true" size={17} weight="bold" />
         </button>
       </div>
     </div>
   );
+}
+
+function SummaryMetric(props: {
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly tone: "add" | "replace" | "keep" | "warning";
+  readonly value: number;
+}) {
+  return (
+    <div className={`summary-card ${props.tone}`}>
+      {props.icon}
+      <span title={props.label}>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function MigrationResourceTypeIcon(props: { readonly resourceType: string }) {
+  const resourceType = props.resourceType.toLowerCase();
+  const iconProps = { size: 14, weight: "bold" as const };
+  let icon: ReactNode;
+  switch (resourceType) {
+    case "rule":
+      icon = <FileTextIcon {...iconProps} />;
+      break;
+    case "skill":
+      icon = <LightningIcon {...iconProps} />;
+      break;
+    case "mcp":
+      icon = <PlugsConnectedIcon {...iconProps} />;
+      break;
+    case "agent":
+      icon = <RobotIcon {...iconProps} />;
+      break;
+    default:
+      icon = <SquaresFourIcon {...iconProps} />;
+  }
+  return (
+    <span aria-hidden="true" className={`resource-type-icon ${resourceType}`}>
+      {icon}
+    </span>
+  );
+}
+
+function projectDisplayName(value: string | undefined, placeholder: string): string {
+  if (value === undefined || value.trim().length === 0) return placeholder;
+  const parts = value.replaceAll("\\", "/").split("/").filter(Boolean);
+  return parts.at(-1) ?? value;
 }
 
 function missingConfirmationLabels(

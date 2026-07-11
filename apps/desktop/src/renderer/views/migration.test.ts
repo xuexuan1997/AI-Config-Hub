@@ -38,6 +38,7 @@ describe("MigrationView", () => {
     });
 
     expect(html).toContain('class="recovery-lock"');
+    expect(html).toContain('data-layout="expanded"');
     expect(html).toContain("Recovery lock active. Resolve it before retrying.");
     expect(html).toContain(">Roll back failed deployment</button>");
   });
@@ -152,7 +153,8 @@ describe("MigrationView", () => {
     expect(html).toContain("Added to target</span><strong>1</strong>");
     expect(html).toContain("Overwritten in target</span><strong>1</strong>");
     expect(html).toContain("Target-only kept</span><strong>1</strong>");
-    expect(html).toContain("<strong>Rule</strong><span>3 differences</span>");
+    expect(html).toContain("<strong>Rule</strong>");
+    expect(html).toContain('<span class="migration-tab-count">3 differences</span>');
     expect(html).toContain('class="target-change-row is-create"');
     expect(html).toContain('class="target-change-row is-replace"');
     expect(html).toContain('class="target-change-row is-existing"');
@@ -182,6 +184,9 @@ describe("MigrationView", () => {
     expect(html).toContain("Copy source file");
     expect(html).toContain("/workspace/source/.claude/skills/release/assets/logo.png");
     expect(html).toContain(".agents/skills/release/assets/logo.png");
+    expect(html).toContain('title="Plan plan-1">Plan plan-1</strong>');
+    expect(html).toContain(`title="Plan hash: sha256:${"a".repeat(64)}"`);
+    expect(html).toContain('title="Added to target"');
   });
 
   it("keeps verbose migration target and preview details collapsed", () => {
@@ -248,7 +253,9 @@ describe("MigrationView", () => {
       }),
     });
 
-    expect(html).toContain("<strong>.agents/skills/release</strong>");
+    expect(html).toContain(
+      '<strong title=".agents/skills/release">.agents/skills/release</strong>',
+    );
     expect(html).toContain("2 files");
     expect(html).not.toContain("<strong>.agents/skills/release/SKILL.md</strong>");
     expect(html).not.toContain("<strong>.agents/skills/release/assets/logo.png</strong>");
@@ -284,7 +291,9 @@ describe("MigrationView", () => {
       preview,
     });
 
-    expect(html).toContain("<strong>.agents/skills/release</strong>");
+    expect(html).toContain(
+      '<strong title=".agents/skills/release">.agents/skills/release</strong>',
+    );
     expect(html).toContain("51 files");
     expect(html).toContain("File details are truncated to 1.");
     expect(html).not.toContain("target-only-outside-bounded-detail");

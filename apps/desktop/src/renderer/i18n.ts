@@ -60,6 +60,7 @@ const ZH_CN: Partial<Record<string, string>> = {
   Details: "详情",
   Diagnostics: "诊断",
   "Difference summary": "差异摘要",
+  "All resource types": "全部资源类型",
   "Added to target": "新增到目标",
   "Overwritten in target": "覆盖目标",
   "Target-only kept": "目标独有保留",

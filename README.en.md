@@ -38,13 +38,13 @@ Scans report phases, progress, and item failures, and can be cancelled before th
 
 #### Current Desktop Workflow
 
-The screenshots use a sanitized demo project and one shared English dark-theme capture set.
+The screenshots use a sanitized demo project, the English light theme, and the 1024 × 700 minimum desktop window.
 
-| Asset review and diagnostics                                                                                                         | Skill package detail                                                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| <img src="./docs/readme/assets/desktop-assets.png" alt="Asset review, Skill package summary, and workspace diagnostics" width="420"> | <img src="./docs/readme/assets/desktop-skill-package.png" alt="Skill package summary and file tree" width="420"> |
-| **Migration preview**                                                                                                                | **Settings and local data**                                                                                      |
-| <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Skill package migration preview" width="420">                     | <img src="./docs/readme/assets/desktop-settings.png" alt="Settings and local-data clearing" width="420">         |
+| Asset review and diagnostics                                                                                                                 | Asset detail and long identifiers                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="Redesigned asset review, resource tabs, and workspace diagnostics" width="420">      | <img src="./docs/readme/assets/desktop-asset-detail.png" alt="Redesigned asset detail drawer and long identifier handling" width="420"> |
+| **Migration preview and confirmations**                                                                                                      | **Settings and local data**                                                                                                             |
+| <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Redesigned three-column migration preview and confirmations" width="420"> | <img src="./docs/readme/assets/desktop-settings.png" alt="Redesigned settings and local-data clearing" width="420">                     |
 
 #### Architecture Overview
 

@@ -38,13 +38,13 @@ Skill 已按完整目录包处理，而不只是一个 `SKILL.md`：审查界面
 
 #### 当前桌面工作流
 
-截图使用脱敏的演示项目，并统一为英文深色界面。
+截图使用脱敏的演示项目，并统一为英文浅色界面和 1024 × 700 最小桌面窗口。
 
-| 资产审查与诊断 | Skill 包详情 |
+| 资产审查与诊断 | 资产详情与长标识符 |
 | --- | --- |
-| <img src="./docs/readme/assets/desktop-assets.png" alt="资产审查、Skill 包摘要和工作区诊断界面" width="420"> | <img src="./docs/readme/assets/desktop-skill-package.png" alt="Skill 包摘要和文件树界面" width="420"> |
-| **迁移预览** | **设置与本地数据** |
-| <img src="./docs/readme/assets/desktop-migration-preview.png" alt="Skill 包迁移预览界面" width="420"> | <img src="./docs/readme/assets/desktop-settings.png" alt="设置与本地数据清理界面" width="420"> |
+| <img src="./docs/readme/assets/desktop-assets.png" alt="新版资产审查、资源类型切换和工作区诊断界面" width="420"> | <img src="./docs/readme/assets/desktop-asset-detail.png" alt="新版资产详情抽屉与长标识符处理" width="420"> |
+| **迁移预览与确认** | **设置与本地数据** |
+| <img src="./docs/readme/assets/desktop-migration-preview.png" alt="新版三栏迁移预览与执行确认界面" width="420"> | <img src="./docs/readme/assets/desktop-settings.png" alt="新版设置与本地数据清理界面" width="420"> |
 
 #### 架构概览
 

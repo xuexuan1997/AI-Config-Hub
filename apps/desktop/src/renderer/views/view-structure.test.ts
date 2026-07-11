@@ -34,12 +34,13 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain('class="sidebar-foot"');
     expect(html).not.toContain("Navigation model");
     expect(html).not.toContain("Review and migration are sibling workflows.");
+    expect(html).toContain('title="Current project: /Users/xuexuan/Desktop/project/AI-Config-Hub"');
     expect(html).not.toContain('class="project-topbar-main"');
     expect(html).not.toContain('class="project-path-editor"');
     expect(html).not.toContain("Selected project folder");
   });
 
-  it("keeps current project controls inside Asset Review", () => {
+  it("keeps project controls in a compact icon toolbar inside Asset Review", () => {
     const projectRoot = "/Users/xuexuan/Desktop/project/AI-Config-Hub";
     const html = renderToStaticMarkup(
       createElement(AssetsView, {
@@ -56,13 +57,16 @@ describe("desktop renderer view structure", () => {
     );
 
     expect(html).toContain("<h1>Asset Review</h1>");
-    expect(html).toContain('class="review-project-card"');
-    expect(html).toContain("Current project");
-    expect(html).toContain(`title="${projectRoot}"`);
-    expect(html).toContain("Choose project");
-    expect(html).toContain("Scans automatically after project selection.");
-    expect(html).toContain("Refresh assets");
-    expect(html).toContain("Rescan after edit");
+    expect(html).toContain('class="review-project-toolbar"');
+    expect(html).toContain(`aria-label="Current project: ${projectRoot}"`);
+    expect(html).toContain('aria-label="Choose project"');
+    expect(html).toContain('aria-label="Refresh assets"');
+    expect(html).toContain('aria-label="Rescan after edit"');
+    expect(html).not.toContain('class="review-project-card"');
+    expect(html).not.toContain(">Choose project</button>");
+    expect(html).not.toContain(">Refresh assets</button>");
+    expect(html).not.toContain(">Rescan after edit</button>");
+    expect(html).not.toContain("Scans automatically after project selection.");
     expect(html).not.toContain("Manual path fallback");
     expect(html).not.toContain("Use typed path");
   });
@@ -95,6 +99,7 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="scan-task-modal"');
     expect(html).toContain('role="dialog"');
     expect(html).toContain("Scanning assets");
+    expect(html).toContain('title="Scanning assets"');
     expect(html).toContain("12/80 files");
     expect(html).toContain(">Cancel scan</button>");
   });
@@ -157,7 +162,9 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain("Scan complete");
+    expect(html).not.toContain('class="scan-task-modal"');
+    expect(html).not.toContain('class="scan-task-panel"');
+    expect(html).not.toContain("Scan complete");
     expect(html).not.toContain("<h2>Scanning assets</h2>");
   });
 
@@ -254,10 +261,10 @@ describe("desktop renderer view structure", () => {
             taskId: "task:scan:migration-target",
             taskKind: "scan",
             scanScope: "migration-target",
-            phase: "reading",
+            phase: "completed",
             status: "failed",
             recoveryLock: false,
-            progress: { phase: "reading", completed: 2, total: 9, unit: "files" },
+            progress: { phase: "completed", completed: 2, total: 9, unit: "files" },
             message: "Scan failed: 2 succeeded, 1 failed.",
           },
         },
@@ -276,8 +283,11 @@ describe("desktop renderer view structure", () => {
 
     expect(html).toContain('aria-label="Target scan status"');
     expect(html).toContain("Target scan");
+    expect(html).toContain("Scan failed");
     expect(html).toContain("2/9 files");
     expect(html).toContain("Scan failed: 2 succeeded, 1 failed.");
+    expect(html).toContain('class="scan-task-detail" title="Scan failed: 2 succeeded, 1 failed."');
+    expect(html).not.toContain('class="scan-task-modal"');
     expect(html).not.toContain("Target scan failed.");
     expect(html).not.toContain('aria-label="Source scan status"');
     expect(html).not.toContain("<h2>Source scan</h2>");
@@ -575,7 +585,7 @@ describe("desktop renderer view structure", () => {
     );
 
     expect(assetsHtml).toContain("<h1>资产审查</h1>");
-    expect(assetsHtml).toContain("选择项目后自动扫描。");
+    expect(assetsHtml).toContain('aria-label="选择项目"');
     expect(assetsHtml).toContain("尚未索引资产。");
     expect(migrationHtml).toContain("<h1>资产迁移</h1>");
     expect(migrationHtml).toContain("目标工具");
@@ -604,6 +614,7 @@ describe("desktop renderer view structure", () => {
 
     expect(html).toContain('class="migration-confirmation-panel"');
     expect(html).toContain('class="migration-execution-panel"');
+    expect(html).toContain('data-layout="compact"');
     expect(html).toContain("Run migration");
     expect(html).toContain('class="confirmation-item"');
     expect(html).toContain('class="migration-action-row"');
@@ -645,6 +656,7 @@ describe("desktop renderer view structure", () => {
 
     expect(executionPanelStart).toBeGreaterThan(-1);
     expect(statusStart).toBeGreaterThan(executionPanelStart);
+    expect(html).toContain('data-layout="expanded"');
     expect(html).toContain('class="task-status-summary"');
     expect(html).toContain("Status: Succeeded");
     expect(html).toContain("1/1 operations");
@@ -714,6 +726,7 @@ describe("desktop renderer view structure", () => {
 
     expect(html).toContain("Migration complete: 1 succeeded.");
     expect(html).toContain('class="migration-run-status"');
+    expect(html).toContain('data-layout="expanded"');
     expect(html).not.toContain("I understand this writes verified config files.");
     expect(html).not.toContain("Execute migration");
     expect(html).not.toContain("Create a migration preview before migrating.");
@@ -879,7 +892,7 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain("1/1 operations");
   });
 
-  it("states whether asset diagnostics are scoped to the workspace or inspected asset", () => {
+  it("keeps inspected diagnostics in the asset dialog and workspace diagnostics in one panel", () => {
     const selectedAssetState: AppState = {
       ...initialState,
       assets: [
@@ -928,9 +941,8 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(selectedAssetHtml).toContain('class="diagnostic-scope-label"');
-    expect(selectedAssetHtml).toContain("Selected asset diagnostics");
-    expect(selectedAssetHtml).toContain("Counts reflect only the inspected asset");
+    expect(selectedAssetHtml).not.toContain('class="diagnostic-scope-label"');
+    expect(selectedAssetHtml).not.toContain("Counts reflect only the inspected asset");
     expect(selectedAssetHtml).toContain('class="asset-detail-diagnostics"');
     expect(selectedAssetHtml).toContain("<h3>Diagnostics</h3>");
     expect(selectedAssetHtml).toContain("<th>Source</th>");
@@ -946,7 +958,9 @@ describe("desktop renderer view structure", () => {
     expect(selectedAssetHtml).toContain(
       '<span class="diagnostic-severity-pill warning">Warning</span>',
     );
-    expect(selectedAssetHtml).toContain("<strong>Partial conversion</strong>");
+    expect(selectedAssetHtml).toContain(
+      '<strong title="Partial conversion">Partial conversion</strong>',
+    );
     expect(selectedAssetHtml).toContain('class="diagnostic-action"');
     expect(selectedAssetHtml).toContain("<strong>rule:AGENTS</strong>");
     expect(selectedAssetHtml).toContain("Effective configuration");
@@ -978,8 +992,9 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(workspaceHtml).toContain("Workspace diagnostics");
-    expect(workspaceHtml).toContain("Counts reflect every indexed asset");
+    expect(workspaceHtml).toContain('aria-label="Workspace diagnostics"');
+    expect(workspaceHtml).toContain("<h2>Workspace diagnostics</h2>");
+    expect(workspaceHtml).not.toContain("Counts reflect every indexed asset");
   });
 
   it("pluralizes one asset error without suggesting multiple errors", () => {
@@ -1007,8 +1022,9 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain("<strong>1 error</strong>");
-    expect(html).toContain("<td>1 error</td>");
+    expect(html).toContain('class="asset-diagnostic-summary"');
+    expect(html).toContain('aria-label="1 error"');
+    expect(html).toContain('class="error" title="1 error"');
     expect(html).not.toContain("1 errors");
   });
 
@@ -1023,7 +1039,7 @@ describe("desktop renderer view structure", () => {
               warning: 1,
               error: 0,
             }),
-            assetSummaryFixture("asset-2", "skill:release", {
+            assetSummaryFixture("asset-2", "rule:clean", {
               info: 0,
               warning: 0,
               error: 0,
@@ -1041,9 +1057,10 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain("<td>1 warning, 1 info</td>");
-    expect(html).toContain("<td>No diagnostics</td>");
-    expect(html).not.toContain("<td>0 errors</td>");
+    expect(html).toContain('class="warning" title="1 warning"');
+    expect(html).toContain('class="info" title="1 info"');
+    expect(html).toContain('<span class="asset-diagnostic-empty">—</span>');
+    expect(html).not.toContain('title="0 errors"');
   });
 
   it("renders asset resource types as compact quick-switching tabs", () => {
@@ -1096,10 +1113,11 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain('class="asset-row-meta"');
     expect(html).toContain('class="asset-status disabled"');
     expect(html).toContain("Disabled");
-    expect(html).toContain("<h2>Rule assets</h2>");
-    expect(html).toContain("<strong>Skill</strong><span>1 asset</span>");
-    expect(html).toContain("<strong>MCP</strong><span>1 asset</span>");
-    expect(html.indexOf("<h2>Rule assets</h2>")).toBeLessThan(html.indexOf("rule:AGENTS"));
+    expect(html).not.toContain("<h2>Rule assets</h2>");
+    expect(html).toContain("<strong>Skill</strong></span><span>1 asset</span>");
+    expect(html).toContain("<strong>MCP</strong></span><span>1 asset</span>");
+    expect(html).toContain('class="asset-tab-main"');
+    expect(html.indexOf('aria-label="Rule assets"')).toBeLessThan(html.indexOf("rule:AGENTS"));
     expect(html).not.toContain("skill:release");
     expect(html).not.toContain("mcp:github");
     expect(html).not.toContain('class="asset-groups"');
@@ -1137,8 +1155,8 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain('class="scan-task-panel"');
-    expect(html).toContain('aria-label="Scan status"');
+    expect(html).toContain('class="scan-task-modal"');
+    expect(html).toContain('aria-label="Active scan status"');
     expect(html).toContain("Scanning assets");
     expect(html).toContain("Reading");
     expect(html).toContain("42/120 files");
@@ -1266,8 +1284,16 @@ describe("desktop renderer view structure", () => {
     expect(html).toContain("Target project");
     expect(html).toContain("/workspace/source");
     expect(html).toContain("/workspace/target");
+    expect(html).toContain('aria-label="Choose Source project"');
+    expect(html).toContain('aria-label="Choose Target project"');
+    expect(html).not.toContain(">Choose</button>");
     expect(html).toContain('aria-label="Swap source and target"');
-    expect(html).toContain(">⇄</button>");
+    const swapControl = html.slice(
+      html.indexOf('class="migration-swap-projects"'),
+      html.indexOf("</button>", html.indexOf('class="migration-swap-projects"')),
+    );
+    expect(swapControl).toContain("<svg");
+    expect(swapControl).not.toContain("⇄");
     expect(html).not.toContain("Scan source");
     expect(html).not.toContain('type="text"');
     expect(html).toContain('class="migration-comparison-body"');
@@ -1286,9 +1312,10 @@ describe("desktop renderer view structure", () => {
     expect(html).not.toContain('class="target-change-row is-existing"');
     expect(html).toContain("1 asset");
     expect(html).toContain("Rule");
-    expect(html).toContain("<strong>Agent</strong><span>0 differences</span>");
-    expect(html).toContain("<strong>Skill</strong><span>0 differences</span>");
-    expect(html).toContain("<strong>MCP</strong><span>0 differences</span>");
+    expect(html).toContain("<strong>Agent</strong>");
+    expect(html).toContain("<strong>Skill</strong>");
+    expect(html).toContain("<strong>MCP</strong>");
+    expect(html.match(/class="migration-tab-count">0 differences/g)).toHaveLength(3);
     expect(html).toContain("1 difference");
     expect(html).toContain("rule:AGENTS");
     expect(html).not.toContain("rule:.cursor/rules/local.mdc");
@@ -1341,9 +1368,9 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain('class="scan-task-panel"');
-    expect(html).toContain('aria-label="Source scan status"');
-    expect(html).toContain("Source scan");
+    expect(html).toContain('class="scan-task-modal"');
+    expect(html).toContain('aria-label="Active scan status"');
+    expect(html).toContain("Scan partially complete");
     expect(html).toContain("Parsing");
     expect(html).toContain("99/100 files");
     expect(html).toContain("/workspace/source/.claude/agents/reviewer.md");

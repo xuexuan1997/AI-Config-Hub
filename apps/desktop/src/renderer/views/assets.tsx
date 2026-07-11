@@ -1,9 +1,23 @@
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+import { FileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
+import { FolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
+import { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
+import { InfoIcon } from "@phosphor-icons/react/dist/csr/Info";
+import { LightningIcon } from "@phosphor-icons/react/dist/csr/Lightning";
+import { PlugsConnectedIcon } from "@phosphor-icons/react/dist/csr/PlugsConnected";
+import { RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
+import { ScanIcon } from "@phosphor-icons/react/dist/csr/Scan";
+import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { inertAppShellOutside } from "../components/modal-background.js";
@@ -44,6 +58,8 @@ export function AssetsView(props: {
     (activeTask.scanScope === undefined || activeTask.scanScope === "asset-review")
       ? activeTask
       : undefined;
+  const persistentScanTask =
+    scanTask?.phase === "completed" && scanTask.status !== "succeeded" ? scanTask : undefined;
   const assetsById = new Map(props.state.assets.map((asset) => [asset.id, asset]));
   const [selectedToolKey, setSelectedToolKey] = useState(DEFAULT_TOOL_KEY);
   const toolOptions = useMemo(() => assetToolOptions(props.state.assets), [props.state.assets]);
@@ -115,108 +131,153 @@ export function AssetsView(props: {
         task={scanTask}
         {...(props.onCancelScan === undefined ? {} : { onCancel: props.onCancelScan })}
       />
-      <section className="page-heading">
-        <div>
-          <h1>{t(locale, "Asset Review")}</h1>
-          <p>
-            {t(
-              locale,
-              "Inspect one current project without implying that it is a migration source.",
-            )}
-          </p>
-        </div>
-      </section>
-      <section className="review-project-card">
-        <div className="review-project-summary">
-          <span>{t(locale, "Current project")}</span>
-          <strong title={props.state.projectRoot}>
-            {props.state.projectRoot ?? t(locale, "No folder selected yet")}
-          </strong>
-          <small>{t(locale, "Scans automatically after project selection.")}</small>
-        </div>
-        <div className="review-project-actions">
+      <div className="review-topbar">
+        <section className="page-heading">
+          <div>
+            <h1>{t(locale, "Asset Review")}</h1>
+            <p>
+              {t(
+                locale,
+                "Inspect one current project without implying that it is a migration source.",
+              )}
+            </p>
+          </div>
+        </section>
+        <div
+          aria-label={`${t(locale, "Current project")}: ${
+            props.state.projectRoot ?? t(locale, "No folder selected yet")
+          }`}
+          className="review-project-toolbar"
+          role="toolbar"
+        >
           {props.state.projectRoot === undefined ? null : (
             <>
-              <button type="button" onClick={props.onRefresh}>
-                {t(locale, "Refresh assets")}
+              <button
+                aria-label={t(locale, "Refresh assets")}
+                className="review-project-action"
+                title={t(locale, "Refresh assets")}
+                type="button"
+                onClick={props.onRefresh}
+              >
+                <ArrowsClockwiseIcon aria-hidden="true" size={17} />
               </button>
-              <button type="button" onClick={props.onRescanAfterEdit}>
-                {t(locale, "Rescan after edit")}
+              <button
+                aria-label={t(locale, "Rescan after edit")}
+                className="review-project-action primary-scan"
+                title={t(locale, "Rescan after edit")}
+                type="button"
+                onClick={props.onRescanAfterEdit}
+              >
+                <ScanIcon aria-hidden="true" size={17} />
               </button>
             </>
           )}
-          <button type="button" onClick={props.onSelectProject}>
-            {t(locale, "Choose project")}
+          <button
+            aria-label={t(locale, "Choose project")}
+            className="review-project-action select-project"
+            title={t(locale, "Choose project")}
+            type="button"
+            onClick={props.onSelectProject}
+          >
+            <FolderOpenIcon aria-hidden="true" size={18} weight="bold" />
           </button>
         </div>
-      </section>
+      </div>
       <ScanTaskPanel
         ariaLabel={t(locale, "Scan status")}
         heading={t(locale, "Scanning assets")}
         locale={locale}
         message={undefined}
-        task={scanTask}
+        task={persistentScanTask}
       />
-      <section className="review-workspace">
-        <aside className="review-filters">
-          <h2>{t(locale, "Review filters")}</h2>
-          <ToolFilterList
-            activeToolKey={activeToolKey}
-            locale={locale}
-            tools={toolOptions}
-            onSelectToolKey={setSelectedToolKey}
-          />
-          <p className="diagnostic-scope-label">{diagnosticScope.summary}</p>
-          <div className="cards compact" aria-label={diagnosticScope.cardsLabel}>
-            <article>
-              <span>{diagnosticScope.diagnosticsLabel}</span>
-              <strong>{formatErrorCount(locale, props.state.diagnosticCounts.error)}</strong>
-            </article>
-            <article>
-              <span>{diagnosticScope.warningsLabel}</span>
-              <strong>{props.state.diagnosticCounts.warning}</strong>
-            </article>
-            <article>
-              <span>{diagnosticScope.infoLabel}</span>
-              <strong>{props.state.diagnosticCounts.info}</strong>
-            </article>
-          </div>
-        </aside>
-        <section className="review-list-panel">
-          {props.state.assets.length === 0 ? (
-            <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
-          ) : assetGroups.length === 0 ? (
-            <p className="empty-state">{t(locale, "No assets match the selected tool.")}</p>
-          ) : (
-            <AssetTypeTabs
-              activeResourceType={activeResourceType}
-              groups={assetGroups}
+      <div className="review-stage">
+        <section className={`review-workspace${detail === undefined ? " is-detail-empty" : ""}`}>
+          <aside className="review-filters" aria-label={t(locale, "Review filters")}>
+            <ToolFilterList
+              activeToolKey={activeToolKey}
               locale={locale}
-              onInspect={props.onInspect}
-              onSelectResourceType={setSelectedResourceType}
+              tools={toolOptions}
+              onSelectToolKey={setSelectedToolKey}
             />
-          )}
+          </aside>
+          <section className="review-list-panel">
+            {props.state.assets.length === 0 ? (
+              <p className="empty-state">{t(locale, "No assets indexed yet.")}</p>
+            ) : assetGroups.length === 0 ? (
+              <p className="empty-state">{t(locale, "No assets match the selected tool.")}</p>
+            ) : (
+              <AssetTypeTabs
+                activeResourceType={activeResourceType}
+                groups={assetGroups}
+                locale={locale}
+                onInspect={props.onInspect}
+                onSelectResourceType={setSelectedResourceType}
+              />
+            )}
+          </section>
+          <aside className="review-detail-panel">
+            <h2>{t(locale, "Asset detail")}</h2>
+            {detail === undefined ? (
+              <p>
+                {t(
+                  locale,
+                  "Select an asset to inspect its source, problems, and effective config.",
+                )}
+              </p>
+            ) : (
+              <dl>
+                <dt>{t(locale, "Logical key")}</dt>
+                <dd>{detail.asset.logicalKey}</dd>
+                <dt>{t(locale, "Tool")}</dt>
+                <dd>{toolLabel(detail.asset.toolKey)}</dd>
+                <dt>{t(locale, "Resource")}</dt>
+                <dd>{resourceTypeLabel(locale, detail.asset.resourceType)}</dd>
+                <dt>{t(locale, "Source")}</dt>
+                <dd>{detail.source.pathDisplay}</dd>
+              </dl>
+            )}
+          </aside>
         </section>
-        <aside className="review-detail-panel">
-          <h2>{t(locale, "Asset detail")}</h2>
-          {detail === undefined ? (
-            <p>
-              {t(locale, "Select an asset to inspect its source, problems, and effective config.")}
-            </p>
-          ) : (
-            <dl>
-              <dt>{t(locale, "Logical key")}</dt>
-              <dd>{detail.asset.logicalKey}</dd>
-              <dt>{t(locale, "Tool")}</dt>
-              <dd>{toolLabel(detail.asset.toolKey)}</dd>
-              <dt>{t(locale, "Resource")}</dt>
-              <dd>{resourceTypeLabel(locale, detail.asset.resourceType)}</dd>
-              <dt>{t(locale, "Source")}</dt>
-              <dd>{detail.source.pathDisplay}</dd>
-            </dl>
-          )}
-        </aside>
-      </section>
+        {detail !== undefined || props.state.diagnostics.length === 0 ? null : (
+          <section
+            className="detail-panel diagnostic-panel"
+            aria-label={diagnosticScope.panelLabel}
+          >
+            <header className="diagnostic-panel-header">
+              <div>
+                <h2>{diagnosticScope.panelHeading}</h2>
+                <span className="diagnostic-result-summary">
+                  {formatDiagnosticResultSummary(
+                    locale,
+                    visibleDiagnostics.length,
+                    props.state.diagnostics.length,
+                  )}
+                </span>
+              </div>
+            </header>
+            <WorkspaceDiagnosticFilters
+              activeCode={activeDiagnosticCode}
+              activeSeverity={selectedDiagnosticSeverity}
+              codeOptions={diagnosticCodeOptions}
+              diagnostics={props.state.diagnostics}
+              locale={locale}
+              onCodeChange={setSelectedDiagnosticCode}
+              onSeverityChange={setSelectedDiagnosticSeverity}
+            />
+            {visibleDiagnostics.length === 0 ? (
+              <p className="empty-state">
+                {t(locale, "No diagnostics match the current filters.")}
+              </p>
+            ) : (
+              <DiagnosticList
+                diagnostics={visibleDiagnostics}
+                locale={locale}
+                onLocateDiagnostic={props.onLocateDiagnostic}
+              />
+            )}
+          </section>
+        )}
+      </div>
       {detail === undefined ? null : (
         <AssetDetailDialog
           detail={detail}
@@ -235,40 +296,6 @@ export function AssetsView(props: {
           onCloseInspect={props.onCloseInspect}
           onLocateDiagnostic={props.onLocateDiagnostic}
         />
-      )}
-      {detail !== undefined || props.state.diagnostics.length === 0 ? null : (
-        <section className="detail-panel diagnostic-panel" aria-label={diagnosticScope.panelLabel}>
-          <header className="diagnostic-panel-header">
-            <div>
-              <h2>{diagnosticScope.panelHeading}</h2>
-              <span className="diagnostic-result-summary">
-                {formatDiagnosticResultSummary(
-                  locale,
-                  visibleDiagnostics.length,
-                  props.state.diagnostics.length,
-                )}
-              </span>
-            </div>
-          </header>
-          <WorkspaceDiagnosticFilters
-            activeCode={activeDiagnosticCode}
-            activeSeverity={selectedDiagnosticSeverity}
-            codeOptions={diagnosticCodeOptions}
-            diagnostics={props.state.diagnostics}
-            locale={locale}
-            onCodeChange={setSelectedDiagnosticCode}
-            onSeverityChange={setSelectedDiagnosticSeverity}
-          />
-          {visibleDiagnostics.length === 0 ? (
-            <p className="empty-state">{t(locale, "No diagnostics match the current filters.")}</p>
-          ) : (
-            <DiagnosticList
-              diagnostics={visibleDiagnostics}
-              locale={locale}
-              onLocateDiagnostic={props.onLocateDiagnostic}
-            />
-          )}
-        </section>
       )}
     </>
   );
@@ -430,7 +457,10 @@ function AssetTypeTabs(props: {
                 )
               }
             >
-              <strong>{resourceTypeLabel(props.locale, group.resourceType)}</strong>
+              <span className="asset-tab-main">
+                <ResourceTypeIcon resourceType={group.resourceType} />
+                <strong>{resourceTypeLabel(props.locale, group.resourceType)}</strong>
+              </span>
               <span>{formatAssetCount(props.locale, group.assets.length)}</span>
             </button>
           );
@@ -483,10 +513,6 @@ function AssetTypeTable(props: {
       className="asset-type-group"
       aria-label={t(props.locale, "{resource} assets", { resource: groupLabel })}
     >
-      <header className="asset-type-heading">
-        <h2>{t(props.locale, "{resource} assets", { resource: groupLabel })}</h2>
-        <span>{formatAssetCount(props.locale, props.group.assets.length)}</span>
-      </header>
       <table className="asset-table-compact">
         <thead>
           <tr>
@@ -501,11 +527,18 @@ function AssetTypeTable(props: {
           {props.group.assets.map((asset) => (
             <tr key={asset.id} className="asset-row-compact">
               <td className="asset-primary-cell">
-                <strong>{asset.logicalKey}</strong>
-                <span className="asset-row-meta">
-                  {scopeKindLabel(props.locale, asset.scopeKind)}
-                  <AssetStatusBadge locale={props.locale} status={assetStatusFor(asset)} />
-                </span>
+                <div className="asset-primary-content">
+                  <span className="asset-key-label">
+                    <ResourceTypeIcon resourceType={asset.resourceType} />
+                    <strong title={asset.logicalKey}>{asset.logicalKey}</strong>
+                  </span>
+                  <span className="asset-row-meta">
+                    {scopeKindLabel(props.locale, asset.scopeKind)}
+                    {assetStatusFor(asset) === "disabled" ? (
+                      <AssetStatusBadge locale={props.locale} status="disabled" />
+                    ) : null}
+                  </span>
+                </div>
               </td>
               <td className="asset-source-cell" title={assetSourceTitle(props.locale, asset)}>
                 {assetSourceLabel(props.locale, asset)}
@@ -513,14 +546,18 @@ function AssetTypeTable(props: {
               <td>
                 <AssetLoadBadge asset={asset} locale={props.locale} />
               </td>
-              <td>{formatDiagnosticCounts(props.locale, asset.diagnosticCounts)}</td>
+              <td>
+                <AssetDiagnosticSummary counts={asset.diagnosticCounts} locale={props.locale} />
+              </td>
               <td>
                 <button
+                  aria-label={t(props.locale, "Inspect")}
                   className="asset-inspect-button"
+                  title={t(props.locale, "Inspect")}
                   type="button"
                   onClick={() => props.onInspect(asset.id)}
                 >
-                  {t(props.locale, "Inspect")}
+                  <EyeIcon aria-hidden="true" size={16} />
                 </button>
               </td>
             </tr>
@@ -529,6 +566,86 @@ function AssetTypeTable(props: {
       </table>
     </section>
   );
+}
+
+function ResourceTypeIcon(props: { readonly resourceType: string }) {
+  const resourceType = props.resourceType.toLowerCase();
+  const iconProps = { size: 14, weight: "bold" as const };
+  let icon: ReactNode;
+  switch (resourceType) {
+    case "rule":
+      icon = <FileTextIcon {...iconProps} />;
+      break;
+    case "skill":
+      icon = <LightningIcon {...iconProps} />;
+      break;
+    case "mcp":
+      icon = <PlugsConnectedIcon {...iconProps} />;
+      break;
+    case "agent":
+      icon = <RobotIcon {...iconProps} />;
+      break;
+    case "settings":
+      icon = <GearSixIcon {...iconProps} />;
+      break;
+    default:
+      icon = <SquaresFourIcon {...iconProps} />;
+  }
+  return (
+    <span aria-hidden="true" className={`resource-type-icon ${resourceType}`}>
+      {icon}
+    </span>
+  );
+}
+
+function AssetDiagnosticSummary(props: {
+  readonly counts: AssetSummary["diagnosticCounts"];
+  readonly locale: DesktopLocale;
+}) {
+  const items = [
+    {
+      count: props.counts.error,
+      key: "error",
+      label: formatDiagnosticCount(props.locale, "error", props.counts.error),
+      icon: <XCircleIcon aria-hidden="true" size={14} weight="fill" />,
+    },
+    {
+      count: props.counts.warning,
+      key: "warning",
+      label: formatDiagnosticCount(props.locale, "warning", props.counts.warning),
+      icon: <WarningCircleIcon aria-hidden="true" size={14} weight="fill" />,
+    },
+    {
+      count: props.counts.info,
+      key: "info",
+      label: formatDiagnosticCount(props.locale, "info", props.counts.info),
+      icon: <InfoIcon aria-hidden="true" size={14} weight="fill" />,
+    },
+  ].filter((item) => item.count > 0);
+  if (items.length === 0) return <span className="asset-diagnostic-empty">—</span>;
+  return (
+    <span className="asset-diagnostic-summary">
+      {items.map((item) => (
+        <span aria-label={item.label} className={item.key} key={item.key} title={item.label}>
+          {item.icon}
+          {item.count}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function formatDiagnosticCount(
+  locale: DesktopLocale,
+  severity: "error" | "warning" | "info",
+  count: number,
+): string {
+  if (locale === "zh-CN") {
+    const label = severity === "error" ? "错误" : severity === "warning" ? "警告" : "信息";
+    return `${count} ${severity === "info" ? "条" : "个"}${label}`;
+  }
+  const label = severity === "info" ? "info" : `${severity}${count === 1 ? "" : "s"}`;
+  return `${count} ${label}`;
 }
 
 function assetTypePanelId(resourceType: string): string {
@@ -629,35 +746,6 @@ function AssetLoadBadge(props: {
   return (
     <span className={`asset-load-badge ${state}`}>{loadStateLabel(props.locale, props.asset)}</span>
   );
-}
-
-function formatErrorCount(locale: DesktopLocale, count: number): string {
-  if (locale === "zh-CN") return `${count} 个错误`;
-  return `${count} ${count === 1 ? "error" : "errors"}`;
-}
-
-function formatDiagnosticCounts(
-  locale: DesktopLocale,
-  counts: AppState["diagnosticCounts"],
-): string {
-  if (locale === "zh-CN") {
-    const parts = [
-      counts.error > 0 ? `${counts.error} 个错误` : undefined,
-      counts.warning > 0 ? `${counts.warning} 个警告` : undefined,
-      counts.info > 0 ? `${counts.info} 条信息` : undefined,
-    ].filter((part) => part !== undefined);
-    return parts.length === 0 ? t(locale, "No diagnostics") : parts.join("，");
-  }
-  const parts = [
-    counts.error > 0 ? formatSeverityCount(counts.error, "error") : undefined,
-    counts.warning > 0 ? formatSeverityCount(counts.warning, "warning") : undefined,
-    counts.info > 0 ? `${counts.info} info` : undefined,
-  ].filter((part) => part !== undefined);
-  return parts.length === 0 ? "No diagnostics" : parts.join(", ");
-}
-
-function formatSeverityCount(count: number, severity: "error" | "warning"): string {
-  return `${count} ${count === 1 ? severity : `${severity}s`}`;
 }
 
 function severityLabel(
@@ -979,6 +1067,7 @@ function WorkspaceDiagnosticFilters(props: {
             type="button"
             onClick={() => props.onSeverityChange(severity)}
           >
+            <DiagnosticSeverityIcon severity={severity} />
             {diagnosticSeverityFilterLabel(props.locale, severity, counts)}
           </button>
         ))}
@@ -1000,6 +1089,20 @@ function WorkspaceDiagnosticFilters(props: {
       </label>
     </div>
   );
+}
+
+function DiagnosticSeverityIcon(props: { readonly severity: DiagnosticSeverityFilter }) {
+  const iconProps = { "aria-hidden": true as const, size: 13, weight: "fill" as const };
+  switch (props.severity) {
+    case "error":
+      return <XCircleIcon {...iconProps} />;
+    case "warning":
+      return <WarningCircleIcon {...iconProps} />;
+    case "info":
+      return <InfoIcon {...iconProps} />;
+    case "all":
+      return <SquaresFourIcon {...iconProps} weight="regular" />;
+  }
 }
 
 function formatDiagnosticResultSummary(
@@ -1074,17 +1177,29 @@ function DiagnosticList(props: {
               <span className={`diagnostic-severity-pill ${diagnostic.severity}`}>
                 {severityLabel(props.locale, diagnostic.severity)}
               </span>
-              <strong>{diagnosticCodeLabel(props.locale, diagnostic.code)}</strong>
+              <strong title={diagnosticCodeLabel(props.locale, diagnostic.code)}>
+                {diagnosticCodeLabel(props.locale, diagnostic.code)}
+              </strong>
             </div>
-            <span>{diagnosticText(props.locale, diagnostic.message)}</span>
+            <span
+              className="diagnostic-row-message"
+              title={diagnosticText(props.locale, diagnostic.message)}
+            >
+              {diagnosticText(props.locale, diagnostic.message)}
+            </span>
             {diagnostic.location === undefined ? null : (
-              <small>
+              <small className="diagnostic-row-location" title={diagnostic.location.pathDisplay}>
                 {diagnostic.location.pathDisplay}
                 {diagnostic.location.line === undefined ? "" : `:${diagnostic.location.line}`}
                 {diagnostic.location.column === undefined ? "" : `:${diagnostic.location.column}`}
               </small>
             )}
-            <small>{diagnosticText(props.locale, diagnostic.suggestedAction)}</small>
+            <small
+              className="diagnostic-row-suggestion"
+              title={diagnosticText(props.locale, diagnostic.suggestedAction)}
+            >
+              {diagnosticText(props.locale, diagnostic.suggestedAction)}
+            </small>
           </div>
           <div className="diagnostic-row-action">
             {diagnostic.assetId === undefined || props.onLocateDiagnostic === undefined ? null : (
@@ -1218,7 +1333,7 @@ function AssetDetailDialog(props: {
         <header className="asset-detail-header">
           <div>
             <span className="eyebrow">{t(props.locale, "Inspect asset")}</span>
-            <h2>{detail.asset.logicalKey}</h2>
+            <h2 title={detail.asset.logicalKey}>{detail.asset.logicalKey}</h2>
           </div>
           <button
             className="asset-detail-close"
