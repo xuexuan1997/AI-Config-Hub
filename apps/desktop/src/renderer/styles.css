@@ -4857,3 +4857,101 @@ th,
     width: 100%;
   }
 }
+
+/* Compact route chrome and expanded bottom work areas ------------------- */
+
+.visually-hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.workspace[data-route="assets"] {
+  grid-template-areas:
+    "scan-status"
+    "review-stage";
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.workspace[data-route="assets"]:not(:has(> .scan-task-panel)) {
+  grid-template-areas: "review-stage";
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.review-filters {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.review-project-toolbar {
+  align-self: center;
+  grid-column: 2;
+}
+
+.review-project-action {
+  height: 30px;
+  min-height: 30px;
+  min-width: 30px;
+  width: 30px;
+}
+
+.review-stage:has(> .diagnostic-panel) {
+  grid-template-rows: minmax(220px, 1fr) minmax(200px, 0.55fr);
+}
+
+.workspace[data-route="migration"] {
+  grid-template-areas:
+    "migration-projects"
+    "migration-tabs"
+    "migration-stage";
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.migration-preview-action {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 34px;
+  width: 100%;
+}
+
+.migration-stage:has(> .migration-preview-details[data-layout="compact"]) {
+  grid-template-rows: minmax(220px, 1fr) minmax(150px, 0.4fr);
+}
+
+.migration-stage:has(> .migration-preview-details[data-layout="compact"] .blocker-panel) {
+  grid-template-rows: minmax(220px, 1fr) minmax(170px, 0.46fr);
+}
+
+.migration-preview-details[data-layout="compact"] {
+  display: block;
+}
+
+.migration-preview-details[data-layout="compact"] .migration-execution-panel,
+.migration-preview-details[data-layout="compact"]:has(.blocker-panel) .migration-execution-panel {
+  align-content: center;
+  height: auto;
+  min-height: 100%;
+  padding: 0.8rem 0.9rem;
+}
+
+@media (max-height: 760px) {
+  .review-stage:has(> .diagnostic-panel) {
+    grid-template-rows: minmax(190px, 1fr) minmax(180px, 0.62fr);
+  }
+
+  .migration-stage:has(> .migration-preview-details[data-layout="compact"]) {
+    grid-template-rows: minmax(190px, 1fr) minmax(145px, 0.42fr);
+  }
+
+  .migration-stage:has(> .migration-preview-details[data-layout="compact"] .blocker-panel) {
+    grid-template-rows: minmax(190px, 1fr) minmax(165px, 0.48fr);
+  }
+}

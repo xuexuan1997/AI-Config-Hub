@@ -131,58 +131,7 @@ export function AssetsView(props: {
         task={scanTask}
         {...(props.onCancelScan === undefined ? {} : { onCancel: props.onCancelScan })}
       />
-      <div className="review-topbar">
-        <section className="page-heading">
-          <div>
-            <h1>{t(locale, "Asset Review")}</h1>
-            <p>
-              {t(
-                locale,
-                "Inspect one current project without implying that it is a migration source.",
-              )}
-            </p>
-          </div>
-        </section>
-        <div
-          aria-label={`${t(locale, "Current project")}: ${
-            props.state.projectRoot ?? t(locale, "No folder selected yet")
-          }`}
-          className="review-project-toolbar"
-          role="toolbar"
-        >
-          {props.state.projectRoot === undefined ? null : (
-            <>
-              <button
-                aria-label={t(locale, "Refresh assets")}
-                className="review-project-action"
-                title={t(locale, "Refresh assets")}
-                type="button"
-                onClick={props.onRefresh}
-              >
-                <ArrowsClockwiseIcon aria-hidden="true" size={17} />
-              </button>
-              <button
-                aria-label={t(locale, "Rescan after edit")}
-                className="review-project-action primary-scan"
-                title={t(locale, "Rescan after edit")}
-                type="button"
-                onClick={props.onRescanAfterEdit}
-              >
-                <ScanIcon aria-hidden="true" size={17} />
-              </button>
-            </>
-          )}
-          <button
-            aria-label={t(locale, "Choose project")}
-            className="review-project-action select-project"
-            title={t(locale, "Choose project")}
-            type="button"
-            onClick={props.onSelectProject}
-          >
-            <FolderOpenIcon aria-hidden="true" size={18} weight="bold" />
-          </button>
-        </div>
-      </div>
+      <h1 className="visually-hidden">{t(locale, "Asset Review")}</h1>
       <ScanTaskPanel
         ariaLabel={t(locale, "Scan status")}
         heading={t(locale, "Scanning assets")}
@@ -199,6 +148,45 @@ export function AssetsView(props: {
               tools={toolOptions}
               onSelectToolKey={setSelectedToolKey}
             />
+            <div
+              aria-label={`${t(locale, "Current project")}: ${
+                props.state.projectRoot ?? t(locale, "No folder selected yet")
+              }`}
+              className="review-project-toolbar"
+              role="toolbar"
+            >
+              {props.state.projectRoot === undefined ? null : (
+                <>
+                  <button
+                    aria-label={t(locale, "Refresh assets")}
+                    className="review-project-action"
+                    title={t(locale, "Refresh assets")}
+                    type="button"
+                    onClick={props.onRefresh}
+                  >
+                    <ArrowsClockwiseIcon aria-hidden="true" size={17} />
+                  </button>
+                  <button
+                    aria-label={t(locale, "Rescan after edit")}
+                    className="review-project-action primary-scan"
+                    title={t(locale, "Rescan after edit")}
+                    type="button"
+                    onClick={props.onRescanAfterEdit}
+                  >
+                    <ScanIcon aria-hidden="true" size={17} />
+                  </button>
+                </>
+              )}
+              <button
+                aria-label={t(locale, "Choose project")}
+                className="review-project-action select-project"
+                title={t(locale, "Choose project")}
+                type="button"
+                onClick={props.onSelectProject}
+              >
+                <FolderOpenIcon aria-hidden="true" size={18} weight="bold" />
+              </button>
+            </div>
           </aside>
           <section className="review-list-panel">
             {props.state.assets.length === 0 ? (

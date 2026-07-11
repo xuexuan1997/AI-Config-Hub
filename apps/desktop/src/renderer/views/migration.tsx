@@ -153,20 +153,7 @@ export function MigrationView(props: {
         task={scanTask}
         {...(props.onCancelScan === undefined ? {} : { onCancel: props.onCancelScan })}
       />
-      <section className="page-heading">
-        <div>
-          <h1>{t(locale, "Asset Migration")}</h1>
-          <p>{t(locale, "Choose source and target projects independently before writing.")}</p>
-        </div>
-        <button
-          type="button"
-          disabled={previewBlockers.length > 0 || props.previewPending === true}
-          onClick={props.onPreview}
-        >
-          <EyeIcon aria-hidden="true" size={17} />
-          {t(locale, props.previewPending === true ? "Creating preview" : "Preview writes")}
-        </button>
-      </section>
+      <h1 className="visually-hidden">{t(locale, "Asset Migration")}</h1>
 
       <section className="migration-project-picker">
         <ProjectCard
@@ -372,6 +359,15 @@ export function MigrationView(props: {
                 ))}
               </ul>
             )}
+            <button
+              className="migration-preview-action"
+              type="button"
+              disabled={previewBlockers.length > 0 || props.previewPending === true}
+              onClick={props.onPreview}
+            >
+              <EyeIcon aria-hidden="true" size={17} />
+              {t(locale, props.previewPending === true ? "Creating preview" : "Preview writes")}
+            </button>
           </section>
 
           <section className="migration-target-panel panel">

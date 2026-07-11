@@ -56,7 +56,7 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain("<h1>Asset Review</h1>");
+    expect(html).toContain('<h1 class="visually-hidden">Asset Review</h1>');
     expect(html).toContain('class="review-project-toolbar"');
     expect(html).toContain(`aria-label="Current project: ${projectRoot}"`);
     expect(html).toContain('aria-label="Choose project"');
@@ -584,10 +584,10 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(assetsHtml).toContain("<h1>资产审查</h1>");
+    expect(assetsHtml).toContain('<h1 class="visually-hidden">资产审查</h1>');
     expect(assetsHtml).toContain('aria-label="选择项目"');
     expect(assetsHtml).toContain("尚未索引资产。");
-    expect(migrationHtml).toContain("<h1>资产迁移</h1>");
+    expect(migrationHtml).toContain('<h1 class="visually-hidden">资产迁移</h1>');
     expect(migrationHtml).toContain("目标工具");
     expect(migrationHtml).toContain("预览写入");
     expect(migrationHtml).toContain("请先选择源项目再创建迁移预览。");
@@ -1276,7 +1276,7 @@ describe("desktop renderer view structure", () => {
       }),
     );
 
-    expect(html).toContain("<h1>Asset Migration</h1>");
+    expect(html).toContain('<h1 class="visually-hidden">Asset Migration</h1>');
     expect(html).toContain('class="migration-project-picker"');
     expect(html).toContain('class="migration-project-card source"');
     expect(html).toContain('class="migration-project-card target"');
