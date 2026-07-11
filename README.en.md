@@ -18,7 +18,7 @@ It is not a simple file sync tool. Before writing, AI Config Hub surfaces target
 
 ### Current Experience
 
-The current code version is `0.2.18`. The Electron desktop app is the most complete UX entry point, with three workspaces in its sidebar:
+The current code version is `0.2.19`. The Electron desktop app is the most complete UX entry point, with three workspaces in its sidebar:
 
 - **Asset Review**: select a current project and scan automatically; browse Rules, Agents, Skills, and MCP by tool and resource type; inspect scope, source, loaded/covered/disabled state, and diagnostic counts. Workspace diagnostics can be filtered by severity and diagnostic code, then located back to the associated asset.
 - **Asset Migration**: choose or swap source and target projects independently, compare both sides, and select source assets, a target tool, and a `fail`, `replace`, or `merge` conflict policy. Every migration must create a preview before hashes, field loss, and overwrite/delete risks are confirmed for execution.

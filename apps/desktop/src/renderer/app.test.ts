@@ -248,11 +248,18 @@ describe("desktop watcher index refresh", () => {
     const firstReady = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
     let invocation = 0;
     const invoke = vi.fn(async (name: string) => {
       if (name !== "assets.list") throw new Error(`Unexpected command: ${name}`);
       invocation += 1;
-      if (invocation === 1) await firstReady;
+      if (invocation === 1) {
+        markFirstStarted?.();
+        await firstReady;
+      }
       return {
         ok: true,
         data: { items: [], nextCursor: null, snapshotRevision: String(invocation), stale: false },
@@ -275,6 +282,7 @@ describe("desktop watcher index refresh", () => {
       () => roots,
       claimRefresh,
     );
+    await firstStarted;
     const newer = refreshAffectedIndexViews(
       api,
       { roots: ["/workspace/source"] },

@@ -248,7 +248,7 @@ test.describe("Desktop end to end", () => {
       await page.getByRole("button", { name: exactText("设置") }).click();
       await expect(page.getByRole("heading", { name: exactText("设置") })).toBeVisible();
       await expect(page.getByText(exactText("软件更新"))).toBeVisible();
-      await expect(page.getByText(exactText("当前版本 0.2.18"))).toBeVisible();
+      await expect(page.getByText(exactText("当前版本 0.2.19"))).toBeVisible();
       await expectSingleLineUi(page, "settings top");
       const clearSelectedData = page.getByRole("button", { name: exactText("清理所选数据") });
       await expect(clearSelectedData).toBeDisabled();
