@@ -35,6 +35,7 @@ import {
 } from "./composition.js";
 
 const temporaryDirectories: string[] = [];
+const compositionTestTimeout = 15_000;
 
 // Watcher-specific tests inject their own factory; keep all other fixtures free of background scans.
 function createDesktopCommandServices(
@@ -168,7 +169,7 @@ async function writeCodexUserConfigFixtures(home: string): Promise<void> {
   );
 }
 
-describe("desktop command service composition", () => {
+describe("desktop command service composition", { timeout: compositionTestTimeout }, () => {
   it("persists public theme and language settings through desktop services", async () => {
     const root = await mkdtemp(join(tmpdir(), "ai-config-hub-desktop-settings-"));
     temporaryDirectories.push(root);
